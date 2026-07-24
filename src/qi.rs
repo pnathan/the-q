@@ -36,7 +36,9 @@ impl QI {
     /// Midpoint of the interval: (lo + hi) / 2
     pub fn midpoint(self) -> Q {
         let sum = self.lo.add(self.hi);
-        Q::from_int(2).map(|two| sum.div(two).unwrap_or(sum)).unwrap_or(sum)
+        Q::from_int(2)
+            .and_then(|two| sum.div(two))
+            .unwrap_or(sum)
     }
 
     /// Check if interval contains a single point
@@ -51,6 +53,7 @@ impl QI {
 
     /// Add two intervals: [a.lo + b.lo, a.hi + b.hi]
     /// M6.V7: Addition preserves interval containment
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: QI) -> QI {
         QI {
             lo: self.lo.add(other.lo),
@@ -59,6 +62,7 @@ impl QI {
     }
 
     /// Subtract two intervals: [a.lo - b.hi, a.hi - b.lo]
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: QI) -> QI {
         QI {
             lo: self.lo.sub(other.hi),
@@ -68,6 +72,7 @@ impl QI {
 
     /// Multiply two intervals (handles signs correctly)
     /// M6.V7: Multiplication preserves interval containment (for positive intervals)
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: QI) -> QI {
         // Compute all four corner products
         let ll = self.lo.mul(other.lo);
@@ -100,6 +105,7 @@ impl QI {
     }
 
     /// Divide two intervals
+    #[allow(clippy::should_implement_trait)]
     pub fn div(self, other: QI) -> Option<QI> {
         other.recip().map(|recip| self.mul(recip))
     }
@@ -130,8 +136,7 @@ impl QI {
     /// Returns the perturbed result
     pub fn add_perturbed(self, x_perturb: QI, other: QI, y_perturb: QI) -> QI {
         // Result = [x_lo + dx_lo + y_lo + dy_lo, x_hi + dx_hi + y_hi + dy_hi]
-        let perturbed = self.add(x_perturb).add(other).add(y_perturb);
-        perturbed
+        self.add(x_perturb).add(other).add(y_perturb)
     }
 
     /// Absolute value of interval
@@ -153,6 +158,7 @@ impl QI {
     }
 
     /// Negation of interval: [-hi, -lo]
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> QI {
         QI {
             lo: self.hi.neg(),

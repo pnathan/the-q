@@ -368,8 +368,8 @@ impl Q {
         // Using long division to avoid overflow
         let mut k = if num.abs() < den {
             // num/den < 1, so k will be less than 2^60
-            let scaled_num = (num.abs() as u128) << SNAP_BITS;
-            let k_exact = scaled_num / (den.abs() as u128);
+            let scaled_num = (num.unsigned_abs()) << SNAP_BITS;
+            let k_exact = scaled_num / den.unsigned_abs();
             k_exact as i128
         } else {
             // num/den >= 1, do extended multiplication
@@ -378,8 +378,8 @@ impl Q {
         };
 
         // Apply rounding direction for tie-breaking
-        let remainder = (num.abs() as u128 * scale as u128) % (den.abs() as u128);
-        let half_den = (den.abs() as u128) >> 1;
+        let remainder = (num.unsigned_abs() * (scale as u128)) % den.unsigned_abs();
+        let half_den = den.unsigned_abs() >> 1;
         if remainder > half_den {
             k += 1; // round up
         } else if remainder == half_den && dir == Direction::Up {
