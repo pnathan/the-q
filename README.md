@@ -128,11 +128,14 @@ cargo build                 # plain rustc, no Verus needed, no_std
 cargo test --all-features   # unit + malachite differential + property/adversarial
 ```
 
-> **Verus status:** the machine-checked proofs are authored but not yet
-> discharged in this repository's initial drop — the environment that created it
-> could not install the Verus toolchain. `cargo build`/`cargo test` are the
-> enforced CI gate today; the `verus` job runs the proofs and currently reports
-> progress without blocking. See `verus/README.md`.
+> **Verus status:** the CI `verus` job installs Verus (from the latest release,
+> resolved via the GitHub API) and **hard-gates 49 admit-free, machine-checked
+> conditions** — the full V5 (GCD), V2 (no overflow), V3 (comparison/predicate/
+> raw-arithmetic value correctness), V6 (negation, order laws, commutativity),
+> and V1-core (reduce preserves value). The remaining tail — V1 canonical
+> uniqueness, V4 rounding R3/R4, V7/V8 — is in progress; see `verus/README.md`
+> for the per-obligation breakdown. `cargo build`/`cargo test` and the `verus`
+> job are both enforced CI gates.
 
 ## License
 
