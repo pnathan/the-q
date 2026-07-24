@@ -95,11 +95,29 @@ proof fn lemma_gcd_divides(a: nat, b: nat)
         lemma_fundamental_div_mod(a as int, b as int);
         let g = gcd_spec(b, r) as int;
         assert(a as int == b as int * (a as int / b as int) + r as int);
-        assert(divides(g, a as int)) by (nonlinear_arith)
+
+        // g divides b and r; expand both as explicit g-multiples so the
+        // final step is pure polynomial algebra, not %/`/` reasoning
+        // (mirrors the technique in lemma_divides_mod, which verified).
+        lemma_fundamental_div_mod(b as int, g);
+        lemma_fundamental_div_mod(r as int, g);
+        let pb = b as int / g;
+        let pr = r as int / g;
+        assert(b as int == g * pb);
+        assert(r as int == g * pr);
+        assert(a as int == g * (pb * (a as int / b as int) + pr)) by (nonlinear_arith)
             requires
                 a as int == b as int * (a as int / b as int) + r as int,
-                divides(g, b as int),
-                divides(g, r as int),
+                b as int == g * pb,
+                r as int == g * pr,
+        {}
+
+        lemma_fundamental_div_mod(a as int, g);
+        assert(a as int == g * (a as int / g) + a as int % g);
+        assert(divides(g, a as int)) by (nonlinear_arith)
+            requires
+                a as int == g * (pb * (a as int / b as int) + pr),
+                a as int == g * (a as int / g) + a as int % g,
         {}
     }
 }
@@ -140,7 +158,10 @@ proof fn lemma_divides_le(d: int, n: int)
 {
     lemma_fundamental_div_mod(n, d);
     assert(n == d * (n / d));
-    assert(n / d >= 1) by (nonlinear_arith)
+    // Proving n/d >= 1 alone doesn't close the goal -- state the actual
+    // postcondition (d <= n) as the assert so its proof is in context when
+    // the function returns.
+    assert(d <= n) by (nonlinear_arith)
         requires
             n == d * (n / d),
             n > 0,
