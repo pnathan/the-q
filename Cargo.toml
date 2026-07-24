@@ -1,0 +1,19 @@
+[package]
+name = "the-q"
+version = "0.1.0"
+edition = "2021"
+description = "Exact-with-verified-rounding rational arithmetic (Q type)"
+license = "LGPL-2.1-only"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+malachite-q = "0.4"
+malachite-base = "0.4"
+proptest = "1"
+rand = "0.8"
