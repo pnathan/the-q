@@ -231,17 +231,21 @@ proof fn lemma_reduced_is_coprime(a: nat, b: nat)
     lemma_gcd_divides(a, b);
     let g = gcd_spec(a, b) as int;
 
-    // g divides a and g > 0, so a/g > 0 (a itself is > 0).
+    // g divides a and g > 0, so a/g > 0 (a itself is > 0). Prove positivity
+    // of the raw expression *before* forming the nat -- the nonlinear_arith
+    // block only sees exactly what's listed in its own `requires`, not the
+    // surrounding let-bindings.
     lemma_fundamental_div_mod(a as int, g);
     assert(a as int == g * (a as int / g));
-    let a2 = (a as int / g) as nat;
-    let b2 = (b as int / g) as nat;
-    assert(a2 > 0) by (nonlinear_arith)
+    assert(a as int / g > 0) by (nonlinear_arith)
         requires
             a as int == g * (a as int / g),
             a > 0,
             g > 0,
     {}
+    let a2 = (a as int / g) as nat;
+    let b2 = (b as int / g) as nat;
+    assert(a2 > 0);
 
     lemma_gcd_divides(a2, b2);
     let d = gcd_spec(a2, b2) as int;
@@ -258,27 +262,40 @@ proof fn lemma_reduced_is_coprime(a: nat, b: nat)
             a as int / g == a2 as int,
             a2 as int == d * (a2 as int / d),
     {}
-    assert(b as int == g * b2 as int) by {
-        lemma_fundamental_div_mod(b as int, g);
-        assert(divides(g, b as int)) by {
-            lemma_gcd_divides(a, b);
-        }
-        assert(b as int % g == 0);
+    assert(divides(g, b as int)) by {
+        lemma_gcd_divides(a, b);
     }
+    lemma_fundamental_div_mod(b as int, g);
+    assert(b as int == g * (b as int / g) + b as int % g);
+    assert(b as int == g * b2 as int) by (nonlinear_arith)
+        requires
+            b as int == g * (b as int / g) + b as int % g,
+            b as int % g == 0,
+            b as int / g == b2 as int,
+    {}
     assert(b as int == (g * d) * (b2 as int / d)) by (nonlinear_arith)
         requires
             b as int == g * b2 as int,
             b2 as int == d * (b2 as int / d),
     {}
 
-    assert(divides(g * d, a as int)) by {
-        lemma_fundamental_div_mod(a as int, g * d);
-        assert(a as int == (g * d) * (a2 as int / d));
-    }
-    assert(divides(g * d, b as int)) by {
-        lemma_fundamental_div_mod(b as int, g * d);
-        assert(b as int == (g * d) * (b2 as int / d));
-    }
+    // Same technique as lemma_gcd_divides's final step: unfold via
+    // lemma_fundamental_div_mod, then combine with the already-proven
+    // "a is a (g*d)-multiple" fact via nonlinear_arith.
+    lemma_fundamental_div_mod(a as int, g * d);
+    assert(a as int == (g * d) * (a as int / (g * d)) + a as int % (g * d));
+    assert(divides(g * d, a as int)) by (nonlinear_arith)
+        requires
+            a as int == (g * d) * (a2 as int / d),
+            a as int == (g * d) * (a as int / (g * d)) + a as int % (g * d),
+    {}
+    lemma_fundamental_div_mod(b as int, g * d);
+    assert(b as int == (g * d) * (b as int / (g * d)) + b as int % (g * d));
+    assert(divides(g * d, b as int)) by (nonlinear_arith)
+        requires
+            b as int == (g * d) * (b2 as int / d),
+            b as int == (g * d) * (b as int / (g * d)) + b as int % (g * d),
+    {}
 
     // g*d is a common divisor of a and b, so it divides gcd_spec(a,b) == g,
     // hence g*d <= g, hence (since g > 0) d <= 1. Combined with d > 0: d == 1.
