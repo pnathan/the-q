@@ -55,7 +55,8 @@ jobs:
       - name: Check malachite-q not in release dependencies
         run: |
           # malachite-q is only allowed as a dev-dependency
-          if grep -q "malachite-q" Cargo.toml | grep -v "\[dev-dependencies\]"; then
+          # Extract [dependencies] section and check it doesn't contain malachite-q
+          if sed -n '/^\[dependencies\]/,/^\[/p' Cargo.toml | grep -i "malachite-q"; then
             echo "ERROR: malachite-q found in non-dev dependencies"
             exit 1
           fi
