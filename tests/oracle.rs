@@ -5,7 +5,7 @@ use malachite_q::Rational;
 use malachite_base::num::basic::traits::Zero as MZero;
 use malachite_base::num::arithmetic::traits::Abs;
 use the_q::{Q, Dir};
-use the_q::convert::{from_decimal, from_f64_dir, to_f64};
+use the_q::convert::to_f64;
 
 const BOUND: i64 = (1i64 << 62) - 1;
 const B: u32 = 60;
@@ -227,7 +227,8 @@ fn fold_chain_error_bound() {
 fn from_decimal_oracle() {
     let cases = [(85i64, 2u8), (1, 4), (333, 3), (0, 5), (9999, 4)];
     for (m, dp) in cases {
-        let q = from_decimal(m, dp).unwrap();
+        // Use Q:: associated function (spec §2.1)
+        let q = Q::from_decimal(m, dp).unwrap();
         check_wf(q, "from_decimal");
         let scale = 10i128.pow(dp as u32);
         let exact = rat_parts(m, scale as i64);
@@ -239,10 +240,47 @@ fn from_decimal_oracle() {
 fn from_f64_dir_exact_dyadic() {
     let cases = [0.5f64, 0.25, 0.125, 0.75, 1.0, -0.5, 3.0, 4.0, 0.0];
     for v in cases {
-        let q = from_f64_dir(v, Dir::Nearest).unwrap();
+        // Use Q:: associated function (spec §2.1)
+        let q = Q::from_f64_dir(v, Dir::Nearest).unwrap();
         check_wf(q, "from_f64_dir");
-        // Dyadic f64 values convert exactly; to_f64 round-trips.
-        assert!((to_f64(q) - v).abs() < 1e-15,
-            "from_f64_dir({v}) round-trip: got {}", to_f64(q));
+        // Dyadic f64 values convert exactly; to_f64 round-trips via Q::to_f64.
+        let back = q.to_f64();
+        assert!((back - v).abs() < 1e-15,
+            "from_f64_dir({v}) round-trip: got {}", back);
+    }
+}
+
+// ─── Determinism: byte-identical results across threads ──────────────────────
+
+#[test]
+fn determinism_across_threads() {
+    use std::thread;
+
+    let cases: Vec<(i64, i64)> = (-5i64..=5)
+        .flat_map(|n| (1i64..=5).map(move |d| (n, d)))
+        .collect();
+
+    // Compute on main thread first.
+    let reference: Vec<_> = cases.iter().map(|&(n, d)| {
+        let a = Q::new(n, d).unwrap();
+        let b = Q::new(d, n.max(1)).unwrap();
+        (a.add(b), a.mul(b), a.sub(b))
+    }).collect();
+
+    // Spawn 4 threads each computing the same thing.
+    let handles: Vec<_> = (0..4).map(|_| {
+        let cases = cases.clone();
+        thread::spawn(move || {
+            cases.iter().map(|&(n, d)| {
+                let a = Q::new(n, d).unwrap();
+                let b = Q::new(d, n.max(1)).unwrap();
+                (a.add(b), a.mul(b), a.sub(b))
+            }).collect::<Vec<_>>()
+        })
+    }).collect();
+
+    for handle in handles {
+        let results = handle.join().expect("thread panicked");
+        assert_eq!(results, reference, "non-determinism across threads");
     }
 }

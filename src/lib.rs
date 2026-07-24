@@ -1,14 +1,17 @@
-// the-q: exact-with-verified-rounding rational arithmetic
-// Invariants: I1 (canonical, gcd=1, den>0) and I2 (|num|,den ≤ 2^62-1) on every Q.
-// Proof obligations V1-V6 are discharged by Verus; see each module.
+// the-q: exact-with-verified-rounding rational arithmetic.
+// Invariants enforced on every Q value:
+//   I1 (canonical): den > 0, gcd(|num|, den) = 1, num == 0 => den == 1
+//   I2 (bounded):   |num| ≤ 2^62−1 and den ≤ 2^62−1
+//
+// Proof obligations V1–V8 (see TRUSTED.md and each module's verus! blocks).
 
-pub mod gcd;
+pub(crate) mod gcd;
 pub mod q;
-pub mod round;
+pub(crate) mod round;
 pub mod convert;
+pub mod laws;
 
 #[cfg(feature = "serde")]
 pub mod serde_impl;
 
-pub use q::{Q, Dir};
-pub use convert::from_decimal;
+pub use q::{Q, Dir, BOUND};

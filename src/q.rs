@@ -94,6 +94,31 @@ impl Q {
         }
     }
 
+    // ─── Boundary constructors (spec §2.1) ──────────────────────────────────
+
+    /// Exact decimal ingestion: `from_decimal(85, 2)` → 17/20 = 0.85.
+    /// Returns None if dec_places ≥ 20 or result exceeds BOUND.
+    #[inline]
+    pub fn from_decimal(mantissa: i64, dec_places: u8) -> Option<Q> {
+        crate::convert::from_decimal(mantissa, dec_places)
+    }
+
+    /// Convert f64 to Q with directed rounding via integer bit-decomposition.
+    /// Returns None on NaN, ±inf, or |v| > 2^61.
+    /// Implementation touches no float arithmetic — stays in the verified region.
+    #[inline]
+    pub fn from_f64_dir(v: f64, dir: Dir) -> Option<Q> {
+        crate::convert::from_f64_dir(v, dir)
+    }
+
+    /// Convert Q to f64 for display / DTO purposes ONLY.
+    /// This is the single trusted boundary (see TRUSTED.md). Never feed back
+    /// the result into Q arithmetic.
+    #[inline]
+    pub fn to_f64(self) -> f64 {
+        crate::convert::to_f64(self)
+    }
+
     /// Canonicalize (num, den): sign to den>0, GCD-reduce. None if den==0.
     pub fn new(num: i64, den: i64) -> Option<Q> {
         if den == 0 {
