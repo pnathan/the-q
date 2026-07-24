@@ -40,7 +40,8 @@ if command -v verus >/dev/null 2>&1; then
   # Admit-free targets — each MUST verify (hard gate). Add files here as their
   # obligations are promoted from the scaffold to machine-checked.
   for tgt in verus/src/gcd_checked.rs verus/src/verified.rs verus/src/verified_arith.rs \
-             verus/src/verified_pred.rs verus/src/verified_gcd.rs verus/src/verified_reduce.rs; do
+             verus/src/verified_pred.rs verus/src/verified_gcd.rs verus/src/verified_reduce.rs \
+             verus/src/verified_uniq.rs; do
     echo "==> verus $tgt   (admit-free; hard gate)"
     if verus "$tgt"; then
       echo "    ok: $tgt verified"

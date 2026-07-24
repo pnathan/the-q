@@ -8,7 +8,7 @@ if any hard-gated file regresses.
 
 ## Machine-checked today (admit-free, CI hard-gated, `0 errors`)
 
-**49 verified conditions** across six files, every run:
+**71 verified conditions** across seven files, every run:
 
 | File | Obligations discharged | Conditions |
 |---|---|---|
@@ -18,6 +18,7 @@ if any hard-gated file regresses.
 | `src/verified_pred.rs` | **V3** (`is_zero`, `signum`, `in_unit_interval`, `min`, `max` correct), order reflexivity | 9 |
 | `src/verified_gcd.rs` | **V5** — `gcd` divides both arguments (via `lemma_fundamental_div_mod`) | 5 |
 | `src/verified_reduce.rs` | **V5** — `gcd` is greatest; **V1 core** — reduce-by-gcd preserves value | 10 |
+| `src/verified_uniq.rs` | **V1 complete** — Bézout's identity, Euclid's lemma, canonical-form uniqueness (value equality ⟹ structural equality) | 22 |
 
 Discharged obligations, by spec number:
 
@@ -37,13 +38,14 @@ Discharged obligations, by spec number:
 
 Honestly not yet discharged; each has a clear strategy:
 
-- **V1 (finish)** — canonical-form *uniqueness* (`q_eq` ⟹ structural equality).
-  Needs Euclid's lemma (`gcd(x,y)=1 ∧ x∣yz ⟹ x∣z`), i.e. a Bézout/coprimality
-  argument on top of the GCD lemmas already proven here.
-- **V4** — rounding R1–R4. R1 (identity on representables) and R2 (directed) are
-  tractable given the reduce-value lemma; **R3** (the `2^-60` bound with the
-  per-magnitude dyadic-snap case analysis) and **R4** (grid monotonicity) are
-  the large proofs the spec itself flags as an order-of-magnitude bigger effort.
+- **V1** — ✅ **complete** (uniqueness proven in `verified_uniq.rs`).
+- **V4** — rounding, **in progress** (`candidate_round.rs`): R1 (identity on
+  representables), R2 (directed floor/ceil brackets the value), and R3 at the
+  *grid* level (`0 ≤ n·2^s − q·d < d`, i.e. within one grid step `1/2^s`) are
+  proven division-free on ghost `int`. What remains to close V4 fully: tying the
+  per-magnitude choice of `s` to the `B = 60` relative bound
+  (`2^-s ≤ 2^-60·max(1,|v|)`) and R4 grid monotonicity — the spec's flagged
+  order-of-magnitude-bigger part.
 - **V7/V8** — Lipschitz perturbation lemmas; n-ary accumulation bound (SHOULD).
 
 The shipped `../src/lib.rs` implements exactly these algorithms and is
