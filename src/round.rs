@@ -347,7 +347,7 @@ fn mag_round_exec(un: u128, ud: u128, s: u32, mdir: Dir) -> (k: u64)
 /// Pushing a sign through a canonically-reduced fraction: if `q`'s fields
 /// are the reduced magnitudes with `neg` applied, then `q` equals the
 /// signed original as a cross-multiplication.
-proof fn lemma_signed_value(qn: int, qd: int, g: int, rn: int, rd: int, neg: bool, un: int, ud: int)
+pub(crate) proof fn lemma_signed_value(qn: int, qd: int, g: int, rn: int, rd: int, neg: bool, un: int, ud: int)
     requires
         qn == if neg { -rn } else { rn },
         qd == rd,

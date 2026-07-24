@@ -17,3 +17,9 @@ pub mod wide;
 pub mod round;
 pub mod arith;
 pub mod algebra;
+pub mod float;
+pub mod convert;
+pub mod traits;
+
+pub use q::Q;
+pub use round::Dir;

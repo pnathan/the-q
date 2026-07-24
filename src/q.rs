@@ -157,6 +157,17 @@ pub(crate) fn make_canonical(neg: bool, un: u128, ud: u128) -> (r: Option<Q>)
 }
 
 impl Q {
+    /// The canonical `(num, den)` pair (num may be negative; den > 0
+    /// under the invariant). Total - no precondition - so unverified
+    /// trait glue can call it safely.
+    pub fn to_parts(self) -> (r: (i64, i64))
+        ensures
+            r.0 as int == self.num_s(),
+            r.1 as int == self.den_s(),
+    {
+        (self.num, self.den)
+    }
+
     /// The rational 0 (canonically `0/1`).
     pub fn zero() -> (r: Q)
         ensures
