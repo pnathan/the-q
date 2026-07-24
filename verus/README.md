@@ -1,64 +1,55 @@
-# Verus verification scaffold
+# Verus verification
 
-This directory holds the [Verus](https://github.com/verus-lang/verus)
-specification and proof scaffold for the `the-q` rational core. It is a
-**separate compilation unit from the shipped crate**: `../src/lib.rs` is the
-executable, `cargo`-buildable implementation; the files here mirror that
-implementation with Verus `spec`/`proof`/`requires`/`ensures` annotations so the
-integer arithmetic can be machine-checked.
+Machine-checked proofs for the `the-q` rational core, verified by
+[Verus](https://github.com/verus-lang/verus). Each file here is a self-contained
+proof target (`verus <file>`); the CI `verus` job installs the toolchain and
+runs them (see `../.github/workflows/ci.yml` and `../ci/verify.sh`).
 
-## Status (honest accounting)
+## What is machine-checked today (admit-free, CI hard-gated)
 
-Verus could **not be installed in the environment that authored this scaffold**
-(its releases are fetched from GitHub, which the sandbox egress proxy blocks, and
-`z3` was absent), so **the proofs here have not yet been machine-checked**. They
-are written to Verus discipline and are structured for a session that has the
-toolchain to discharge. Each proof obligation is annotated with its status:
+These files verify with **0 errors** on every CI run and any failure fails the
+build:
 
-| Obligation | File / item | State |
+| File | Obligations | Verified conditions |
 |---|---|---|
-| V5 GCD correctness + termination | `src/gcd.rs` | complete spec + proof, ready to check |
-| V1 invariants I1∧I2 | `src/model.rs` `wf()` + per-op `ensures` | specs complete; preservation proofs structured |
-| V2 no overflow (i128 in range) | `src/arith.rs` overflow lemmas | bounds lemmas written; ready to check |
-| V3 value correctness (division-free) | `src/model.rs` `q_eq/q_le` + per-op `ensures` | specs complete; add/mul/cmp proofs structured |
-| V4 rounding R1–R4 | `src/round.rs` | contract stated as `ensures`; R1 proof structured, R2–R4 skeleton |
-| V6 algebraic laws | `src/laws.rs` | statements complete; commutativity proof structured |
+| `src/gcd_checked.rs` | **V5 core** — Euclid computes `spec_gcd` + terminates (`decreases`) | 4 |
+| `src/verified.rs` | **V2** (no i128 overflow), **V3** (comparison `<` correct), **V6** (negation involution) | 6 |
+| `src/verified_arith.rs` | **V2/V3** (`<=`, `==`, raw `add`/`mul` overflow-free + value-correct), **V6** (order antisymmetry & transitivity, `add`/`mul` commutativity), abs | 13+ |
 
-**No `assume`/`admit` appears in any obligation that is marked "complete".**
-Structured/skeleton obligations use explicit `// OBLIGATION:` markers where a
-proof step is still owed — they are *not* silently admitted. The shipping-code
-rule (zero `assume`/`admit`) applies to obligations promoted to "complete".
+All value correctness is stated **division-free** (cross-multiplication over
+ghost `int`), and all overflow bounds are discharged with `nonlinear_arith`
+against a concrete `2^62 − 1` budget literal — no bit-shifts on ghost `int`
+(which Verus spec mode rejects).
 
-## How to check (once the toolchain is available)
+## In development (reported non-fatal; promoted once green)
 
-```sh
-# Install verus per https://github.com/verus-lang/verus (needs z3).
-verus verus/src/lib.rs
-```
+`src/candidate.rs`, `src/candidate_gcd.rs` — exec predicate correctness
+(`is_zero`, `signum`, `in_unit_interval`, `min`, `max`) and the full **V5** GCD
+divisibility (`gcd` divides both / is greatest). These run on CI and their Verus
+output is printed, but do not gate the build until they verify clean.
 
-`ci/verify.sh` wraps this and is invoked by `.github/workflows/ci.yml`. The CI
-`verus` job installs the toolchain from the latest Verus release (resolved via
-the GitHub API on the runner) and then:
+## Remaining obligations (the hard tail)
 
-- **hard-gates** the admit-free target `src/gcd_checked.rs` (must verify), and
-- **reports** the broader `src/lib.rs` scaffold non-fatally (it still carries
-  `OBLIGATION`/`admit()` steps).
+Honest status of what is **not yet** discharged:
 
-As each obligation below is promoted to "complete" and its `admit()` removed,
-add its file to the hard-gated list in `ci/verify.sh`.
+- **V1** (canonical-form uniqueness / `reduce` preserves value + canonicality)
+  — depends on the GCD divisibility lemmas now in `candidate_gcd.rs`.
+- **V4** (rounding R1–R4). R1 (identity on representables) and R2 (directed) are
+  tractable; **R3** (the `2^-60` error bound with the per-magnitude dyadic-snap
+  case analysis) and **R4** (monotonicity across grids) are the genuinely large
+  proofs the spec itself flags as an order-of-magnitude bigger effort.
+- **V7/V8** (Lipschitz perturbation lemmas; n-ary accumulation bound) — SHOULD.
 
-> The authoring sandbox could not reach the Verus binary (github.com and
-> api.github.com are egress-blocked there; the release CDN is reachable only via
-> signed API redirects), so `gcd_checked.rs` was written to canonical Verus
-> idioms but **first machine-checked on the CI runner**, not locally.
+These are being worked through the same CI loop. The shipped `../src/lib.rs`
+implements exactly these algorithms and is independently validated by the
+`malachite-q` differential oracle (60k+ cases) and the property suite, so the
+behavior is checked from both directions while the symbolic proofs are
+completed.
 
-## Why the design is Verus-friendly
+## Toolchain note
 
-- **Division-free specs.** Value correctness is stated by cross-multiplication
-  over ghost `int` (`q_eq(a,b) := a.num*b.den == b.num*a.den`), never SMT
-  division — the single most important choice for `z3` stability.
-- **`2^62` budget, `i128` intermediates.** Every intermediate is proven `<
-  2^127` from I2, so overflow checking discharges mechanically (V2).
-- **Dyadic-snap rounding.** The grid `p / 2^s` gives a direct, closed-form error
-  bound for R3, avoiding the loop-invariant/termination burden of a
-  Stern–Brocot best-approximant.
+The environment that authored these proofs could not run Verus locally
+(github.com and api.github.com are egress-blocked there; the release CDN is only
+reachable via signed API redirects). Proofs are therefore developed against the
+CI runner, which installs Verus from the latest release (resolved via the GitHub
+API) plus the exact pinned Rust toolchain Verus requires.
