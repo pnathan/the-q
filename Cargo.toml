@@ -1,0 +1,24 @@
+[package]
+name = "the-q"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[dev-dependencies]
+malachite = "0.4"
+malachite-q = "0.4"
+proptest = "1.4"
+serde_json = "1.0"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
