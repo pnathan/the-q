@@ -22,34 +22,54 @@
 use crate::q::Q;
 use crate::rounding::{from_exact_i128, Dir};
 
-pub fn add(a: Q, b: Q) -> Q {
+/// Directed variant used internally by [`crate::interval::QI`] (spec M6) to
+/// bracket the exact result without new overflow/rounding analysis -- it's
+/// the exact same formula and funnel as [`add`], just with `dir` threaded
+/// through instead of hardcoded to `Nearest`.
+pub(crate) fn add_dir(a: Q, b: Q, dir: Dir) -> Q {
     let num = a.numerator() as i128 * b.denominator() as i128
         + b.numerator() as i128 * a.denominator() as i128;
     let den = a.denominator() as i128 * b.denominator() as i128;
-    from_exact_i128(num, den, Dir::Nearest)
+    from_exact_i128(num, den, dir)
 }
 
-pub fn sub(a: Q, b: Q) -> Q {
+pub fn add(a: Q, b: Q) -> Q {
+    add_dir(a, b, Dir::Nearest)
+}
+
+pub(crate) fn sub_dir(a: Q, b: Q, dir: Dir) -> Q {
     let num = a.numerator() as i128 * b.denominator() as i128
         - b.numerator() as i128 * a.denominator() as i128;
     let den = a.denominator() as i128 * b.denominator() as i128;
-    from_exact_i128(num, den, Dir::Nearest)
+    from_exact_i128(num, den, dir)
+}
+
+pub fn sub(a: Q, b: Q) -> Q {
+    sub_dir(a, b, Dir::Nearest)
+}
+
+pub(crate) fn mul_dir(a: Q, b: Q, dir: Dir) -> Q {
+    let num = a.numerator() as i128 * b.numerator() as i128;
+    let den = a.denominator() as i128 * b.denominator() as i128;
+    from_exact_i128(num, den, dir)
 }
 
 pub fn mul(a: Q, b: Q) -> Q {
-    let num = a.numerator() as i128 * b.numerator() as i128;
-    let den = a.denominator() as i128 * b.denominator() as i128;
-    from_exact_i128(num, den, Dir::Nearest)
+    mul_dir(a, b, Dir::Nearest)
 }
 
 /// Requires `!b.is_zero()`. In the absence of a Verus-discharged static
 /// precondition, this is enforced as a hard runtime panic (in every build
 /// profile, not just debug) rather than silently producing an invalid `Q`.
-pub fn div(a: Q, b: Q) -> Q {
+pub(crate) fn div_dir(a: Q, b: Q, dir: Dir) -> Q {
     assert!(!b.is_zero(), "div: precondition violated, divisor is zero");
     let num = a.numerator() as i128 * b.denominator() as i128;
     let den = a.denominator() as i128 * b.numerator() as i128;
-    from_exact_i128(num, den, Dir::Nearest)
+    from_exact_i128(num, den, dir)
+}
+
+pub fn div(a: Q, b: Q) -> Q {
+    div_dir(a, b, Dir::Nearest)
 }
 
 /// Always exact: `I2` is symmetric in sign, and `|num| <= 2^62 - 1 <
