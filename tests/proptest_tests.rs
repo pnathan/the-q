@@ -1,4 +1,6 @@
 use proptest::prelude::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use the_q::{Dir, Q};
 
 const BOUND: u64 = (1u64 << 62) - 1;
@@ -439,6 +441,84 @@ proptest! {
             prop_assert_eq!(s, -1);
         } else {
             prop_assert_eq!(s, 0);
+        }
+    }
+}
+
+// ============================================================
+// Determinism (byte-identical results across runs)
+// ============================================================
+
+fn hash_of(q: Q) -> u64 {
+    let mut h = DefaultHasher::new();
+    q.hash(&mut h);
+    h.finish()
+}
+
+proptest! {
+    #[test]
+    fn deterministic_add(a in arb_q(), b in arb_q()) {
+        let r1 = a + b;
+        let r2 = a + b;
+        prop_assert_eq!(r1.num(), r2.num());
+        prop_assert_eq!(r1.den(), r2.den());
+        prop_assert_eq!(hash_of(r1), hash_of(r2));
+    }
+
+    #[test]
+    fn deterministic_mul(a in arb_q(), b in arb_q()) {
+        let r1 = a * b;
+        let r2 = a * b;
+        prop_assert_eq!(r1.num(), r2.num());
+        prop_assert_eq!(r1.den(), r2.den());
+        prop_assert_eq!(hash_of(r1), hash_of(r2));
+    }
+}
+
+// ============================================================
+// Constructor rejection of out-of-range values
+// ============================================================
+
+#[test]
+fn constructor_rejects_i64_min() {
+    assert!(Q::new(i64::MIN, 1).is_none());
+    assert!(Q::new(1, i64::MIN).is_none());
+    // i64::MIN / i64::MIN reduces to 1/1 — valid after GCD reduction
+    assert_eq!(Q::new(i64::MIN, i64::MIN), Some(Q::one()));
+}
+
+#[test]
+fn constructor_rejects_zero_denominator() {
+    assert!(Q::new(1, 0).is_none());
+    assert!(Q::new(0, 0).is_none());
+}
+
+proptest! {
+    #[test]
+    fn constructor_rejects_over_budget(
+        n in (BOUND as i64 + 1)..=i64::MAX,
+    ) {
+        // d=1 ensures GCD reduction cannot shrink |n| below budget
+        prop_assert!(Q::new(n, 1).is_none());
+    }
+}
+
+// ============================================================
+// Serde round-trip
+// ============================================================
+
+#[cfg(feature = "serde")]
+mod serde_tests {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn serde_json_round_trip(a in arb_q()) {
+            let json = serde_json::to_string(&a).unwrap();
+            let back: Q = serde_json::from_str(&json).unwrap();
+            prop_assert_eq!(a, back);
+            prop_assert_eq!(a.num(), back.num());
+            prop_assert_eq!(a.den(), back.den());
         }
     }
 }

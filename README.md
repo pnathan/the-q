@@ -54,18 +54,19 @@ small cases and up to the accumulated error bound in general.
 - Spec-level lemmas: commutativity (add, mul), identity elements (zero, one),
   negation involution, negation/abs preserve invariant, multiplication by zero
 
-**Tested (118 tests):**
+**Tested (124 tests):**
 - 64 unit tests (Q arithmetic, interval ops, rounding, constructors)
 - 17 malachite-q oracle differential tests (exact-path + R3 bounds)
-- 37 proptest property tests (invariant preservation, commutativity,
-  associativity, distributivity, directed rounding contracts, R3 bounds)
+- 43 proptest property tests (invariant preservation, commutativity,
+  associativity, distributivity, directed rounding contracts, R3 bounds,
+  determinism, constructor rejection, serde round-trip)
 
 See `TRUSTED.md` for the single `external_body` function (`to_f64`).
 
 ## Testing
 
 ```sh
-cargo test                      # all 118 tests
+cargo test                      # all 124 tests
 cargo test --features serde     # include serde round-trip
 cargo test --test proptest_tests  # property-based tests only
 cargo test --test oracle        # malachite-q differential tests only

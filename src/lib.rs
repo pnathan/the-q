@@ -266,13 +266,16 @@ impl Q {
 
     /// Construct from numerator and denominator.
     ///
-    /// Returns `None` iff `den == 0`. Otherwise canonicalizes (sign to `den > 0`,
-    /// GCD-reduces). Inputs within `i64` always fit I2 after reduction.
+    /// Returns `None` if `den == 0` or if the reduced result exceeds I2 budget.
     pub fn new(num: i64, den: i64) -> Option<Self> {
         if den == 0 {
             return None;
         }
-        Some(Self::canonical(num as i128, den as i128))
+        let q = Self::canonical(num as i128, den as i128);
+        if q.num().unsigned_abs() > BOUND || (q.den() as u64) > BOUND {
+            return None;
+        }
+        Some(q)
     }
 
     /// Exact decimal input: `from_decimal(85, 2)` = `85/100 = 17/20` = 0.85.

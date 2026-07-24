@@ -27,6 +27,10 @@ jobs:
       - name: Test
         run: cargo test --all-features
 
+      - name: Verify malachite not in release deps
+        run: |
+          cargo tree --no-dev | grep -qi malachite && { echo "FAIL: malachite found in release deps"; exit 1; } || true
+
   verus:
     name: Verus Verification
     runs-on: ubuntu-latest
