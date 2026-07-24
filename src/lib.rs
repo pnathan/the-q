@@ -16,3 +16,4 @@ pub mod q;
 pub mod wide;
 pub mod round;
 pub mod arith;
+pub mod algebra;
