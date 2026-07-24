@@ -82,7 +82,7 @@ proof fn lemma_add_associative(na: int, da: int, nb: int, db: int, nc: int, dc: 
         q_value_eq(
             add_num(add_num(na, da, nb, db), add_den(da, db), nc, dc),
             add_den(add_den(da, db), dc),
-            add_num(na, da, add_num(nb, db, nc, dc)),
+            add_num(na, da, add_num(nb, db, nc, dc), add_den(db, dc)),
             add_den(da, add_den(db, dc)),
         ),
 {
@@ -92,6 +92,7 @@ proof fn lemma_add_associative(na: int, da: int, nb: int, db: int, nc: int, dc: 
         na,
         da,
         add_num(nb, db, nc, dc),
+        add_den(db, dc),
     )) by (nonlinear_arith)
     {}
 }
