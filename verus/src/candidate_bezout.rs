@@ -103,10 +103,11 @@ pub proof fn divides_antisym(a: int, b: int)
 {
     let k = choose|k: int| b == #[trigger] (a * k);
     let j = choose|k: int| a == #[trigger] (b * k);
-    // a == a*k*j  =>  k*j == 1  =>  k == 1 (positive)
+    // a == a*(k*j)  =>  k*j == 1;  b == a*k with a,b >= 1  =>  k >= 1  =>  k == 1
     assert(a == a * (k * j)) by (nonlinear_arith) requires b == a * k, a == b * j;
     assert(k * j == 1) by (nonlinear_arith) requires a == a * (k * j), a >= 1;
-    assert(k == 1) by (nonlinear_arith) requires k * j == 1, a == a * k, a >= 1, b >= 1, b == a * k;
+    assert(k >= 1) by (nonlinear_arith) requires b == a * k, a >= 1, b >= 1;
+    assert(k == 1) by (nonlinear_arith) requires k * j == 1, k >= 1;
     assert(b == a * 1);
 }
 
