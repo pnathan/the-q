@@ -14,7 +14,7 @@ pub open spec fn gcd(a: nat, b: nat) -> nat
 }
 
 pub open spec fn divides(d: int, n: int) -> bool {
-    exists|k: int| n == d * k
+    exists|k: int| n == #[trigger] (d * k)
 }
 
 /// If `d` divides `x` and `y`, it divides any integer linear combination.
