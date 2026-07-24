@@ -8,10 +8,12 @@
 
 pub mod gcd;
 pub mod q;
+pub mod qi;
 pub mod spec;
 pub mod spec_proofs;
 
 pub use q::{Direction, Q};
+pub use qi::QI;
 
 #[cfg(test)]
 mod tests {
