@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  VERUS_VERSION: "0.2026.07.18.3a4d30b"
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --all-features
+
+      - name: Test
+        run: cargo test --all-features
+
+  verus:
+    name: Verus Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Verus binary
+        id: cache-verus
+        uses: actions/cache@v4
+        with:
+          path: /opt/verus
+          key: verus-${{ env.VERUS_VERSION }}-linux-x86
+
+      - name: Download Verus
+        if: steps.cache-verus.outputs.cache-hit != 'true'
+        run: |
+          curl -fSL "https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip" -o verus.zip
+          unzip verus.zip -d /opt/verus-tmp
+          mv /opt/verus-tmp/verus-* /opt/verus || mv /opt/verus-tmp /opt/verus
+          chmod +x /opt/verus/verus
+
+      - name: Verify GCD proofs
+        run: /opt/verus/verus src/gcd.rs --crate-type=lib

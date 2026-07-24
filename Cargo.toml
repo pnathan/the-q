@@ -9,7 +9,14 @@ license = "LGPL-2.1-only"
 default = []
 serde = ["dep:serde"]
 
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep)'] }
+
 [dependencies]
+vstd = "0.0.0-2026-07-12-0122"
 serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]

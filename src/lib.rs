@@ -32,6 +32,36 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use vstd::prelude::*;
+
+verus! {
+
+/// Ghost model: Q values are equal iff cross-multiplication agrees.
+/// Division-free, per the spec's ghost-model discipline.
+pub open spec fn q_eq(a_num: int, a_den: int, b_num: int, b_den: int) -> bool {
+    a_num * b_den == b_num * a_den
+}
+
+/// Ghost model: a ≤ b via cross-multiplication (both dens positive).
+pub open spec fn q_le(a_num: int, a_den: int, b_num: int, b_den: int) -> bool {
+    a_num * b_den <= b_num * a_den
+}
+
+/// The I2 budget bound as a spec constant.
+pub open spec fn spec_bound() -> int {
+    (1i64 << 62u32) - 1
+}
+
+/// Invariant I1 ∧ I2: canonical and bounded.
+pub open spec fn q_inv(num: int, den: int) -> bool {
+    &&& den > 0
+    &&& num == 0 ==> den == 1
+    &&& num.abs() <= spec_bound()
+    &&& den <= spec_bound()
+}
+
+} // verus!
+
 /// A bounded rational number: value = `num / den`.
 ///
 /// See module-level docs for invariants.
@@ -40,15 +70,6 @@ pub struct Q {
     num: i64,
     den: i64,
 }
-
-// === Ghost model (Verus spec functions would go here) ===
-//
-// spec fn q_value(q: Q) -> int { q.num as int * ... }
-// spec fn q_eq(a: Q, b: Q) -> bool { a.num * b.den == b.num * a.den }
-// spec fn q_le(a: Q, b: Q) -> bool { a.num * b.den <= b.num * a.den }
-//
-// All value-correctness specs are stated division-free via cross-multiplication
-// over ghost `int` types.
 
 // ============================================================
 // Constructors (§2.1)
