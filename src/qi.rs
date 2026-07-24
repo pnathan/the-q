@@ -36,9 +36,7 @@ impl QI {
     /// Midpoint of the interval: (lo + hi) / 2
     pub fn midpoint(self) -> Q {
         let sum = self.lo.add(self.hi);
-        Q::from_int(2)
-            .and_then(|two| sum.div(two))
-            .unwrap_or(sum)
+        Q::from_int(2).and_then(|two| sum.div(two)).unwrap_or(sum)
     }
 
     /// Check if interval contains a single point
