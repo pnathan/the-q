@@ -45,6 +45,21 @@ jobs:
           unzip -q verus.zip
           mv verus-x86-linux verus-install
           chmod +x verus-install/verus
+      - name: Install the rust toolchain verus requires
+        # Parsed from verus's own error output rather than hardcoded, so a
+        # future VERUS_VERSION bump doesn't silently drift out of sync with
+        # whatever toolchain that release actually needs.
+        run: |
+          set +e
+          out=$(./verus-install/verus --version 2>&1)
+          set -e
+          if echo "$out" | grep -q "required rust toolchain"; then
+            toolchain=$(echo "$out" | grep -oP "required rust toolchain \K\S+")
+            echo "Installing required toolchain: $toolchain"
+            rustup install "$toolchain"
+          else
+            echo "$out"
+          fi
       - name: verus --version (sanity check)
         run: ./verus-install/verus --version
       - name: verus smoke test
