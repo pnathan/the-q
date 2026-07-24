@@ -137,6 +137,7 @@ impl Q {
 
     /// Negate: -self
     /// Always exact (sign symmetric under I2)
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Q {
         Q {
             num: self.num.wrapping_neg(),
@@ -176,6 +177,7 @@ impl Q {
 
     /// Add two rationals: self + other
     /// Exact if result fits in bounded representation, otherwise rounds
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Q) -> Q {
         self.add_with_dir(other, Direction::Nearest)
     }
@@ -183,12 +185,12 @@ impl Q {
     /// Add with specified rounding direction
     pub fn add_with_dir(self, other: Q, dir: Direction) -> Q {
         // Compute exact numerator and denominator in i128
-        let num_exact = (self.num as i128) * (other.den as i128)
-            + (other.num as i128) * (self.den as i128);
+        let num_exact =
+            (self.num as i128) * (other.den as i128) + (other.num as i128) * (self.den as i128);
         let den_exact = (self.den as i128) * (other.den as i128);
 
         // Reduce by GCD
-        let g = gcd_i128(num_exact.abs() as u64, den_exact as u64) as i128;
+        let g = gcd_i128(abs_to_u64(num_exact), den_exact as u64) as i128;
         let num_reduced = num_exact / g;
         let den_reduced = den_exact / g;
 
@@ -197,17 +199,18 @@ impl Q {
     }
 
     /// Subtract: self - other
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Q) -> Q {
         self.sub_with_dir(other, Direction::Nearest)
     }
 
     /// Subtract with specified rounding direction
     pub fn sub_with_dir(self, other: Q, dir: Direction) -> Q {
-        let num_exact = (self.num as i128) * (other.den as i128)
-            - (other.num as i128) * (self.den as i128);
+        let num_exact =
+            (self.num as i128) * (other.den as i128) - (other.num as i128) * (self.den as i128);
         let den_exact = (self.den as i128) * (other.den as i128);
 
-        let g = gcd_i128(num_exact.abs() as u64, den_exact as u64) as i128;
+        let g = gcd_i128(abs_to_u64(num_exact), den_exact as u64) as i128;
         let num_reduced = num_exact / g;
         let den_reduced = den_exact / g;
 
@@ -215,6 +218,7 @@ impl Q {
     }
 
     /// Multiply: self * other
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Q) -> Q {
         self.mul_with_dir(other, Direction::Nearest)
     }
@@ -224,7 +228,7 @@ impl Q {
         let num_exact = (self.num as i128) * (other.num as i128);
         let den_exact = (self.den as i128) * (other.den as i128);
 
-        let g = gcd_i128(num_exact.abs() as u64, den_exact as u64) as i128;
+        let g = gcd_i128(abs_to_u64(num_exact), den_exact as u64) as i128;
         let num_reduced = num_exact / g;
         let den_reduced = den_exact / g;
 
@@ -233,6 +237,7 @@ impl Q {
 
     /// Divide: self / other
     /// Requires !other.is_zero()
+    #[allow(clippy::should_implement_trait)]
     pub fn div(self, other: Q) -> Option<Q> {
         self.div_with_dir(other, Direction::Nearest)
     }
@@ -246,7 +251,7 @@ impl Q {
         let num_exact = (self.num as i128) * (other.den as i128);
         let den_exact = (self.den as i128) * (other.num as i128);
 
-        let g = gcd_i128(num_exact.abs() as u64, den_exact.abs() as u64) as i128;
+        let g = gcd_i128(abs_to_u64(num_exact), abs_to_u64(den_exact)) as i128;
         let mut num_reduced = num_exact / g;
         let mut den_reduced = den_exact / g;
 
@@ -395,6 +400,12 @@ fn gcd_i128(mut a: u64, mut b: u64) -> u64 {
         a = temp;
     }
     a
+}
+
+/// Convert i128 to u64 for GCD (safe because values are bounded by I2)
+#[allow(clippy::cast_abs_to_unsigned)]
+fn abs_to_u64(x: i128) -> u64 {
+    x.abs() as u64
 }
 
 #[cfg(test)]

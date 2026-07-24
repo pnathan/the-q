@@ -91,13 +91,7 @@ fn test_distributivity_exact() {
 
 #[test]
 fn test_canonicality_preserved() {
-    let test_cases = [
-        (2, 4),
-        (6, 9),
-        (10, 15),
-        (-3, 6),
-        (-8, -12),
-    ];
+    let test_cases = [(2, 4), (6, 9), (10, 15), (-3, 6), (-8, -12)];
 
     for (num, den) in test_cases {
         let q = Q::new(num, den).unwrap();
@@ -109,11 +103,7 @@ fn test_canonicality_preserved() {
 
 #[test]
 fn test_bounds_preserved() {
-    let test_cases = [
-        (1, 2),
-        (999, 1000),
-        (1, 1000000),
-    ];
+    let test_cases = [(1, 2), (999, 1000), (1, 1000000)];
 
     for (num, den) in test_cases {
         let q = Q::new(num, den).unwrap();

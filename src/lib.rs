@@ -6,12 +6,12 @@
 // - Verus verification: Skeleton in place; full proofs pending Verus availability
 // - CI: Configured to run both `cargo build` and `verus` checks
 
-pub mod q;
 pub mod gcd;
+pub mod q;
 pub mod spec;
 pub mod spec_proofs;
 
-pub use q::{Q, Direction};
+pub use q::{Direction, Q};
 
 #[cfg(test)]
 mod tests {

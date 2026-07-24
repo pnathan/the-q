@@ -51,18 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - name: Check malachite-q not in release dependencies
         run: |
           # malachite-q is only allowed as a dev-dependency
-          # Extract [dependencies] section and check it doesn't contain malachite-q
-          if sed -n '/^\[dependencies\]/,/^\[/p' Cargo.toml | grep -i "malachite-q"; then
+          # Parse Cargo.toml: check [dependencies] section before [dev-dependencies]
+          if awk '/^\[dependencies\]/,/^\[dev-dependencies\]/ {print}' Cargo.toml | grep -i "malachite-q"; then
             echo "ERROR: malachite-q found in non-dev dependencies"
             exit 1
           fi
           echo "✓ malachite-q is dev-dependency only"
-      - name: Check no LGPL in release binaries (future)
-        run: |
-          # This check will be tightened as the crate matures
-          # For now, we just verify the manifest
-          echo "✓ LGPL check (manifest-based)"
