@@ -19,6 +19,13 @@ pub proof fn pow2_pos(n: nat)
     if n == 0 {} else { pow2_pos((n - 1) as nat); }
 }
 
+/// `pow2(n + 1) == 2 * pow2(n)` (single-step unfold).
+pub proof fn pow2_step(n: nat)
+    ensures pow2(n + 1) == 2 * pow2(n),
+{
+    // pow2(n+1) unfolds to 2*pow2((n+1-1) as nat) == 2*pow2(n) since n+1 > 0.
+}
+
 /// `pow2(a + b) == pow2(a) * pow2(b)`.
 pub proof fn pow2_adds(a: nat, b: nat)
     ensures pow2(a + b) == pow2(a) * pow2(b),
@@ -27,12 +34,14 @@ pub proof fn pow2_adds(a: nat, b: nat)
     if b == 0 {
     } else {
         let bm = (b - 1) as nat;
-        pow2_adds(a, bm);                       // pow2(a + bm) == pow2(a) * pow2(bm)
+        pow2_adds(a, bm);                        // pow2(a + bm) == pow2(a) * pow2(bm)
+        assert(b == bm + 1);
         assert(a + b == (a + bm) + 1);
-        assert(a + b > 0);
-        assert((a + b - 1) as nat == a + bm);
-        assert(pow2(a + b) == 2 * pow2(a + bm)); // def unfold (a+b > 0)
-        assert(pow2(b) == 2 * pow2(bm));         // def unfold (b > 0)
+        pow2_step(a + bm);                       // pow2((a+bm)+1) == 2*pow2(a+bm)
+        pow2_step(bm);                           // pow2(bm+1)     == 2*pow2(bm)
+        // congruence (a+b == (a+bm)+1, b == bm+1) gives:
+        assert(pow2(a + b) == 2 * pow2(a + bm));
+        assert(pow2(b) == 2 * pow2(bm));
         assert(pow2(a + b) == pow2(a) * pow2(b)) by (nonlinear_arith)
             requires
                 pow2(a + b) == 2 * pow2(a + bm),
