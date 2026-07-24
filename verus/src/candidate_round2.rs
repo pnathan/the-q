@@ -26,14 +26,18 @@ pub proof fn pow2_adds(a: nat, b: nat)
 {
     if b == 0 {
     } else {
-        pow2_adds(a, (b - 1) as nat);
-        assert(pow2(a + b) == 2 * pow2((a + b - 1) as nat));
-        assert(pow2(b) == 2 * pow2((b - 1) as nat));
+        let bm = (b - 1) as nat;
+        pow2_adds(a, bm);                       // pow2(a + bm) == pow2(a) * pow2(bm)
+        assert(a + b == (a + bm) + 1);
+        assert(a + b > 0);
+        assert((a + b - 1) as nat == a + bm);
+        assert(pow2(a + b) == 2 * pow2(a + bm)); // def unfold (a+b > 0)
+        assert(pow2(b) == 2 * pow2(bm));         // def unfold (b > 0)
         assert(pow2(a + b) == pow2(a) * pow2(b)) by (nonlinear_arith)
             requires
-                pow2((a + b) as nat) == 2 * pow2((a + b - 1) as nat),
-                pow2((a + b - 1) as nat) == pow2(a) * pow2((b - 1) as nat),
-                pow2(b) == 2 * pow2((b - 1) as nat);
+                pow2(a + b) == 2 * pow2(a + bm),
+                pow2(a + bm) == pow2(a) * pow2(bm),
+                pow2(b) == 2 * pow2(bm);
     }
 }
 
@@ -74,11 +78,14 @@ pub proof fn r3_small_case(s: nat)
     requires s >= 60,
     ensures pow2(60) <= pow2(s),
 {
-    pow2_adds(60, (s - 60) as nat);       // pow2(s) == pow2(60)*pow2(s-60)
-    pow2_pos((s - 60) as nat);
-    assert(pow2(s) == pow2(60) * pow2((s - 60) as nat));
+    let k = (s - 60) as nat;
+    pow2_adds(60, k);                     // pow2(60 + k) == pow2(60) * pow2(k)
+    assert(60 + k == s);
+    pow2_pos(k);
+    pow2_pos(60);
+    assert(pow2(s) == pow2(60) * pow2(k));
     assert(pow2(60) <= pow2(s)) by (nonlinear_arith)
-        requires pow2(s) == pow2(60) * pow2((s - 60) as nat), pow2((s - 60) as nat) >= 1, pow2(60) >= 1;
+        requires pow2(s) == pow2(60) * pow2(k), pow2(k) >= 1, pow2(60) >= 1;
 }
 
 fn main() {}
