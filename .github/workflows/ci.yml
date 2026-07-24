@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+
+env:
+  # Pinned Verus release; must match the vstd pin in Cargo.toml.
+  VERUS_TAG: "release/0.2026.07.12.0b42f4c"
+
+jobs:
+  build-and-test:
+    name: cargo build + test (oracle, properties, adversarial)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (default features)
+        run: cargo build --locked || cargo build
+
+      - name: Build (serde)
+        run: cargo build --features serde
+
+      - name: Test (default features)
+        run: cargo test
+
+      - name: Test (serde)
+        run: cargo test --features serde
+
+  license-guard:
+    name: no LGPL in the release dependency tree
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: malachite must not appear outside dev-dependencies
+        run: |
+          set -eu
+          # -e normal excludes dev-dependencies; check both feature sets.
+          if cargo tree -e normal --features serde --prefix none | grep -i malachite; then
+            echo "::error::LGPL-3.0 oracle (malachite) leaked into the normal dependency tree"
+            exit 1
+          fi
+          if cargo tree -e normal --prefix none | grep -i malachite; then
+            echo "::error::LGPL-3.0 oracle (malachite) leaked into the normal dependency tree"
+            exit 1
+          fi
+          echo "release tree is malachite-free"
+
+  no-assume:
+    name: zero assume/admit in shipping code
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: grep for assume/admit
+        run: |
+          set -eu
+          if grep -rn --include='*.rs' -E '\bassume\(|\badmit\(\)' src/; then
+            echo "::error::assume/admit found in src/"
+            exit 1
+          fi
+          echo "no assume/admit in src/"
+
+  verus:
+    name: Verus verification (pinned release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Verus release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release download "$VERUS_TAG" --repo verus-lang/verus \
+            --pattern '*x86-linux*' --output verus.zip
+          unzip -q verus.zip
+          ls -d verus-x86-linux
+
+      - name: Install the Rust toolchain Verus needs
+        run: |
+          set -eu
+          # rust-toolchain.toml channel of the pinned Verus release
+          rustup toolchain install 1.96.0 \
+            --profile minimal \
+            --component rustc,rust-std,cargo,rustfmt,rustc-dev,llvm-tools
+
+      - name: Verify
+        run: |
+          set -eu
+          ./verus-x86-linux/verus --crate-type=lib src/lib.rs --rlimit 30 \
+            | tee verify.log
+          grep -q "0 errors" verify.log
