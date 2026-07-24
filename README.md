@@ -6,32 +6,41 @@ subjective-logic fusion engine. Full spec: this README summarizes it; the
 authoritative version is the design document this crate was built from
 (see "Design provenance" below).
 
-## Status: not yet Verus-verified
+## Status: partially Verus-verified
 
 **Read this before relying on this crate for anything safety-critical.**
-The design is meant to be checked by [Verus](https://github.com/verus-lang/verus),
-and every function's contract is documented as if it will be. But **no
-Verus proof has actually been run against this code.** This crate was
-built in a sandboxed environment that could install ordinary Rust
-dependencies from crates.io but had no route to fetch the Verus toolchain
-itself (distributed only as GitHub release binaries, from a host this
-environment's network policy didn't allow). See [`TRUSTED.md`](TRUSTED.md)
-for the full accounting.
+[Verus](https://github.com/verus-lang/verus) **is wired into CI**
+(`.github/workflows/ci.yml`, `verus` job) and is machine-checking real
+proofs, not just documented contracts. Per-obligation status (see
+[`TRUSTED.md`](TRUSTED.md) for the full table and caveats):
 
-What *is* true today:
-- The full mathematical contract (`I1`/`I2` canonical/bounded invariants,
-  the `R1`-`R4` rounding contract, `V1`-`V8` obligations) is implemented,
-  documented at each function, and defended by three test suites:
-  property tests (`tests/property.rs`), a differential oracle against
-  `malachite-q` (`tests/differential.rs`), and adversarial edge cases
-  (`tests/adversarial.rs`).
-- `overflow-checks = true` in every build profile means any place the "this
-  is provably in range" claim is wrong fails loudly, not silently.
-- `cargo clippy -D warnings` and `cargo fmt --check` are clean.
+- ✅ **Proved**: V1 (canonical-form invariant), V2 (overflow safety), V3
+  (value correctness vs. the ghost model), V5 (GCD correctness +
+  termination), V6 (algebraic laws), and R1 of V4 (identity on
+  representables).
+- 🟡🔴 **Not proved**: R2-R4 of V4 (the directed-rounding algorithm's
+  directedness, error bound, and monotonicity -- the hardest single piece),
+  and V7/V8 (spec-marked SHOULD).
 
-What is *not* true: none of the above is a machine-checked proof. Treat the
-`requires`/`ensures`-style doc comments as a precise target for a future
-`verus!` pass, not as a substitute for one.
+Two important caveats on the proved items, detailed in `TRUSTED.md`: the
+proofs live in standalone `verus/*.rs` files that mirror the shipped `src/`
+code rather than verifying the literal compiled crate (wiring up `vstd` as
+a real cargo dependency so both are the same code is unfinished work), and
+every proof was authored and iterated on **entirely via CI feedback** --
+the environment writing this crate has no local Verus toolchain access
+(GitHub release-binary distribution; this session's GitHub access was
+scoped to a single repository).
+
+What backs the unproved obligations in the meantime: `overflow-checks =
+true` in every build profile (any place a "provably in range" claim is
+wrong fails loudly, not silently), and three test suites -- property tests
+(`tests/property.rs`), a differential oracle against `malachite-q`
+(`tests/differential.rs`), and adversarial edge cases
+(`tests/adversarial.rs`) -- that empirically validate them, including R3's
+`2^-60` error bound and R4's monotonicity. That's testing, not proof; treat
+the `requires`/`ensures`-style doc comments on unproved obligations as a
+precise target for future Verus work, not a substitute for it.
+`cargo clippy -D warnings` and `cargo fmt --check` are clean throughout.
 
 ## What `Q` is
 
@@ -109,6 +118,24 @@ design, would be statically discharged by the caller; absent that proof,
 this crate enforces them as hard runtime panics (in every build profile)
 rather than silently producing an invalid `Q`.
 
+### `QI`: directed-rounding intervals (spec M6, stretch)
+
+```rust
+use the_q::{interval_ops, Q, QI};
+
+let a = QI::from_f64(0.1).unwrap();
+let b = QI::point(Q::new(1, 3).unwrap());
+let sum = interval_ops::add(a, b); // sum.lo() <= exact value <= sum.hi(), always
+```
+
+`QI { lo, hi }` brackets an exact rational value using the same `Dir`
+plumbing the rounding design was built to support: every op rounds `lo`
+down and `hi` up, so the true result is always inside `[lo, hi]`. `mul`/
+`div` use the standard four-corners/reciprocal-interval constructions (see
+`src/interval.rs`). No Verus proof of soundness -- plain Rust, tested
+against `malachite-q` in `tests/interval.rs`; the spec marks this milestone
+stretch.
+
 ## Why not just use `malachite-q` (or `f64`)?
 
 - `f64` fusion arithmetic is non-deterministic across evaluation order,
@@ -145,13 +172,19 @@ cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ./scripts/check-no-lgpl3-release-deps.sh
+
+# Verus proofs (verus/*.rs, standalone -- see TRUSTED.md). Requires the
+# verus binary on PATH; CI downloads it fresh each run (see ci.yml).
+for f in verus/*.rs; do verus --rlimit 60 "$f"; done
 ```
 
 ## Design provenance
 
-This crate implements milestones M1-M4 of a design spec for a "verified
-rational arithmetic core" numeric backbone (canonical `Q` type, i128-safe
-arithmetic, directed dyadic rounding, the f64 boundary, n-ary folds,
-serde). M5 (this test harness) is implemented; the Verus proof work under
-M1-M3's obligations (V1-V8) is the concrete next step, see `TRUSTED.md`.
-M6 (Lipschitz lemmas, an interval type) is explicitly out of scope here.
+This crate implements milestones M1-M5 of a design spec for a "verified
+rational arithmetic core" numeric backbone: the canonical `Q` type,
+i128-safe arithmetic, directed dyadic rounding, the f64 boundary, n-ary
+folds, serde (M1-M4), and the malachite-oracle/property-test/CI harness
+(M5). M6 (stretch: Lipschitz lemmas, an interval type) is partially done --
+`QI` is implemented and tested, the Lipschitz lemmas (V7) are not attempted.
+See `TRUSTED.md` for exactly which of the spec's V1-V8 Verus obligations
+are machine-proved vs. still open at any given commit.
