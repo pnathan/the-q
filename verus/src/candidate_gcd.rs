@@ -22,8 +22,8 @@ pub proof fn lemma_divides_lincomb(d: int, x: int, y: int, p: int, q: int)
     requires divides(d, x), divides(d, y),
     ensures divides(d, x * p + y * q),
 {
-    let kx = choose|k: int| x == d * k;
-    let ky = choose|k: int| y == d * k;
+    let kx = choose|k: int| x == #[trigger] (d * k);
+    let ky = choose|k: int| y == #[trigger] (d * k);
     assert(x * p + y * q == d * (kx * p + ky * q)) by (nonlinear_arith)
         requires x == d * kx, y == d * ky;
 }

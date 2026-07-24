@@ -51,9 +51,9 @@ pub fn is_zero(q: Q) -> (r: bool)
 pub fn signum(q: Q) -> (r: i32)
     requires bounded(q),
     ensures
-        (r == 1) <==> (q.num as int > 0),
-        (r == 0) <==> (q.num as int == 0),
-        (r == -1) <==> (q.num as int < 0),
+        q.num as int > 0 ==> r == 1,
+        q.num as int == 0 ==> r == 0,
+        q.num as int < 0 ==> r == -1,
 {
     if q.num > 0 {
         1
