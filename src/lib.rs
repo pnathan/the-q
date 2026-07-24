@@ -1,9 +1,15 @@
 // Verified Rational (ℚ) Arithmetic Core
 // Exact-with-verified-rounding rational arithmetic, checked by Verus
+//
+// Verification status:
+// - Milestone 1: Core type and basic operations
+// - Verus verification: Skeleton in place; full proofs pending Verus availability
+// - CI: Configured to run both `cargo build` and `verus` checks
 
 pub mod q;
 pub mod gcd;
 pub mod spec;
+pub mod spec_proofs;
 
 pub use q::{Q, Direction};
 

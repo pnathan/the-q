@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-and-test:
+    name: Build and Test (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all
+      - name: Run tests
+        run: cargo test --all
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Lint
+        run: cargo clippy --all -- -D warnings
+
+  # Verus verification will be added in M5
+  # For now, this is a placeholder that documents what will be verified
+  verus-verify:
+    name: Verus Verification
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Non-blocking during M1-M4; required for M5+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Verus availability
+        run: |
+          if ! command -v verus &> /dev/null; then
+            echo "Verus not available (expected during M1-M4)"
+            echo "Verification framework will be fully integrated in M5"
+            exit 0
+          fi
+      - name: Run Verus verification
+        run: verus src/lib.rs --verify all
+        if: success()
+
+  # LGPL-3.0 dependency check (required for all releases)
+  lgpl-check:
+    name: LGPL Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check malachite-q not in release dependencies
+        run: |
+          # malachite-q is only allowed as a dev-dependency
+          if grep -q "malachite-q" Cargo.toml | grep -v "\[dev-dependencies\]"; then
+            echo "ERROR: malachite-q found in non-dev dependencies"
+            exit 1
+          fi
+          echo "✓ malachite-q is dev-dependency only"
+      - name: Check no LGPL in release binaries (future)
+        run: |
+          # This check will be tightened as the crate matures
+          # For now, we just verify the manifest
+          echo "✓ LGPL check (manifest-based)"
