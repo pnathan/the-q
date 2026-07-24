@@ -8,7 +8,7 @@ if any hard-gated file regresses.
 
 ## Machine-checked today (admit-free, CI hard-gated, `0 errors`)
 
-**71 verified conditions** across seven files, every run:
+**100+ verified conditions** across ten files, every run:
 
 | File | Obligations discharged | Conditions |
 |---|---|---|
@@ -39,14 +39,15 @@ Discharged obligations, by spec number:
 Honestly not yet discharged; each has a clear strategy:
 
 - **V1** — ✅ **complete** (uniqueness proven in `verified_uniq.rs`).
-- **V4** — rounding, **in progress** (`candidate_round.rs`): R1 (identity on
-  representables), R2 (directed floor/ceil brackets the value), and R3 at the
-  *grid* level (`0 ≤ n·2^s − q·d < d`, i.e. within one grid step `1/2^s`) are
-  proven division-free on ghost `int`. What remains to close V4 fully: tying the
-  per-magnitude choice of `s` to the `B = 60` relative bound
-  (`2^-s ≤ 2^-60·max(1,|v|)`) and R4 grid monotonicity — the spec's flagged
-  order-of-magnitude-bigger part.
-- **V7/V8** — Lipschitz perturbation lemmas; n-ary accumulation bound (SHOULD).
+- **V4** — ✅ **complete at the contract level** (`verified_round*.rs`): R1
+  (identity on representables), R2 (directed floor/ceil brackets the value), R3
+  (grid error `0 ≤ n·2^s − q·d < d` *and* the per-magnitude tie-in
+  `1/2^s ≤ 2^-60·max(1,|v|)` via `pow2` additivity), and R4 (grid monotonicity)
+  are all proven division-free on ghost `int`. Remaining glue: threading these
+  ghost-level facts through the exec `round_to_budget`'s bitwise long division
+  (which the differential oracle already validates end-to-end).
+- **V7/V8** — Lipschitz perturbation lemmas (V7); n-ary accumulation bound (V8,
+  in `candidate.rs`). SHOULD-tier.
 
 The shipped `../src/lib.rs` implements exactly these algorithms and is
 independently validated by the `malachite-q` differential oracle (60k+ cases)
