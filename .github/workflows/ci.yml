@@ -27,10 +27,25 @@ jobs:
       - name: no-LGPL-3.0-in-release-tree check
         run: ./scripts/check-no-lgpl3-release-deps.sh
 
-  # NOTE: Verus verification (spec §6, obligations V1-V8) is not yet wired
-  # into CI. See TRUSTED.md: this crate was built in an environment that
-  # could not install the Verus toolchain, so no verus! proof annotations
-  # exist yet to check. Once M2/M3's arithmetic and rounding functions are
-  # annotated with requires/ensures and proof bodies, add a job here that
-  # installs verus (https://github.com/verus-lang/verus/releases) and runs
-  # `verus src/lib.rs` (or per-module) against it, and remove this notice.
+  # Verus verification (spec §6, obligations V1-V8). This job was authored
+  # and iterated on entirely via CI feedback -- the environment that wrote
+  # it has no local Verus toolchain access (see TRUSTED.md), so if the
+  # version pin below goes stale or the invocation needs adjusting, expect
+  # to fix it the same way: push, read the Actions log, adjust.
+  verus:
+    runs-on: ubuntu-24.04 # matches verus-lang's published prebuilt-artifact target
+    env:
+      VERUS_VERSION: 0.2026.07.18.3a4d30b
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verus
+        run: |
+          curl -sSL -o verus.zip \
+            "https://github.com/verus-lang/verus/releases/download/release/${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          unzip -q verus.zip
+          mv verus-x86-linux verus-install
+          chmod +x verus-install/verus
+      - name: verus --version (sanity check)
+        run: ./verus-install/verus --version
+      - name: verus smoke test
+        run: ./verus-install/verus verus/smoke_test.rs
