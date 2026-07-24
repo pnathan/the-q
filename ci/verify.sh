@@ -37,13 +37,17 @@ if command -v verus >/dev/null 2>&1; then
   echo "==> verus --version"
   verus --version || true
 
-  echo "==> verus verus/src/gcd_checked.rs   (admit-free; hard gate)"
-  if verus verus/src/gcd_checked.rs; then
-    echo "    ok: gcd_checked verified"
-  else
-    echo "ERROR: admit-free proof target failed to verify."
-    rc=1
-  fi
+  # Admit-free targets — each MUST verify (hard gate). Add files here as their
+  # obligations are promoted from the scaffold to machine-checked.
+  for tgt in verus/src/gcd_checked.rs verus/src/verified.rs; do
+    echo "==> verus $tgt   (admit-free; hard gate)"
+    if verus "$tgt"; then
+      echo "    ok: $tgt verified"
+    else
+      echo "ERROR: admit-free proof target $tgt failed to verify."
+      rc=1
+    fi
+  done
 
   echo "==> verus verus/src/lib.rs   (broader scaffold; reported, non-fatal)"
   if verus verus/src/lib.rs; then
