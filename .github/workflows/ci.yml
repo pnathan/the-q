@@ -74,7 +74,21 @@ jobs:
             find "$HOME/verus" -maxdepth 2 -type f | head -50
             exit 1
           fi
-          echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+          bindir="$(dirname "$bin")"
+          echo "$bindir" >> "$GITHUB_PATH"
           echo "Verus at: $bin"
+          # Verus runs against the exact Rust toolchain it was built with. Ask
+          # the binary which one it needs (it prints this even when the toolchain
+          # is missing) and install that via rustup — self-adapting to whatever
+          # release was resolved above.
+          need="$("$bin" --version 2>&1 \
+                  | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-x86_64-unknown-linux-gnu' | head -1 || true)"
+          if [ -n "$need" ]; then
+            echo "Verus requires rust toolchain: $need"
+            rustup toolchain install "$need" --profile minimal --no-self-update
+          else
+            echo "Could not detect a pinned toolchain from verus --version; proceeding."
+            "$bin" --version || true
+          fi
       - name: Verify (Verus) + trusted-boundary discipline
         run: bash ci/verify.sh
