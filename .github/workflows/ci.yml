@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo build (all features)
+        run: cargo build --all-targets --all-features
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo test (all features)
+        run: cargo test --all-features
+      - name: no-LGPL-3.0-in-release-tree check
+        run: ./scripts/check-no-lgpl3-release-deps.sh
+
+  # NOTE: Verus verification (spec §6, obligations V1-V8) is not yet wired
+  # into CI. See TRUSTED.md: this crate was built in an environment that
+  # could not install the Verus toolchain, so no verus! proof annotations
+  # exist yet to check. Once M2/M3's arithmetic and rounding functions are
+  # annotated with requires/ensures and proof bodies, add a job here that
+  # installs verus (https://github.com/verus-lang/verus/releases) and runs
+  # `verus src/lib.rs` (or per-module) against it, and remove this notice.

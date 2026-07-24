@@ -1,0 +1,41 @@
+[package]
+name = "the-q"
+version = "0.1.0"
+edition = "2021"
+description = "Bounded, canonical, verified-rounding rational arithmetic (Q)"
+license = "LGPL-2.1-only"
+repository = "https://github.com/pnathan/the-q"
+readme = "README.md"
+keywords = ["rational", "arithmetic", "verus", "verified", "exact"]
+categories = ["mathematics", "no-std"]
+
+[lib]
+name = "the_q"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+# Oracle for differential testing ONLY. malachite-q is LGPL-3.0-only, which is
+# why it was rejected as a runtime dependency (see README "Why not
+# malachite-q"). It must never appear outside [dev-dependencies] -- enforced
+# by `scripts/check-no-lgpl3-release-deps.sh` in CI.
+malachite-q = "0.6"
+malachite-base = "0.6"
+proptest = "1"
+serde_json = "1"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+# V2 requires every i128 intermediate to be provably in range; overflow-checks
+# turns any place that claim is wrong into a hard panic instead of silent
+# wraparound, in every profile (this crate has no formal proof backing V2 in
+# this environment -- see TRUSTED.md -- so the runtime check is load-bearing).
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
