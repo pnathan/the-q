@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Enforced gate: plain rustc build + full test suite + license hygiene.
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (all features)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+      - name: Build (plain rustc, no_std)
+        run: cargo build --verbose
+      - name: Build (no default features)
+        run: cargo build --no-default-features --verbose
+      - name: Test (all features, overflow checks on)
+        run: cargo test --all-features --verbose
+      - name: License hygiene — no LGPL in release tree
+        run: bash ci/check_no_lgpl.sh
+
+  # Progress job: runs the Verus proofs. Non-blocking until every obligation in
+  # verus/README.md is promoted to "complete" (then drop continue-on-error).
+  verus:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Verus
+        run: |
+          set -e
+          # Pin a known-good release; z3 ships inside the Verus archive.
+          VERUS_VERSION="release/0.2025.06.14"
+          curl -L -o verus.zip \
+            "https://github.com/verus-lang/verus/releases/download/${VERUS_VERSION}/verus-x86-linux.zip" || {
+              echo "Verus download unavailable in this environment; skipping."; exit 0; }
+          unzip -q verus.zip -d "$HOME/verus"
+          echo "$HOME/verus/verus-x86-linux" >> "$GITHUB_PATH"
+      - name: Verify (Verus) + trusted-boundary discipline
+        run: bash ci/verify.sh

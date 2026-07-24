@@ -1,0 +1,34 @@
+[package]
+name = "the-q"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Verified bounded rational (ℚ) arithmetic with directed rounding, checked by Verus."
+license = "LGPL-2.1-only"
+repository = "https://github.com/pnathan/the-q"
+readme = "README.md"
+keywords = ["rational", "arithmetic", "verified", "verus", "exact"]
+categories = ["mathematics", "no-std::no-alloc"]
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+# LGPL-3.0 oracle — dev-only, MUST NOT appear in the release dependency tree.
+malachite-q = "0.4"
+malachite-base = "0.4"
+malachite-nz = "0.4"
+serde_json = "1"
+
+[profile.test]
+overflow-checks = true
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
