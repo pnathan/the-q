@@ -21,8 +21,10 @@
 //! associativity holds on the exact path (when no rounding occurs).
 
 mod gcd;
+pub mod interval;
 mod round;
 
+pub use interval::Interval;
 pub use round::Dir;
 
 use gcd::gcd128;
@@ -36,6 +38,11 @@ use vstd::prelude::*;
 
 verus! {
 
+/// Spec helper: absolute value for int.
+pub open spec fn int_abs(x: int) -> int {
+    if x >= 0 { x } else { -x }
+}
+
 /// Ghost model: Q values are equal iff cross-multiplication agrees.
 /// Division-free, per the spec's ghost-model discipline.
 pub open spec fn q_eq(a_num: int, a_den: int, b_num: int, b_den: int) -> bool {
@@ -47,6 +54,11 @@ pub open spec fn q_le(a_num: int, a_den: int, b_num: int, b_den: int) -> bool {
     a_num * b_den <= b_num * a_den
 }
 
+/// Ghost model: a < b via cross-multiplication.
+pub open spec fn q_lt(a_num: int, a_den: int, b_num: int, b_den: int) -> bool {
+    a_num * b_den < b_num * a_den
+}
+
 /// The I2 budget bound as a spec constant.
 pub open spec fn spec_bound() -> int {
     (1i64 << 62u32) - 1
@@ -56,8 +68,163 @@ pub open spec fn spec_bound() -> int {
 pub open spec fn q_inv(num: int, den: int) -> bool {
     &&& den > 0
     &&& num == 0 ==> den == 1
-    &&& num.abs() <= spec_bound()
+    &&& int_abs(num) <= spec_bound()
     &&& den <= spec_bound()
+}
+
+/// Spec: exact add result (division-free cross-mult form).
+/// result_num * (a_den * b_den) == (a_num * b_den + b_num * a_den) * result_den
+pub open spec fn q_add_exact(
+    a_num: int, a_den: int,
+    b_num: int, b_den: int,
+    r_num: int, r_den: int,
+) -> bool {
+    r_num * (a_den * b_den) == (a_num * b_den + b_num * a_den) * r_den
+}
+
+/// Spec: exact mul result (division-free cross-mult form).
+pub open spec fn q_mul_exact(
+    a_num: int, a_den: int,
+    b_num: int, b_den: int,
+    r_num: int, r_den: int,
+) -> bool {
+    r_num * (a_den * b_den) == (a_num * b_num) * r_den
+}
+
+/// Spec: negation.
+pub open spec fn q_neg_spec(num: int, den: int, r_num: int, r_den: int) -> bool {
+    r_num == -num && r_den == den
+}
+
+/// Spec: absolute value.
+pub open spec fn q_abs_spec(num: int, den: int, r_num: int, r_den: int) -> bool {
+    r_num == int_abs(num) && r_den == den
+}
+
+// ============================================================
+// Proof lemmas: spec-level properties of the ghost model
+// ============================================================
+
+/// q_eq is reflexive.
+proof fn lemma_q_eq_reflexive(num: int, den: int)
+    requires den > 0,
+    ensures q_eq(num, den, num, den),
+{
+}
+
+/// q_eq is symmetric.
+proof fn lemma_q_eq_symmetric(a_num: int, a_den: int, b_num: int, b_den: int)
+    requires
+        a_den > 0,
+        b_den > 0,
+        q_eq(a_num, a_den, b_num, b_den),
+    ensures
+        q_eq(b_num, b_den, a_num, a_den),
+{
+}
+
+/// Addition is commutative at the spec level.
+proof fn lemma_add_commutative(
+    a_num: int, a_den: int,
+    b_num: int, b_den: int,
+)
+    requires
+        a_den > 0,
+        b_den > 0,
+    ensures ({
+        let sum_ab = a_num * b_den + b_num * a_den;
+        let sum_ba = b_num * a_den + a_num * b_den;
+        sum_ab == sum_ba
+    }),
+{
+}
+
+/// Multiplication is commutative at the spec level.
+proof fn lemma_mul_commutative(
+    a_num: int, a_den: int,
+    b_num: int, b_den: int,
+)
+    requires
+        a_den > 0,
+        b_den > 0,
+    ensures ({
+        let prod_ab = a_num * b_num;
+        let prod_ba = b_num * a_num;
+        let den_ab = a_den * b_den;
+        let den_ba = b_den * a_den;
+        prod_ab == prod_ba && den_ab == den_ba
+    }),
+{
+    assert(a_num * b_num == b_num * a_num) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a_num, b_num);
+    }
+    assert(a_den * b_den == b_den * a_den) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a_den, b_den);
+    }
+}
+
+/// Zero is the additive identity: a/b + 0/1 has the same cross-product as a/b.
+proof fn lemma_add_zero_identity(num: int, den: int)
+    requires den > 0,
+    ensures q_eq(num * 1 + 0 * den, den * 1, num, den),
+{
+    assert(num * 1 + 0 * den == num) by {
+        vstd::arithmetic::mul::lemma_mul_basics(num);
+        vstd::arithmetic::mul::lemma_mul_basics(den);
+    }
+    assert(den * 1 == den) by {
+        vstd::arithmetic::mul::lemma_mul_basics(den);
+    }
+}
+
+/// One is the multiplicative identity: (a/b) * (1/1) = a/b.
+proof fn lemma_mul_one_identity(num: int, den: int)
+    requires den > 0,
+    ensures q_eq(num * 1, den * 1, num, den),
+{
+    assert(num * 1 == num) by {
+        vstd::arithmetic::mul::lemma_mul_basics(num);
+    }
+    assert(den * 1 == den) by {
+        vstd::arithmetic::mul::lemma_mul_basics(den);
+    }
+}
+
+/// Negation involution: -(-a) = a.
+proof fn lemma_neg_involution(num: int, den: int)
+    ensures -(-num) == num,
+{
+}
+
+/// Negation preserves invariant.
+proof fn lemma_neg_preserves_inv(num: int, den: int)
+    requires q_inv(num, den),
+    ensures q_inv(-num, den),
+{
+    assert(int_abs(-num) == int_abs(num));
+    assert(-num == 0 ==> num == 0);
+}
+
+/// Absolute value preserves invariant.
+proof fn lemma_abs_preserves_inv(num: int, den: int)
+    requires q_inv(num, den),
+    ensures q_inv(int_abs(num), den),
+{
+    assert(int_abs(int_abs(num)) == int_abs(num));
+    assert(int_abs(num) == 0 ==> num == 0);
+}
+
+/// Multiplication by zero gives zero.
+proof fn lemma_mul_zero(num: int, den: int)
+    requires den > 0,
+    ensures q_eq(num * 0, den * 1, 0, 1),
+{
+    assert(num * 0 == 0int) by {
+        vstd::arithmetic::mul::lemma_mul_basics(num);
+    }
+    assert(den * 1 == den) by {
+        vstd::arithmetic::mul::lemma_mul_basics(den);
+    }
 }
 
 } // verus!

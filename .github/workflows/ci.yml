@@ -52,5 +52,5 @@ jobs:
           mv /opt/verus-tmp/verus-* /opt/verus || mv /opt/verus-tmp /opt/verus
           chmod +x /opt/verus/verus
 
-      - name: Verify GCD proofs
-        run: /opt/verus/verus src/gcd.rs --crate-type=lib
+      - name: Verify proofs
+        run: /opt/verus/verus src/lib.rs --crate-type=lib

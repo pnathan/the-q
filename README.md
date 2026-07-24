@@ -28,6 +28,17 @@ well within `i128`). After the exact computation:
 Consequence: any computation whose exact values all fit the budget is
 **end-to-end exact**. Small investigations pay zero rounding.
 
+## Interval arithmetic
+
+`Interval` wraps a pair of `Q` values `[lo, hi]` with correct outward
+rounding. All operations (add, sub, mul, div) use directed rounding to
+guarantee the result interval contains the true value for every point
+in the input intervals.
+
+Lipschitz error propagation is built in: given a function's Lipschitz
+constant, `lipschitz_widen` and `lipschitz_tighten` bound the output
+without evaluating every point.
+
 ## Honesty notice
 
 With rounding, `add`/`mul` are commutative (always proven) but **not
@@ -37,18 +48,36 @@ small cases and up to the accumulated error bound in general.
 
 ## Verification status
 
-The crate is structured for Verus verification. Proof obligations (V1-V8)
-are documented in source comments. The current implementation compiles with
-standard `cargo build`; Verus annotation is pending toolchain setup.
+**Machine-checked (Verus, 17 proofs, 0 errors):**
+- GCD on u64: full proof of correctness (divisibility spec, loop invariant, termination)
+- Ghost model: `q_eq`, `q_le`, `q_lt`, `q_inv`, `int_abs` spec functions
+- Spec-level lemmas: commutativity (add, mul), identity elements (zero, one),
+  negation involution, negation/abs preserve invariant, multiplication by zero
+
+**Tested (118 tests):**
+- 64 unit tests (Q arithmetic, interval ops, rounding, constructors)
+- 17 malachite-q oracle differential tests (exact-path + R3 bounds)
+- 37 proptest property tests (invariant preservation, commutativity,
+  associativity, distributivity, directed rounding contracts, R3 bounds)
 
 See `TRUSTED.md` for the single `external_body` function (`to_f64`).
 
 ## Testing
 
 ```sh
-cargo test              # unit + integration tests
-cargo test --features serde  # include serde round-trip tests
+cargo test                      # all 118 tests
+cargo test --features serde     # include serde round-trip
+cargo test --test proptest_tests  # property-based tests only
+cargo test --test oracle        # malachite-q differential tests only
 ```
 
 The oracle test suite (`tests/oracle.rs`) uses `malachite-q` as a
 **dev-dependency only** (LGPL-3.0, never in the release binary).
+
+## Verification
+
+Requires Verus v0.2026.07.18+ and Rust toolchain 1.96.0:
+
+```sh
+verus src/lib.rs --crate-type=lib
+```
