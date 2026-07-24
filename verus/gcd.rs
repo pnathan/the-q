@@ -214,6 +214,84 @@ fn gcd_exec(a: u64, b: u64) -> (result: u64)
     x
 }
 
+/// V1 (canonical form): after `canonicalize` reduces `num`/`den` by
+/// `g = gcd(|num|, den)`, the result `(num/g, den/g)` is coprime. This is
+/// the fact that makes the shipped crate's `canonicalize_i128` (and
+/// `Q::new`'s reduction) actually produce a canonical `I1` result.
+proof fn lemma_reduced_is_coprime(a: nat, b: nat)
+    requires
+        a > 0,
+    ensures
+        gcd_spec(a, b) > 0,
+        gcd_spec(
+            (a as int / gcd_spec(a, b) as int) as nat,
+            (b as int / gcd_spec(a, b) as int) as nat,
+        ) == 1,
+{
+    lemma_gcd_divides(a, b);
+    let g = gcd_spec(a, b) as int;
+
+    // g divides a and g > 0, so a/g > 0 (a itself is > 0).
+    lemma_fundamental_div_mod(a as int, g);
+    assert(a as int == g * (a as int / g));
+    let a2 = (a as int / g) as nat;
+    let b2 = (b as int / g) as nat;
+    assert(a2 > 0) by (nonlinear_arith)
+        requires
+            a as int == g * (a as int / g),
+            a > 0,
+            g > 0,
+    {}
+
+    lemma_gcd_divides(a2, b2);
+    let d = gcd_spec(a2, b2) as int;
+    assert(d > 0);
+
+    // d divides a2 and b2 => g*d divides a and b (a == g*a2 == g*(d*(a2/d))).
+    lemma_fundamental_div_mod(a2 as int, d);
+    lemma_fundamental_div_mod(b2 as int, d);
+    assert(a2 as int == d * (a2 as int / d));
+    assert(b2 as int == d * (b2 as int / d));
+    assert(a as int == (g * d) * (a2 as int / d)) by (nonlinear_arith)
+        requires
+            a as int == g * (a as int / g),
+            a as int / g == a2 as int,
+            a2 as int == d * (a2 as int / d),
+    {}
+    assert(b as int == g * b2 as int) by {
+        lemma_fundamental_div_mod(b as int, g);
+        assert(divides(g, b as int)) by {
+            lemma_gcd_divides(a, b);
+        }
+        assert(b as int % g == 0);
+    }
+    assert(b as int == (g * d) * (b2 as int / d)) by (nonlinear_arith)
+        requires
+            b as int == g * b2 as int,
+            b2 as int == d * (b2 as int / d),
+    {}
+
+    assert(divides(g * d, a as int)) by {
+        lemma_fundamental_div_mod(a as int, g * d);
+        assert(a as int == (g * d) * (a2 as int / d));
+    }
+    assert(divides(g * d, b as int)) by {
+        lemma_fundamental_div_mod(b as int, g * d);
+        assert(b as int == (g * d) * (b2 as int / d));
+    }
+
+    // g*d is a common divisor of a and b, so it divides gcd_spec(a,b) == g,
+    // hence g*d <= g, hence (since g > 0) d <= 1. Combined with d > 0: d == 1.
+    lemma_gcd_greatest(a, b, g * d);
+    lemma_divides_le(g * d, g);
+    assert(d == 1) by (nonlinear_arith)
+        requires
+            g * d <= g,
+            g > 0,
+            d > 0,
+    {}
+}
+
 fn main() {}
 
 } // verus!
