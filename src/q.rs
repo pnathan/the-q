@@ -20,8 +20,8 @@ verus! {
 /// (see `lemma_canonical_unique`).
 #[derive(Clone, Copy, PartialEq, Eq, Structural)]
 pub struct Q {
-    num: i64,
-    den: i64,
+    pub(crate) num: i64,
+    pub(crate) den: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,15 @@ impl Q {
     pub open spec fn in_unit_interval_s(self) -> bool {
         0 <= self.num_s() && self.num_s() <= self.den_s()
     }
+}
+
+/// Crate-internal anchor connecting the ghost accessors to the raw fields
+/// (`num_s`/`den_s` are `closed`, so sibling modules use this).
+pub(crate) proof fn lemma_q_fields(q: Q)
+    ensures
+        q.num_s() == q.num as int,
+        q.den_s() == q.den as int,
+{
 }
 
 // ---------------------------------------------------------------------------
@@ -328,15 +337,37 @@ pub proof fn lemma_canonical_unique(a: Q, b: Q)
 // ---------------------------------------------------------------------------
 
 /// Bound for cross-multiplication products: |x*y| <= max_mag()^2 < 2^124.
-proof fn lemma_cross_bound(x: int, y: int)
+pub proof fn lemma_cross_bound(x: int, y: int)
     requires
         -max_mag() <= x <= max_mag(),
         0 <= y <= max_mag(),
     ensures
         -max_mag() * max_mag() <= x * y <= max_mag() * max_mag(),
+        -0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001 <= x * y,
+        x * y <= 0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001,
 {
+    assert(-0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001 <= x * y <= 0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001)
+        by (nonlinear_arith)
+        requires -max_mag() <= x <= max_mag(), 0 <= y <= max_mag();
     assert(-max_mag() * max_mag() <= x * y <= max_mag() * max_mag()) by (nonlinear_arith)
         requires -max_mag() <= x <= max_mag(), 0 <= y <= max_mag();
+}
+
+/// Bound for products of two signed budget-bounded values.
+pub proof fn lemma_cross_bound_signed(x: int, y: int)
+    requires
+        -max_mag() <= x <= max_mag(),
+        -max_mag() <= y <= max_mag(),
+    ensures
+        -max_mag() * max_mag() <= x * y <= max_mag() * max_mag(),
+        -0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001 <= x * y,
+        x * y <= 0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001,
+{
+    assert(-0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001 <= x * y <= 0x0FFF_FFFF_FFFF_FFFF_8000_0000_0000_0001)
+        by (nonlinear_arith)
+        requires -max_mag() <= x <= max_mag(), -max_mag() <= y <= max_mag();
+    assert(-max_mag() * max_mag() <= x * y <= max_mag() * max_mag()) by (nonlinear_arith)
+        requires -max_mag() <= x <= max_mag(), -max_mag() <= y <= max_mag();
 }
 
 impl Q {

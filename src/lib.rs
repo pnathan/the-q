@@ -15,3 +15,4 @@ pub mod gcd;
 pub mod q;
 pub mod wide;
 pub mod round;
+pub mod arith;
