@@ -36,10 +36,21 @@ rule (zero `assume`/`admit`) applies to obligations promoted to "complete".
 verus verus/src/lib.rs
 ```
 
-`ci/verify.sh` wraps this and is invoked by `.github/workflows/ci.yml`; the CI
-job is currently marked `continue-on-error` until the proofs are all promoted to
-"complete", so a green `cargo` build/test is the enforced gate today and the
-`verus` job reports progress without blocking.
+`ci/verify.sh` wraps this and is invoked by `.github/workflows/ci.yml`. The CI
+`verus` job installs the toolchain from the latest Verus release (resolved via
+the GitHub API on the runner) and then:
+
+- **hard-gates** the admit-free target `src/gcd_checked.rs` (must verify), and
+- **reports** the broader `src/lib.rs` scaffold non-fatally (it still carries
+  `OBLIGATION`/`admit()` steps).
+
+As each obligation below is promoted to "complete" and its `admit()` removed,
+add its file to the hard-gated list in `ci/verify.sh`.
+
+> The authoring sandbox could not reach the Verus binary (github.com and
+> api.github.com are egress-blocked there; the release CDN is reachable only via
+> signed API redirects), so `gcd_checked.rs` was written to canonical Verus
+> idioms but **first machine-checked on the CI runner**, not locally.
 
 ## Why the design is Verus-friendly
 

@@ -30,39 +30,51 @@ jobs:
       - name: License hygiene — no LGPL in release tree
         run: bash ci/check_no_lgpl.sh
 
-  # Progress job: runs the Verus proofs. Non-blocking until every obligation in
-  # verus/README.md is promoted to "complete" (then drop continue-on-error).
+  # Runs the Verus proofs. The GitHub Actions runner (unlike the authoring
+  # sandbox) can reach github.com, so the toolchain is installed from the latest
+  # Verus release, resolved dynamically via the GitHub API — no guessed URL.
+  # verify.sh hard-gates the admit-free target (verus/src/gcd_checked.rs) and
+  # reports the broader scaffold non-fatally.
   verus:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install Verus (best-effort; never fails the job)
+      - name: Install Verus (from the latest release, resolved via the API)
+        env:
+          # api.github.com is rate-limited unauthenticated; the job token lifts it.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional override, e.g. VERUS_TAG=release/0.2025.06.14
+          VERUS_TAG: ${{ vars.VERUS_TAG }}
         run: |
-          # The Verus release asset name/version is intentionally not hard-pinned
-          # to a URL this repo cannot verify. This step tries a couple of known
-          # asset name shapes; if none is fetchable it cleanly skips, and the
-          # verify step below runs the toolchain-free discipline checks. When you
-          # settle on a verified Verus release, pin it here and drop the
-          # `continue-on-error` on this job.
-          set +e
-          VERUS_VERSION="${VERUS_VERSION:-release/0.2025.06.14}"
-          base="https://github.com/verus-lang/verus/releases/download/${VERUS_VERSION}"
-          for asset in "verus-x86-linux.zip" "verus-x86_64-linux.zip" "verus-linux-x86_64.zip"; do
-            if curl -fsSL -o verus.zip "${base}/${asset}" && unzip -tq verus.zip >/dev/null 2>&1; then
-              unzip -q verus.zip -d "$HOME/verus"
-              bin="$(find "$HOME/verus" -type f -name verus | head -1)"
-              if [ -n "$bin" ]; then
-                echo "$(dirname "$bin")" >> "$GITHUB_PATH"
-                echo "Verus provisioned from ${asset}."
-              fi
-              break
-            fi
-          done
-          if ! command -v verus >/dev/null 2>&1 && [ ! -d "$HOME/verus" ]; then
-            echo "Verus toolchain not provisioned; verify.sh will run discipline checks only."
+          set -euo pipefail
+          api="https://api.github.com/repos/verus-lang/verus/releases"
+          if [ -n "${VERUS_TAG:-}" ]; then
+            rel="$api/tags/${VERUS_TAG}"
+          else
+            rel="$api/latest"
           fi
-          exit 0
-      - name: Verify (Verus if present) + trusted-boundary discipline
+          echo "Resolving Verus release: $rel"
+          # Pick the x86-64 Linux zip asset regardless of the exact name shape.
+          url="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+                       -H "X-GitHub-Api-Version: 2022-11-28" "$rel" \
+                 | jq -r '.assets[].browser_download_url
+                          | select(test("(x86[-_]?64|x86).*(linux)|(linux).*(x86[-_]?64|x86)"; "i"))
+                          | select(endswith(".zip"))' | head -1)"
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "::error::Could not resolve a Linux x86-64 Verus asset from $rel"
+            exit 1
+          fi
+          echo "Downloading $url"
+          curl -fsSL -o verus.zip "$url"
+          unzip -q verus.zip -d "$HOME/verus"
+          bin="$(find "$HOME/verus" -type f -name verus | head -1)"
+          if [ -z "$bin" ]; then
+            echo "::error::verus binary not found in the extracted archive"
+            find "$HOME/verus" -maxdepth 2 -type f | head -50
+            exit 1
+          fi
+          echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+          echo "Verus at: $bin"
+      - name: Verify (Verus) + trusted-boundary discipline
         run: bash ci/verify.sh
