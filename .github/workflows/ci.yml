@@ -62,5 +62,17 @@ jobs:
           fi
       - name: verus --version (sanity check)
         run: ./verus-install/verus --version
-      - name: verus smoke test
-        run: ./verus-install/verus verus/smoke_test.rs
+      - name: verus verify all proof files
+        # Every file under verus/ is an independent standalone Verus
+        # program (see verus/smoke_test.rs's header comment for why these
+        # live outside the cargo package). Verify each one.
+        run: |
+          status=0
+          for f in verus/*.rs; do
+            echo "::group::verus $f"
+            if ! ./verus-install/verus "$f"; then
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
