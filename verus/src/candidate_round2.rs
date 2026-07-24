@@ -32,6 +32,9 @@ pub proof fn pow2_adds(a: nat, b: nat)
     decreases b
 {
     if b == 0 {
+        assert(pow2(0) == 1);
+        assert(a + b == a);
+        assert(pow2(a + b) == pow2(a) * pow2(b));
     } else {
         let bm = (b - 1) as nat;
         pow2_adds(a, bm);                        // pow2(a + bm) == pow2(a) * pow2(bm)
