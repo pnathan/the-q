@@ -116,11 +116,21 @@ proof fn lemma_mul_distributes_over_add(na: int, da: int, nb: int, db: int, nc: 
             add_den(mul_den(da, db), mul_den(da, dc)),
         ),
 {
-    assert(mul_num(na, add_num(nb, db, nc, dc)) * add_den(mul_den(da, db), mul_den(da, dc))
-        == add_num(mul_num(na, nb), mul_den(da, db), mul_num(na, nc), mul_den(da, dc)) * mul_den(
+    // Both sides of the cross-multiplication equal the same expanded
+    // polynomial (na*nb*da*da*db*dc*dc + na*nc*da*da*db*db*dc) -- proved
+    // as two separate, smaller nonlinear_arith goals rather than one
+    // combined identity, since the combined form timed out (rlimit
+    // exceeded) even at a raised budget. Each half is still a real
+    // algebraic expansion, just with half the bridging work per query.
+    let lhs = mul_num(na, add_num(nb, db, nc, dc)) * add_den(mul_den(da, db), mul_den(da, dc));
+    let rhs = add_num(mul_num(na, nb), mul_den(da, db), mul_num(na, nc), mul_den(da, dc)) * mul_den(
         da,
         add_den(db, dc),
-    )) by (nonlinear_arith)
+    );
+    let canonical = na * nb * da * da * db * dc * dc + na * nc * da * da * db * db * dc;
+    assert(lhs == canonical) by (nonlinear_arith)
+    {}
+    assert(rhs == canonical) by (nonlinear_arith)
     {}
 }
 

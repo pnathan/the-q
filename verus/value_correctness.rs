@@ -125,7 +125,7 @@ proof fn lemma_gcd_divides_signed_num(num: int, den: int)
                 num
             };
             let g = gcd_spec(n_mag as nat, den as nat) as int;
-            divides(g, num)
+            g > 0 && divides(g, num)
         }),
 {
     let n_mag = if num < 0 {
