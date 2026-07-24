@@ -43,7 +43,7 @@ if command -v verus >/dev/null 2>&1; then
              verus/src/verified_pred.rs verus/src/verified_gcd.rs verus/src/verified_reduce.rs \
              verus/src/verified_uniq.rs verus/src/verified_round.rs \
              verus/src/verified_round_mono.rs verus/src/verified_round_b60.rs \
-             verus/src/verified_accum.rs; do
+             verus/src/verified_accum.rs verus/src/verified_lipschitz.rs; do
     echo "==> verus $tgt   (admit-free; hard gate)"
     if verus "$tgt"; then
       echo "    ok: $tgt verified"
