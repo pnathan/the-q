@@ -195,6 +195,12 @@ proof fn lemma_canonicalize_preserves_value(num: int, den: int)
     assert(divides(g, num));
     lemma_fundamental_div_mod(num, g);
     assert(num == g * (num / g));
+
+    // g divides den too (it's gcd_spec(n_mag, den), so this is direct from
+    // lemma_gcd_divides -- lemma_gcd_divides_signed_num's own ensures only
+    // exposed the num-divisibility half, not this one).
+    lemma_gcd_divides(n_mag as nat, den as nat);
+    assert(divides(g, den));
     lemma_fundamental_div_mod(den, g);
     assert(den == g * (den / g));
 
