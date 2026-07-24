@@ -49,13 +49,18 @@ if command -v verus >/dev/null 2>&1; then
     fi
   done
 
-  echo "==> verus verus/src/lib.rs   (broader scaffold; reported, non-fatal)"
-  if verus verus/src/lib.rs; then
-    echo "    ok: full scaffold verified"
-  else
-    echo "    NOTE: full scaffold not yet fully discharged (expected while"
-    echo "          OBLIGATION/admit markers remain) — non-fatal."
-  fi
+  # Reported (non-fatal) targets — proofs under active development. They are
+  # printed so their Verus errors are visible, but do not fail the job; each is
+  # promoted to the hard gate above once it verifies clean.
+  for tgt in verus/src/candidate.rs verus/src/lib.rs; do
+    [ -f "$tgt" ] || continue
+    echo "==> verus $tgt   (reported, non-fatal)"
+    if verus "$tgt"; then
+      echo "    ok: $tgt verified — ready to promote to the hard gate"
+    else
+      echo "    NOTE: $tgt not yet fully discharged — non-fatal."
+    fi
+  done
 else
   echo "NOTICE: verus not on PATH — ran discipline checks only."
   echo "        The CI 'verus' job installs the toolchain; locally, install per"
