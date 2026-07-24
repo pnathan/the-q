@@ -1,120 +1,65 @@
-// Under development (reported non-fatal). Batch: exec predicates and min/max
-// proven to match the ghost model (V3), plus reflexivity of the order (V6).
+// Under development (reported non-fatal). Batch: V5 "greatest" half (any common
+// divisor divides the gcd) and V1 core (reducing by the gcd preserves value).
 
 use vstd::prelude::*;
+use vstd::arithmetic::div_mod::lemma_fundamental_div_mod;
 
 verus! {
 
-pub open spec fn budget() -> int { 4611686018427387903 }
-
-pub struct Q { pub num: i64, pub den: i64 }
-
-pub open spec fn bounded(q: Q) -> bool {
-    &&& q.den >= 1
-    &&& -budget() <= q.num as int <= budget()
-    &&& q.den as int <= budget()
-}
-
-pub open spec fn i128_max() -> int { 170141183460469231731687303715884105727 }
-
-pub open spec fn q_le(a: Q, b: Q) -> bool {
-    (a.num as int) * (b.den as int) <= (b.num as int) * (a.den as int)
-}
-
-/// V2: budget-bounded products fit i128.
-pub proof fn lemma_prod_bound(x: int, y: int)
-    requires -budget() <= x <= budget(), -budget() <= y <= budget(),
-    ensures
-        -(budget() * budget()) <= x * y <= budget() * budget(),
-        budget() * budget() < i128_max(),
+pub open spec fn gcd(a: nat, b: nat) -> nat
+    decreases b
 {
-    assert(-(budget() * budget()) <= x * y <= budget() * budget()) by (nonlinear_arith)
-        requires -budget() <= x <= budget(), -budget() <= y <= budget();
-    assert(budget() * budget() < i128_max());
+    if b == 0 { a } else { gcd(b, (a % b) as nat) }
 }
 
-/// V6: the ghost order is reflexive.
-pub proof fn q_le_reflexive(a: Q)
-    ensures q_le(a, a),
-{
+pub open spec fn divides(d: int, n: int) -> bool {
+    exists|k: int| n == #[trigger] (d * k)
 }
 
-/// V3: `is_zero` matches the ghost predicate `value == 0`.
-pub fn is_zero(q: Q) -> (r: bool)
-    requires bounded(q),
-    ensures r == (q.num as int == 0),
+pub proof fn lemma_divides_lincomb(d: int, x: int, y: int, p: int, q: int)
+    requires divides(d, x), divides(d, y),
+    ensures divides(d, x * p + y * q),
 {
-    q.num == 0
+    let kx = choose|k: int| x == #[trigger] (d * k);
+    let ky = choose|k: int| y == #[trigger] (d * k);
+    assert(x * p + y * q == d * (kx * p + ky * q)) by (nonlinear_arith)
+        requires x == d * kx, y == d * ky;
 }
 
-/// V3: `signum` matches the sign of the value (denominator is positive).
-pub fn signum(q: Q) -> (r: i32)
-    requires bounded(q),
-    ensures
-        q.num as int > 0 ==> r == 1,
-        q.num as int == 0 ==> r == 0,
-        q.num as int < 0 ==> r == -1,
+/// V5 "greatest": any common divisor of `a` and `b` divides `gcd(a,b)`.
+pub proof fn lemma_gcd_greatest(a: nat, b: nat, d: int)
+    requires divides(d, a as int), divides(d, b as int),
+    ensures divides(d, gcd(a, b) as int),
+    decreases b
 {
-    if q.num > 0 {
-        1
-    } else if q.num == 0 {
-        0
+    if b == 0 {
+        // gcd(a,0) == a; d | a by hypothesis.
     } else {
-        -1
+        lemma_fundamental_div_mod(a as int, b as int);
+        // a % b == a*1 + b*(-(a/b)), so d | (a % b).
+        assert((a as int) % (b as int)
+            == (a as int) * 1 + (b as int) * (-((a as int) / (b as int)))) by (nonlinear_arith)
+            requires a as int == (b as int) * ((a as int) / (b as int)) + (a as int) % (b as int);
+        lemma_divides_lincomb(d, a as int, b as int, 1, -((a as int) / (b as int)));
+        lemma_gcd_greatest(b, (a % b) as nat, d);
     }
 }
 
-/// V3: `in_unit_interval` matches `0 <= value <= 1` (division-free).
-pub fn in_unit_interval(q: Q) -> (r: bool)
-    requires bounded(q),
-    ensures r == (0 <= q.num as int && q.num as int <= q.den as int),
+/// V1 core: reducing `n/d` by a common divisor `g` preserves the value
+/// (division-free: `(n/g)·d == (d/g)·n`).
+pub proof fn lemma_reduce_preserves_value(n: int, d: int, g: int)
+    requires g > 0, divides(g, n), divides(g, d),
+    ensures (n / g) * d == (d / g) * n,
 {
-    0 <= q.num && q.num <= q.den
-}
-
-/// V3: `min` returns one of its arguments and is `<=` both.
-pub fn min(a: Q, b: Q) -> (r: Q)
-    requires bounded(a), bounded(b),
-    ensures
-        r == a || r == b,
-        q_le(r, a),
-        q_le(r, b),
-{
-    proof {
-        q_le_reflexive(a);
-        q_le_reflexive(b);
-        lemma_prod_bound(a.num as int, b.den as int);
-        lemma_prod_bound(b.num as int, a.den as int);
-    }
-    // a <= b  ⟺  a.num*b.den <= b.num*a.den, computed overflow-free in i128.
-    let le = (a.num as i128) * (b.den as i128) <= (b.num as i128) * (a.den as i128);
-    if le {
-        a
-    } else {
-        b
-    }
-}
-
-/// V3: `max` returns one of its arguments and is `>=` both.
-pub fn max(a: Q, b: Q) -> (r: Q)
-    requires bounded(a), bounded(b),
-    ensures
-        r == a || r == b,
-        q_le(a, r),
-        q_le(b, r),
-{
-    proof {
-        q_le_reflexive(a);
-        q_le_reflexive(b);
-        lemma_prod_bound(a.num as int, b.den as int);
-        lemma_prod_bound(b.num as int, a.den as int);
-    }
-    let le = (a.num as i128) * (b.den as i128) <= (b.num as i128) * (a.den as i128);
-    if le {
-        b
-    } else {
-        a
-    }
+    let kn = choose|k: int| n == #[trigger] (g * k);
+    let kd = choose|k: int| d == #[trigger] (g * k);
+    // n/g == kn and d/g == kd because g divides them exactly.
+    assert(n / g == kn) by (nonlinear_arith)
+        requires g > 0, n == g * kn;
+    assert(d / g == kd) by (nonlinear_arith)
+        requires g > 0, d == g * kd;
+    assert((n / g) * d == (d / g) * n) by (nonlinear_arith)
+        requires n == g * kn, d == g * kd, n / g == kn, d / g == kd;
 }
 
 fn main() {}

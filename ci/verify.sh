@@ -39,7 +39,8 @@ if command -v verus >/dev/null 2>&1; then
 
   # Admit-free targets — each MUST verify (hard gate). Add files here as their
   # obligations are promoted from the scaffold to machine-checked.
-  for tgt in verus/src/gcd_checked.rs verus/src/verified.rs verus/src/verified_arith.rs; do
+  for tgt in verus/src/gcd_checked.rs verus/src/verified.rs verus/src/verified_arith.rs \
+             verus/src/verified_pred.rs verus/src/verified_gcd.rs; do
     echo "==> verus $tgt   (admit-free; hard gate)"
     if verus "$tgt"; then
       echo "    ok: $tgt verified"
@@ -52,7 +53,7 @@ if command -v verus >/dev/null 2>&1; then
   # Reported (non-fatal) targets — proofs under active development. They are
   # printed so their Verus errors are visible, but do not fail the job; each is
   # promoted to the hard gate above once it verifies clean.
-  for tgt in verus/src/candidate.rs verus/src/candidate_gcd.rs; do
+  for tgt in verus/src/candidate*.rs; do
     [ -f "$tgt" ] || continue
     echo "==> verus $tgt   (reported, non-fatal)"
     if verus "$tgt"; then
