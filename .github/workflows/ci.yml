@@ -70,7 +70,10 @@ jobs:
           status=0
           for f in verus/*.rs; do
             echo "::group::verus $f"
-            if ! ./verus-install/verus "$f"; then
+            # Default SMT rlimit (~10s per query) isn't enough for some of
+            # the degree-3 polynomial identities in algebra.rs; give every
+            # file more headroom rather than special-casing one.
+            if ! ./verus-install/verus --rlimit 60 "$f"; then
               status=1
             fi
             echo "::endgroup::"
