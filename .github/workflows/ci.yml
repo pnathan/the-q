@@ -78,19 +78,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Verus
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           api=https://api.github.com/repos/verus-lang/verus/releases/latest
-          url=$(curl -sSfL -H "Authorization: Bearer ${{ github.token }}" "$api" \
-            | python3 -c '
-import json, sys
-rel = json.load(sys.stdin)
-cands = [a["browser_download_url"] for a in rel["assets"]
-         if "x86-linux" in a["name"] and a["name"].endswith(".zip")]
-if not cands:
-    sys.exit("no x86-linux asset in the latest Verus release")
-print(cands[0])
-')
+          curl -sSfL -H "Authorization: Bearer $GH_TOKEN" "$api" > /tmp/verus-release.json
+          url=$(python3 scripts/verus_release_url.py < /tmp/verus-release.json)
           echo "Downloading $url"
           curl -sSfL "$url" -o /tmp/verus.zip
           mkdir -p "$HOME/verus"
