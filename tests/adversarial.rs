@@ -184,6 +184,22 @@ fn from_f64_dir_rejects_ultra_tiny_subnormals() {
     assert!(the_q::from_f64_dir(1e-20, Dir::Nearest).is_some());
 }
 
+/// A value whose magnitude exceeds what `Q` can represent (`I2`'s
+/// `2^62 - 1` ceiling) must be *rejected*, not silently saturated to a
+/// value that's off by many orders of magnitude (which would violate R3,
+/// not just be surprising) -- unlike the `rounding` module's
+/// magnitude-ceiling saturation for arithmetic-op results, which only
+/// ever sees results derived from already-in-range operands.
+#[test]
+fn from_f64_dir_rejects_out_of_range_magnitude() {
+    assert!(the_q::from_f64_dir(1e30, Dir::Nearest).is_none());
+    assert!(the_q::from_f64_dir(-1e30, Dir::Nearest).is_none());
+    assert!(the_q::from_f64_dir(f64::MAX, Dir::Nearest).is_none());
+    // Just inside vs. just outside MAX_MAGNITUDE.
+    assert!(the_q::from_f64_dir(4.0e18, Dir::Nearest).is_some());
+    assert!(the_q::from_f64_dir(1e19, Dir::Nearest).is_none());
+}
+
 #[test]
 fn to_f64_never_fed_back_is_documented_boundary() {
     // Smoke test for the trusted `to_f64` boundary (TRUSTED.md): exact

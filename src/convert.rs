@@ -31,13 +31,23 @@ fn decompose(v: f64) -> (i128, i64) {
     (if sign_negative { -mantissa } else { mantissa }, exp)
 }
 
-/// Directed conversion from `f64`. `None` on NaN/+-inf, or on a magnitude
-/// so extreme the exact `2^exp` shift would not fit `i128` (well beyond the
-/// spec's documented `|v| <= 2^61` allowance in both directions -- normal
-/// `f64` magnitudes never come close). Otherwise the exact value is
-/// computed with zero float rounding and handed to the same
-/// [`from_exact_i128`] every arithmetic op uses, so it inherits R1-R4 and
-/// the magnitude-ceiling saturation documented in `rounding`.
+/// Directed conversion from `f64`. `None` on NaN/+-inf, on a magnitude too
+/// extreme for the exact `2^exp` shift to fit `i128`, or -- per the spec's
+/// documented `|v| <= 2^61` allowance -- on a magnitude that exceeds what
+/// `Q` can represent (`I2`'s `2^62 - 1` ceiling). That last case is
+/// deliberately a hard rejection, not the `rounding` module's
+/// magnitude-ceiling saturation: `from_f64_dir` is the primary decimal/f64
+/// ingestion path (spec §5), and silently saturating an out-of-range input
+/// to a value that can be many orders of magnitude off (and so violates
+/// R3, not just "surprising") is worse than rejecting it outright. Compare
+/// `rounding::round_to_budget`'s saturation, which only ever triggers on
+/// an *arithmetic op's* exact result -- there, by construction, both
+/// operands (and so typically the result, barring pathological inputs)
+/// already came from valid, in-range `Q` values.
+///
+/// Otherwise the exact value is computed with zero float rounding and
+/// handed to the same [`from_exact_i128`] every arithmetic op uses, so it
+/// inherits R1-R4.
 pub fn from_f64_dir(v: f64, dir: Dir) -> Option<Q> {
     if !v.is_finite() {
         return None;
@@ -52,12 +62,17 @@ pub fn from_f64_dir(v: f64, dir: Dir) -> Option<Q> {
     let (num, den): (i128, i128) = if exp >= 0 {
         let shift = exp as u32;
         let num = mantissa.checked_shl(shift)?;
+        if num.unsigned_abs() > crate::rounding::MAX_MAGNITUDE as u128 {
+            return None;
+        }
         (num, 1)
     } else {
         let shift = (-exp) as u32;
         if shift > 125 {
             return None;
         }
+        // mantissa's magnitude is always <= 2^53 - 1 < MAX_MAGNITUDE, so
+        // this branch (den > 1) never needs the magnitude check above.
         (mantissa, 1i128 << shift)
     };
     Some(from_exact_i128(num, den, dir))
