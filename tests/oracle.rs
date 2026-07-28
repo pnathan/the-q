@@ -5,7 +5,7 @@
 //!
 //! * **R1** — if the exact result is representable, `the-q` returned it exactly.
 //! * **R2** — `Down <= exact <= Up`.
-//! * **R3** — every result is within `2^-60 · max(1, |exact|)` of the exact value.
+//! * **R3** — every result is within `2^-61 · max(1, |exact|)` of the exact value.
 //!
 //! plus the type invariant (I1 + I2) on every value produced.
 
@@ -284,7 +284,7 @@ fn to_f64_is_within_four_ulp() {
 #[test]
 fn long_fold_chain_tracks_oracle() {
     // 10^4 sequential operations, exactly the shape the consuming engine's
-    // worst case has. The spec predicts ~k · 2^-60 accumulated relative error.
+    // worst case has. The spec predicts ~k · 2^-61 accumulated relative error.
     let mut rng = Rng::new(0x10CDF01D);
     let mut acc = Q::from_decimal(5, 1).unwrap();
     let mut oracle = rat(acc);
@@ -314,6 +314,6 @@ fn long_fold_chain_tracks_oracle() {
     };
     assert!(
         err.clone() * two_pow_b() <= bound_num * scale,
-        "accumulated error {err} exceeds the k · 2^-60 bound after {k} ops"
+        "accumulated error {err} exceeds the k · 2^-61 bound after {k} ops"
     );
 }

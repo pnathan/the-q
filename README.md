@@ -49,7 +49,7 @@ actors per group — never rounds at all. Not "accurate to 15 digits". Exact.
 **2. Large computations round, with a proven bound.** When an exact result no
 longer fits, it snaps to a dyadic grid chosen per magnitude, and the error is at
 most `2^-61 · max(1, |exact|)` (R3). Over the consuming engine's worst case of
-~2·10⁴ sequential operations that accumulates to roughly `2^-45.7 ≈ 2·10^-14`
+~2·10⁴ sequential operations that accumulates to roughly `2^-46.7 ≈ 1·10^-14`
 relative — the same precision class as `f64`, except deterministic and *proven*
 rather than folklore.
 
@@ -109,9 +109,8 @@ this crate does.
 
 ### Magnitude overflow saturates
 
-R3 cannot hold for an exact value whose magnitude exceeds `2^62 - 1`: no
-representable `Q` is that large, so nothing is within `2^-61 · |exact|` of it.
-Such results **saturate** to `±(2^62 - 1)`, and `checked_add`, `checked_sub` and
+For an exact value whose magnitude exceeds `2^62 - 1`, R3 is declared not to
+apply and such results **saturate** to `±(2^62 - 1)`, and `checked_add`, `checked_sub` and
 `checked_mul` report the condition as `None`. No engine value comes anywhere
 near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
 10⁵ — the budget pressure is entirely in the *denominator*. This is a documented
@@ -150,11 +149,20 @@ With `k = bitlen(floor(|x|))` — so `2^(k-1) ≤ |x| < 2^k` for `|x| ≥ 1`, an
 `k = 0` for `|x| < 1` — the shift is `s = 62 - k`, capped at `61` and floored
 at `0`:
 
-* the grid step is `2^-s = 2^(k-62)`, so that is the worst-case error;
-* R3 demands `2^-61 · max(1, |x|) ≥ 2^-61 · 2^(k-1) = 2^(k-62)`.
+* the grid step is `2^-s`, which is `2^(k-62)` for `k ≥ 1` and `2^-61` at the
+  cap (`k == 0`) — that is the worst-case error for the directed modes;
+* R3 demands `2^-61 · max(1, |x|)`: `2^-61` for `|x| < 1`, and
+  `≥ 2^-61 · 2^(k-1) = 2^(k-62)` above.
 
-The two meet exactly, so `B = 61` — one bit better than the specification's
-`B >= 60` bar — is achieved and not exceeded.
+The two meet exactly, so **`B = 61` is achieved for the directed modes** — one
+bit better than the specification's `B >= 60` bar.
+
+`Dir::Nearest`, which every default operation uses, is a *half* grid step and so
+actually satisfies `B = 62`. The proofs do not claim it: the contract is stated
+uniformly at `B = 61` across all three directions. Tightening `Nearest` would
+need a half-step form of `lemma_grid_error_step` (division-free:
+`2·|sn·rd − rn·2^s| ≤ rd`). That bit is left on the table deliberately, and
+noted here so the gap is visible rather than accidental.
 
 ### Why `62 - k` and not `61 - k`
 

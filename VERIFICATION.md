@@ -211,10 +211,10 @@ cross-multiplied likewise. The R3 bound is stated the same way: the real claim
 `|r − n/d| ≤ 2^-61 · max(1, |n/d|)` is written
 
 ```
-|r.num·d − n·r.den| · 2^60  ≤  r.den · max(d, |n|)
+|r.num·d − n·r.den| · 2^61  ≤  r.den · max(d, |n|)
 ```
 
-after multiplying through by `r.den · d · 2^60`, all of which are positive.
+after multiplying through by `r.den · d · 2^61`, all of which are positive.
 Division appears only inside *definitional* spec functions — `gcd_nat`,
 `bitlen`, `grid_num` — where the recursion, not the solver, carries the meaning.
 

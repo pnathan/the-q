@@ -458,3 +458,48 @@ fn deep_reciprocal_chain_is_exact() {
         assert_eq!(x, a, "even-length recip chain drifted from {a}");
     }
 }
+
+/// The rounding carry: a deterministic witness for the one path the `B = 61`
+/// shift introduces that `B = 60` did not have.
+///
+/// With `s = 62 - k` the scaled numerator can reach `2^62 - 1`, and rounding
+/// away from zero then lands on `2^62` — one past `MAX_MAG`. `lemma_carry_reduces`
+/// proves the GCD reduction rescues it; this pins the behaviour at runtime,
+/// because the random sweeps cannot plausibly reach it (the scaled numerator has
+/// to fall in the top `rd`-wide window below `2^62` *and* round up, which is
+/// about a `rd / 2^62` chance per snap).
+///
+/// `x = (3·2^61 − 1) / 3` is just under `2^61`, so `k = 61`, `s = 1`, and the
+/// scaled numerator is exactly `2^62 − 1`.
+#[test]
+fn rounding_carry_reduces_back_into_budget() {
+    let n = 3 * (1i64 << 61) - 1;
+
+    let up = Q::new_rounded(n, 3, Dir::Up).expect("representable after reduction");
+    assert_eq!(
+        (up.numerator(), up.denominator()),
+        (1i64 << 61, 1),
+        "carry did not reduce: got {up}"
+    );
+    assert_wf(up, "carry (Up)");
+
+    // The mirror image: rounding a negative value away from zero.
+    let down = Q::new_rounded(-n, 3, Dir::Down).expect("representable after reduction");
+    assert_eq!(
+        (down.numerator(), down.denominator()),
+        (-(1i64 << 61), 1),
+        "negative carry did not reduce: got {down}"
+    );
+    assert_wf(down, "carry (Down)");
+
+    // Rounding the other way lands on the last grid point below, `2^62 - 1`
+    // over `2^1`. That numerator is odd, so nothing reduces and it sits exactly
+    // on `MAX_MAG` — in budget, and the boundary the carry steps one past.
+    let no_carry = Q::new_rounded(n, 3, Dir::Down).expect("representable");
+    assert_eq!(
+        (no_carry.numerator(), no_carry.denominator()),
+        (MAX_MAG, 2),
+        "Down should have stopped at the last grid point: got {no_carry}"
+    );
+    assert_wf(no_carry, "carry (no-carry direction)");
+}

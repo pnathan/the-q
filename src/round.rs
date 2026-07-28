@@ -7,9 +7,10 @@
 //! produces the `Q` that the operation returns:
 //!
 //! 1. `n == 0` → `0/1`.
-//! 2. `|n/d| > MAX_MAG` → **saturate** to `±MAX_MAG/1`. No `Q` is within the R3
-//!    bound of such a value, so this case is outside the contract; the
-//!    `checked_*` operations surface it as `None` instead.
+//! 2. `|n/d| > MAX_MAG` → **saturate** to `±MAX_MAG/1`. R3 is declared not to
+//!    apply outside the representable range — a choice, not a forced one, as
+//!    `model::magnitude_fits` explains; the `checked_*` operations surface this
+//!    case as `None` instead.
 //! 3. Reduce by `gcd(|n|, d)`. If the reduced pair fits the budget, return it
 //!    **exactly** — this is R1, and it is why small investigations pay zero
 //!    rounding.
@@ -23,11 +24,19 @@
 //! `k = 0` for `|x| < 1`), the shift is `s = 62 - k`, capped at `61` and
 //! floored at `0`.
 //!
-//! * The grid step is `2^-s`, so the error is at most `2^-s = 2^(k-62)`.
-//! * The bound R3 demands is `2^-61 · max(1, |x|) >= 2^-61 · 2^(k-1) = 2^(k-62)`.
+//! * The grid step is `2^-s`, which is `2^(k-62)` for `k >= 1` and `2^-61` at
+//!   the cap (`k == 0`).
+//! * The bound R3 demands is `2^-61 · max(1, |x|)`: that is `2^-61` for
+//!   `|x| < 1`, and `>= 2^-61 · 2^(k-1) = 2^(k-62)` above.
 //!
-//! The two meet exactly: `B = 61` is achieved, one bit better than the
-//! specification's `B >= 60` bar.
+//! The two meet exactly in both regimes, so **`B = 61` is achieved for the
+//! directed modes**, one bit better than the specification's `B >= 60` bar.
+//!
+//! `Dir::Nearest` — which every default operation uses — is a half grid step,
+//! so it actually satisfies `B = 62`. That is *not* claimed in the proofs: the
+//! contract is stated uniformly at `B = 61` for all three directions, and
+//! tightening `Nearest` would need a half-step form of `lemma_grid_error_step`
+//! (division-free: `2·|sn·rd − rn·2^s| <= rd`). Left on the table deliberately.
 //!
 //! # Why the shift is `62 - k` and not `61 - k`
 //!

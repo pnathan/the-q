@@ -109,9 +109,14 @@ pub open spec fn fits_budget(n: int, d: int) -> bool {
 /// Whether the *value* `n / d` (with `d > 0`) is representable at all, i.e.
 /// `|n/d| <= MAX_MAG`. Written division-free.
 ///
-/// When this fails, no `Q` can be within the R3 error bound of `n/d` — the
-/// nearest representable value is more than `2^-61 · |n/d|` away — so the
-/// operations saturate and the `checked_*` variants return `None`.
+/// When this fails the value is outside the representable range, and R3 is
+/// declared not to apply: the operations saturate to `±MAX_MAG/1` and the
+/// `checked_*` variants return `None`.
+///
+/// Note this is a choice, not a forced move. Some unrepresentable values do
+/// have a `Q` inside the R3 bound — `n/d = MAX_MAG + 1/2` is within `2^-61` of
+/// `MAX_MAG/1` — so the exclusion is by fiat, to keep the contract on a single
+/// clean side of a boundary, rather than because nothing could satisfy it.
 pub open spec fn magnitude_fits(n: int, d: int) -> bool {
     abs_int(n) <= max_mag() * d
 }
@@ -389,13 +394,6 @@ pub proof fn lemma_pow2_small()
     reveal_with_fuel(pow2, 3);
 }
 
-/// `2^60`.
-pub proof fn lemma_pow2_60()
-    ensures
-        pow2(60) == 1152921504606846976,
-{
-    reveal_with_fuel(pow2, 61);
-}
 
 /// `2^61`.
 pub proof fn lemma_pow2_61()
