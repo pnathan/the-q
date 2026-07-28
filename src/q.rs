@@ -467,7 +467,7 @@ impl Q {
     ///
     /// A half grid step, not a whole one, so this achieves `B = 62` — one bit
     /// better than the `B = 61` the directed modes are limited to (see
-    /// [`crate::round::lemma_r3_error_nearest`]).
+    /// `round::lemma_r3_error_nearest`).
     pub fn add(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
