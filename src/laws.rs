@@ -89,14 +89,20 @@ pub proof fn lemma_canonical_eq(a: Q, b: Q)
         // a.num * b.den == b.num * a.den, with both fractions in lowest terms.
         // a.den divides b.num * a.den, hence divides a.num * b.den; a.den is
         // coprime to a.num, so a.den | b.den. Symmetrically b.den | a.den.
+        // `wf` gives gcd(|num|, den) == 1; Euclid's lemma wants the divisor
+        // first, so flip both with `lemma_gcd_sym`.
+        crate::q::lemma_gcd_sym(abs_int(a.n()) as nat, a.d() as nat);
+        crate::q::lemma_gcd_sym(abs_int(b.n()) as nat, b.d() as nat);
         assert(divides(a.d(), a.n() * b.d())) by {
             assert(a.n() * b.d() == b.n() * a.d());
             assert(b.n() * a.d() == a.d() * b.n()) by (nonlinear_arith);
+            assert(b.n() * a.d() == a.d() * b.n());
         }
         lemma_euclid(a.d() as nat, abs_int(a.n()) as nat, b.d() as nat);
         assert(divides(b.d(), b.n() * a.d())) by {
             assert(b.n() * a.d() == a.n() * b.d());
             assert(a.n() * b.d() == b.d() * a.n()) by (nonlinear_arith);
+            assert(a.n() * b.d() == b.d() * a.n());
         }
         lemma_euclid(b.d() as nat, abs_int(b.n()) as nat, a.d() as nat);
         lemma_divides_le(a.d(), b.d());
@@ -186,12 +192,20 @@ pub proof fn theorem_add_associative_exact(a: Q, b: Q, c: Q, dir: Dir)
             q_eq(left, right)
         }),
 {
+    crate::q::lemma_op_widths(a, b);
+    crate::q::lemma_op_widths(b, c);
     let ab = round_frac(add_n(a, b), prod_d(a, b), dir);
     let bc = round_frac(add_n(b, c), prod_d(b, c), dir);
+    crate::round::lemma_round_frac_wf(add_n(a, b), prod_d(a, b), dir);
+    crate::round::lemma_round_frac_wf(add_n(b, c), prod_d(b, c), dir);
     theorem_exact_path_is_exact(add_n(a, b), prod_d(a, b), dir);
     theorem_exact_path_is_exact(add_n(b, c), prod_d(b, c), dir);
+    crate::q::lemma_op_widths(ab, c);
+    crate::q::lemma_op_widths(a, bc);
     let left = round_frac(add_n(ab, c), prod_d(ab, c), dir);
     let right = round_frac(add_n(a, bc), prod_d(a, bc), dir);
+    crate::round::lemma_round_frac_wf(add_n(ab, c), prod_d(ab, c), dir);
+    crate::round::lemma_round_frac_wf(add_n(a, bc), prod_d(a, bc), dir);
     theorem_exact_path_is_exact(add_n(ab, c), prod_d(ab, c), dir);
     theorem_exact_path_is_exact(add_n(a, bc), prod_d(a, bc), dir);
     // Both equal (a + b + c) exactly, and exact equality of values is q_eq.

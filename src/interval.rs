@@ -300,10 +300,19 @@ pub proof fn lemma_add_endpoint_order(
             ad > 0,
             xd > 0,
     ;
-    assert((an * bd + bn * ad) * (xd * yd) == (an * xd) * (bd * yd) + (bn * yd) * (ad * xd))
+    // Distribution and rearrangement are separated deliberately. Handed the
+    // combined identity, the solver has to discover the factorisation itself
+    // and burns through its budget; given distribution as its own step, each
+    // remaining goal is an associativity/commutativity shuffle of a four-factor
+    // product, which it normalises for free.
+    assert((an * bd + bn * ad) * (xd * yd) == (an * bd) * (xd * yd) + (bn * ad) * (xd * yd))
         by (nonlinear_arith);
-    assert((xn * yd + yn * xd) * (ad * bd) == (xn * ad) * (bd * yd) + (yn * bd) * (ad * xd))
+    assert((an * bd) * (xd * yd) == (an * xd) * (bd * yd)) by (nonlinear_arith);
+    assert((bn * ad) * (xd * yd) == (bn * yd) * (ad * xd)) by (nonlinear_arith);
+    assert((xn * yd + yn * xd) * (ad * bd) == (xn * yd) * (ad * bd) + (yn * xd) * (ad * bd))
         by (nonlinear_arith);
+    assert((xn * yd) * (ad * bd) == (xn * ad) * (bd * yd)) by (nonlinear_arith);
+    assert((yn * xd) * (ad * bd) == (yn * bd) * (ad * xd)) by (nonlinear_arith);
 }
 
 } // verus!

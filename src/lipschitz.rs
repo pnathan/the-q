@@ -112,10 +112,14 @@ pub proof fn lemma_triangle(
     // The factorisation is given to the solver in four small ring steps. Handed
     // over whole it exhausts the resource limit — eight variables and degree
     // four is past what the nonlinear tactic will chew through in one bite.
-    assert((an * bd + bn * ad) * (a2d * b2d) == (an * a2d) * (bd * b2d) + (bn * b2d) * (ad * a2d))
+    assert((an * bd + bn * ad) * (a2d * b2d) == (an * bd) * (a2d * b2d) + (bn * ad) * (a2d * b2d))
         by (nonlinear_arith);
-    assert((a2n * b2d + b2n * a2d) * (ad * bd) == (a2n * ad) * (bd * b2d) + (b2n * bd) * (ad
-        * a2d)) by (nonlinear_arith);
+    assert((an * bd) * (a2d * b2d) == (an * a2d) * (bd * b2d)) by (nonlinear_arith);
+    assert((bn * ad) * (a2d * b2d) == (bn * b2d) * (ad * a2d)) by (nonlinear_arith);
+    assert((a2n * b2d + b2n * a2d) * (ad * bd) == (a2n * b2d) * (ad * bd) + (b2n * a2d) * (ad
+        * bd)) by (nonlinear_arith);
+    assert((a2n * b2d) * (ad * bd) == (a2n * ad) * (bd * b2d)) by (nonlinear_arith);
+    assert((b2n * a2d) * (ad * bd) == (b2n * bd) * (ad * a2d)) by (nonlinear_arith);
     assert((an * a2d - a2n * ad) * (bd * b2d) == (an * a2d) * (bd * b2d) - (a2n * ad) * (bd * b2d))
         by (nonlinear_arith);
     assert((bn * b2d - b2n * bd) * (ad * a2d) == (bn * b2d) * (ad * a2d) - (b2n * bd) * (ad * a2d))
@@ -282,8 +286,10 @@ pub proof fn lemma_frac_triangle(
             xd > 0,
             abs_int(yn * zd - zn * yd) * ee <= e2 * (yd * zd),
     ;
-    assert((e1 * (xd * yd)) * zd + (e2 * (yd * zd)) * xd == ((e1 + e2) * (xd * zd)) * yd)
+    assert(((e1 + e2) * (xd * zd)) * yd == (e1 * (xd * zd)) * yd + (e2 * (xd * zd)) * yd)
         by (nonlinear_arith);
+    assert((e1 * (xd * yd)) * zd == (e1 * (xd * zd)) * yd) by (nonlinear_arith);
+    assert((e2 * (yd * zd)) * xd == (e2 * (xd * zd)) * yd) by (nonlinear_arith);
     assert((abs_int(xn * zd - zn * xd) * ee) * yd <= ((e1 + e2) * (xd * zd)) * yd);
     assert(abs_int(xn * zd - zn * xd) * ee <= (e1 + e2) * (xd * zd)) by (nonlinear_arith)
         requires
@@ -342,11 +348,12 @@ pub proof fn lemma_abs_error_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: n
             bd > 0,
             ed == ad * bd,
     ;
-    assert(td > 0) by (nonlinear_arith)
+    assert(pd * bd > 0) by (nonlinear_arith)
         requires
             pd > 0,
             bd > 0,
     ;
+    assert(td > 0);
     // (a) this step's rounding error, in absolute form.
     assert(abs_int(r.n() * ed - en * r.d()) * e <= m * (r.d() * ed)) by (nonlinear_arith)
         requires
@@ -357,13 +364,18 @@ pub proof fn lemma_abs_error_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: n
     // (b) the carried error. The `next` term cancels: the difference between the
     // step's exact value and the target is exactly bd^2 times the accumulator's
     // own error.
-    assert(en * td - tn * ed == (bd * bd) * (an * pd - pn * ad)) by (nonlinear_arith)
-        requires
-            en == an * bd + bn * ad,
-            ed == ad * bd,
-            tn == pn * bd + bn * pd,
-            td == pd * bd,
-    ;
+    // en·td - tn·ed, expanded: the two `bn` terms are the same monomial and
+    // cancel, leaving bd^2 times the accumulator's own error.
+    assert((an * bd + bn * ad) * (pd * bd) == (an * bd) * (pd * bd) + (bn * ad) * (pd * bd))
+        by (nonlinear_arith);
+    assert((pn * bd + bn * pd) * (ad * bd) == (pn * bd) * (ad * bd) + (bn * pd) * (ad * bd))
+        by (nonlinear_arith);
+    assert((bn * ad) * (pd * bd) == (bn * pd) * (ad * bd)) by (nonlinear_arith);
+    assert((an * bd) * (pd * bd) == (bd * bd) * (an * pd)) by (nonlinear_arith);
+    assert((pn * bd) * (ad * bd) == (bd * bd) * (pn * ad)) by (nonlinear_arith);
+    assert((bd * bd) * (an * pd) - (bd * bd) * (pn * ad) == (bd * bd) * (an * pd - pn * ad))
+        by (nonlinear_arith);
+    assert(en * td - tn * ed == (bd * bd) * (an * pd - pn * ad));
     assert(ed * td == (bd * bd) * (ad * pd)) by (nonlinear_arith)
         requires
             ed == ad * bd,

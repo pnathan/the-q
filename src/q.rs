@@ -92,7 +92,7 @@ impl Q {
             r.d() == 1,
     {
         proof {
-            assert(gcd_int(0, 1) == 1);
+            crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
         Q { num: 0, den: 1 }
@@ -106,9 +106,7 @@ impl Q {
             r.d() == 1,
     {
         proof {
-            assert(gcd_int(1, 1) == 1) by {
-                assert(crate::model::gcd_nat(1nat, 1nat) == crate::model::gcd_nat(1nat, 0nat));
-            }
+            crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
         Q { num: 1, den: 1 }
@@ -141,10 +139,7 @@ impl Q {
             None
         } else {
             proof {
-                assert(gcd_int(i as int, 1) == 1) by {
-                    assert(crate::model::gcd_nat(abs_int(i as int) as nat, 1nat)
-                        == crate::model::gcd_nat(1nat, (abs_int(i as int) % 1) as nat));
-                }
+                crate::round::lemma_gcd_one();
                 lemma_max_mag_pow2();
             }
             Some(Q { num: i, den: 1 })
@@ -238,31 +233,43 @@ impl Q {
         if mantissa > MAX_MAG || mantissa < -MAX_MAG {
             return None;
         }
-        let mut scale: i64 = 1;
-        let mut i: u8 = 0;
-        while i < dec_places
-            invariant
-                i <= dec_places,
-                dec_places <= MAX_DEC_PLACES,
-                1 <= scale <= 1000000000000000000,
-                scale as int * pow_ten((dec_places - i) as nat) <= 1000000000000000000,
-            decreases dec_places - i,
-        {
-            scale = scale * 10;
-            i = i + 1;
-        }
+        let scale: i64 = pow10_i64(dec_places);
         Q::new(mantissa, scale)
     }
 }
 
-/// `10^n`, used only to bound the decimal scale factor.
-pub open spec fn pow_ten(n: nat) -> int
-    decreases n,
+/// `10^n` for `n <= 18`, as a literal table.
+///
+/// A table rather than a loop on purpose: the loop version needs an invariant
+/// relating the accumulator to `10^(n-i)` and a bound proving the next multiply
+/// cannot overflow, which is three proof obligations and a lemma to buy nothing.
+/// Nineteen literals are transparent to the verifier and to the reader.
+pub fn pow10_i64(n: u8) -> (r: i64)
+    requires
+        n <= MAX_DEC_PLACES,
+    ensures
+        1 <= r <= 1000000000000000000,
 {
-    if n == 0 {
-        1int
-    } else {
-        10 * pow_ten((n - 1) as nat)
+    match n {
+        0 => 1,
+        1 => 10,
+        2 => 100,
+        3 => 1000,
+        4 => 10000,
+        5 => 100000,
+        6 => 1000000,
+        7 => 10000000,
+        8 => 100000000,
+        9 => 1000000000,
+        10 => 10000000000,
+        11 => 100000000000,
+        12 => 1000000000000,
+        13 => 10000000000000,
+        14 => 100000000000000,
+        15 => 1000000000000000,
+        16 => 10000000000000000,
+        17 => 100000000000000000,
+        _ => 1000000000000000000,
     }
 }
 
@@ -636,11 +643,21 @@ pub proof fn lemma_op_widths(a: Q, b: Q)
         a.wf(),
         b.wf(),
     ensures
-        abs_int(a.n() * b.d()) < pow2(124),
-        abs_int(b.n() * a.d()) < pow2(124),
-        abs_int(a.n() * b.n()) < pow2(124),
-        abs_int(a.d() * b.d()) < pow2(124),
+        // Literal forms. These are what discharge the `i128` overflow checks at
+        // the call sites: `pow2(124)` is an opaque recursive term to the
+        // solver, so a bound stated with it proves nothing about an `i128`.
+        abs_int(a.n() * b.d()) < 21267647932558653966460912964485513216,
+        abs_int(b.n() * a.d()) < 21267647932558653966460912964485513216,
+        abs_int(a.n() * b.n()) < 21267647932558653966460912964485513216,
+        abs_int(a.d() * b.d()) < 21267647932558653966460912964485513216,
+        abs_int(add_n(a, b)) < 42535295865117307932921825928971026432,
+        abs_int(sub_n(a, b)) < 42535295865117307932921825928971026432,
+        abs_int(mul_n(a, b)) < 42535295865117307932921825928971026432,
         a.d() * b.d() > 0,
+        a.d() > 0,
+        b.d() > 0,
+        // `pow2` forms, for `round_frac_exec`'s preconditions.
+        abs_int(a.d() * b.d()) <= pow2(124),
         abs_int(add_n(a, b)) < pow2(126),
         abs_int(sub_n(a, b)) < pow2(126),
         abs_int(mul_n(a, b)) < pow2(126),

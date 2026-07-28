@@ -172,8 +172,8 @@ pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
     lemma_gcd_pos(a, b);
     lemma_gcd_divides(a, b);
     // g divides a and b, so a == g * (a/g) and b == g * (b/g).
-    let ka = choose|k: int| a as int == (g as int) * k;
-    let kb = choose|k: int| b as int == (g as int) * k;
+    let ka = choose|k: int| a as int == #[trigger] ((g as int) * k);
+    let kb = choose|k: int| b as int == #[trigger] ((g as int) * k);
     assert(ka >= 0 && kb >= 0) by (nonlinear_arith)
         requires
             g > 0,
@@ -293,7 +293,7 @@ pub fn gcd_abs_i128(n: i128, d: i128) -> (r: i128)
         lemma_gcd_le(m as nat, d as nat);
         lemma_gcd_divides(m as nat, d as nat);
         // divides(g, |n|) implies divides(g, n).
-        let k = choose|k: int| (m as int) == (g as int) * k;
+        let k = choose|k: int| (m as int) == #[trigger] ((g as int) * k);
         if n < 0 {
             assert((n as int) == (g as int) * (-k)) by (nonlinear_arith)
                 requires

@@ -331,8 +331,8 @@ pub proof fn lemma_divides_linear(d: int, a: int, b: int, s: int, t: int)
     ensures
         divides(d, s * a + t * b),
 {
-    let ka = choose|k: int| a == d * k;
-    let kb = choose|k: int| b == d * k;
+    let ka = choose|k: int| a == #[trigger] (d * k);
+    let kb = choose|k: int| b == #[trigger] (d * k);
     assert(s * a + t * b == d * (s * ka + t * kb)) by (nonlinear_arith)
         requires
             a == d * ka,
@@ -348,8 +348,8 @@ pub proof fn lemma_divides_trans(a: int, b: int, c: int)
     ensures
         divides(a, c),
 {
-    let k1 = choose|k: int| b == a * k;
-    let k2 = choose|k: int| c == b * k;
+    let k1 = choose|k: int| b == #[trigger] (a * k);
+    let k2 = choose|k: int| c == #[trigger] (b * k);
     assert(c == a * (k1 * k2)) by (nonlinear_arith)
         requires
             b == a * k1,
@@ -458,7 +458,7 @@ pub proof fn lemma_divides_le(d: int, n: int)
     ensures
         d <= n,
 {
-    let k = choose|k: int| n == d * k;
+    let k = choose|k: int| n == #[trigger] (d * k);
     assert(k >= 1) by (nonlinear_arith)
         requires
             d > 0,

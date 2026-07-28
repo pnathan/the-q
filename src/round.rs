@@ -208,7 +208,7 @@ pub proof fn lemma_reduce_exact(n: int, d: int)
     let g = gcd_int(n, d);
     lemma_gcd_pos(abs_int(n) as nat, d as nat);
     lemma_gcd_divides(abs_int(n) as nat, d as nat);
-    let kd = choose|k: int| d == g * k;
+    let kd = choose|k: int| d == #[trigger] (g * k);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(d, g, kd, 0);
     assert(kd > 0) by (nonlinear_arith)
         requires
@@ -216,7 +216,7 @@ pub proof fn lemma_reduce_exact(n: int, d: int)
             g > 0,
             d == g * kd,
     ;
-    let ka = choose|k: int| abs_int(n) == g * k;
+    let ka = choose|k: int| abs_int(n) == #[trigger] (g * k);
     if n >= 0 {
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(n, g, ka, 0);
     } else {
