@@ -168,7 +168,7 @@ impl Q {
         let mut n: i128 = num as i128;
         let mut d: i128 = den as i128;
         let neg: bool = d < 0;
-        if d < 0 {
+        if neg {
             n = 0 - n;
             d = 0 - d;
         }
