@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-and-test:
+    name: cargo build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Plain rustc must build the annotated sources: the `verus!` macro erases
+      # all ghost code, so a Verus-annotated crate is still an ordinary crate.
+      - name: Build (plain rustc)
+        run: cargo build --all-features --verbose
+
+      - name: Build (release, overflow checks on)
+        run: cargo build --release --all-features --verbose
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rustfmt
+        run: cargo fmt --check
+
+      # Debug and release both matter: overflow-checks are on in both profiles
+      # (see [profile.release] in Cargo.toml), so the release run is a second
+      # independent execution of the V2 no-overflow claim.
+      - name: Test (debug)
+        run: cargo test --all-features --verbose
+
+      - name: Test (release)
+        run: cargo test --release --all-features --verbose
+
+      - name: Documentation builds
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  licences:
+    name: no copyleft in the shipped tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # malachite-q is the test oracle and is LGPL-3.0-only. It must never
+      # appear outside [dev-dependencies].
+      - name: Check dependency licences
+        run: ./scripts/check-no-lgpl.sh
+
+  verify:
+    name: verus verify
+    runs-on: ubuntu-latest
+    # TODO: remove `continue-on-error` once the proofs discharge. See
+    # VERIFICATION.md — the proofs are written but have not been machine-checked
+    # yet, and an advisory check is more honest than a permanently red required
+    # one. This is the single line to flip.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Verus
+        run: |
+          set -euo pipefail
+          api=https://api.github.com/repos/verus-lang/verus/releases/latest
+          url=$(curl -sSfL -H "Authorization: Bearer ${{ github.token }}" "$api" \
+            | python3 -c '
+import json, sys
+rel = json.load(sys.stdin)
+cands = [a["browser_download_url"] for a in rel["assets"]
+         if "x86-linux" in a["name"] and a["name"].endswith(".zip")]
+if not cands:
+    sys.exit("no x86-linux asset in the latest Verus release")
+print(cands[0])
+')
+          echo "Downloading $url"
+          curl -sSfL "$url" -o /tmp/verus.zip
+          mkdir -p "$HOME/verus"
+          unzip -q /tmp/verus.zip -d "$HOME/verus"
+          # The archive contains a single top-level directory holding the
+          # `verus`, `cargo-verus`, `rust_verify` and `z3` binaries.
+          dir=$(find "$HOME/verus" -maxdepth 2 -name 'cargo-verus' -printf '%h\n' | head -1)
+          test -n "$dir" || { echo "cargo-verus not found in the archive"; exit 1; }
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Verus version
+        run: verus --version || true
+
+      - name: Verify
+        run: cargo verus verify --all-features
