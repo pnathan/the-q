@@ -279,6 +279,9 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
         let rn = red_num(n, d);
         let rd = red_den(n, d);
         lemma_gcd_reduce_coprime(abs_int(n) as nat, d as nat);
+        // `lemma_gcd_reduce_coprime` speaks about `|n| / g`; this identifies
+        // that with `|red_num|`, which is what `gcd_int(rn, rd)` unfolds to.
+        lemma_reduce_abs(n, d);
         if fits_budget(rn, rd) {
         } else {
             let s = snap_shift(rn, rd);
@@ -379,6 +382,11 @@ pub proof fn lemma_r2_directed(n: int, d: int)
         lemma_pow2_pos(s);
         let sd = pow2(s);
         // floor: (rn * 2^s / rd) * rd <= rn * 2^s  <=  ceil(...) * rd
+        let a = rn * sd;
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a, rd);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(-a, rd);
+        assert((a / rd) * rd == rd * (a / rd)) by (nonlinear_arith);
+        assert(((-a) / rd) * rd == rd * ((-a) / rd)) by (nonlinear_arith);
         assert((rn * sd) / rd * rd <= rn * sd);
         assert(rn * sd <= -(((-(rn * sd)) / rd) * rd));
         lemma_grid_reduce_preserves_order(rn, rd, s, Dir::Down);
@@ -811,13 +819,19 @@ pub fn bitlen_i128(x: i128) -> (k: u32)
             // `p <= x < 2^126`, so `p * 2 < 2^127` and the doubling is safe.
             x <= 85070591730234615865843651857942052864,
             forall|j: nat| j < k as nat ==> pow2(j) <= x,
-        decreases x - p,
+        // `x - p` is not a legal measure: it is only non-negative while the
+        // guard holds, and Verus checks the *decremented* value. `126 - k` is
+        // non-negative because `p == 2^k <= x < 2^126` forces `k < 126`.
+        decreases 126 - k,
     {
         proof {
+            if k >= 126 {
+                lemma_pow2_mono(126nat, k as nat);
+            }
+            assert(k < 126);
             lemma_pow2_mono((k + 1) as nat, 126nat);
             lemma_pow2_pos((k + 1) as nat);
             crate::model::lemma_pow2_126();
-            // The measure decreases because `p` strictly grows.
             assert(p * 2 > p) by (nonlinear_arith)
                 requires
                     p > 0,
@@ -887,6 +901,10 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
         assert(pow2(i as nat) <= pow2(s as nat)) by {
             lemma_pow2_mono(i as nat, s as nat);
         }
+        assert((n as int) * pow2(0nat) == n as int) by (nonlinear_arith)
+            requires
+                pow2(0nat) == 1,
+        ;
         assert(q * d + rem == n * pow2(0nat));
         lemma_quotient_bound(q as int, rem as int, d as int, n as int, 0nat, s as nat);
     }
@@ -922,6 +940,12 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
         i = i + 1;
         proof {
             crate::model::lemma_pow2_add(1nat, (i - 1) as nat);
+            assert(pow2(1nat) == 2);
+            assert(pow2(i as nat) == 2 * pow2((i - 1) as nat));
+            // Doubling both sides of the carried identity is nonlinear in `n`.
+            assert(2 * ((n as int) * pow2((i - 1) as nat)) == (n as int) * (2 * pow2(
+                (i - 1) as nat,
+            ))) by (nonlinear_arith);
             lemma_quotient_bound(q as int, rem as int, d as int, n as int, i as nat, s as nat);
             crate::model::lemma_pow2_62();
         }
