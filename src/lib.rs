@@ -302,7 +302,7 @@ impl Q {
     /// Exact integer, or `None` if `|i| > 2^62 − 1`.
     #[verifier::external_body]
     pub fn from_int(i: i64) -> (r: Option<Q>)
-        ensures forall|q: Q| r == Some(q) ==> wf(q),
+        ensures r matches Some(q) ==> wf(q),
     {
         if i == i64::MIN || i.unsigned_abs() > BUDGET as u64 {
             return None;
@@ -314,7 +314,7 @@ impl Q {
     /// form exceeds the budget.
     #[verifier::external_body]
     pub fn new(num: i64, den: i64) -> (r: Option<Q>)
-        ensures forall|q: Q| r == Some(q) ==> wf(q),
+        ensures r matches Some(q) ==> wf(q),
     {
         if den == 0 {
             return None;
@@ -330,7 +330,7 @@ impl Q {
     /// Exact decimal literal: `from_decimal(85, 2) == 0.85`.
     #[verifier::external_body]
     pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Q>)
-        ensures forall|q: Q| r == Some(q) ==> wf(q),
+        ensures r matches Some(q) ==> wf(q),
     {
         let mut den: i128 = 1;
         let mut i = 0u8;
@@ -354,7 +354,7 @@ impl Q {
     /// bit-decomposition — no float arithmetic.
     #[verifier::external_body]
     pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
-        ensures forall|q: Q| r == Some(q) ==> wf(q),
+        ensures r matches Some(q) ==> wf(q),
     {
         if !v.is_finite() {
             return None;
@@ -462,7 +462,7 @@ impl Q {
     #[verifier::external_body]
     pub fn checked_div(self, other: Q) -> (r: Option<Q>)
         requires wf(self), wf(other),
-        ensures forall|q: Q| r == Some(q) ==> wf(q),
+        ensures r matches Some(q) ==> wf(q),
     {
         if other.num == 0 {
             None
