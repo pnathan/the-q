@@ -40,19 +40,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install Verus (from the latest release, resolved via the API)
+      - name: Install Verus (release pinned to match the vstd crate version)
         env:
           # api.github.com is rate-limited unauthenticated; the job token lifts it.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional override, e.g. VERUS_TAG=release/0.2025.06.14
+          # Optional override, e.g. VERUS_TAG=release/0.2026.07.27.<hash>
           VERUS_TAG: ${{ vars.VERUS_TAG }}
+          # Must match the vstd/verus_builtin version pinned in Cargo.toml so that
+          # the binary's bundled vstd and the crates.io vstd share one API.
+          VERUS_DATE: "0.2026.07.27"
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/verus-lang/verus/releases"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28")
           if [ -n "${VERUS_TAG:-}" ]; then
             rel="$api/tags/${VERUS_TAG}"
           else
-            rel="$api/latest"
+            # Find the release whose tag carries the target date (matches Cargo's vstd).
+            tag="$(curl -fsSL "${auth[@]}" "$api?per_page=100" \
+                   | jq -r '.[].tag_name' | grep -F "$VERUS_DATE" | head -1)"
+            if [ -z "$tag" ]; then
+              echo "::error::no Verus release tag matching $VERUS_DATE"; exit 1
+            fi
+            rel="$api/tags/$tag"
           fi
           echo "Resolving Verus release: $rel"
           # Pick the x86-64 Linux zip asset regardless of the exact name shape.

@@ -53,6 +53,18 @@ if command -v verus >/dev/null 2>&1; then
     fi
   done
 
+  # The shipped crate itself, verified directly (the review's core ask). Reported
+  # non-fatal while the port is in progress: the invariant model + API contracts
+  # are on the exec functions, with the heavy internals `external_body` (trusted)
+  # and being tightened. Promote to the hard gate once it verifies clean with the
+  # trusted set down to `to_f64`.
+  echo "==> verus --crate-type=lib src/lib.rs   (shipped crate; reported, non-fatal)"
+  if verus --crate-type=lib src/lib.rs; then
+    echo "    ok: src/lib.rs verified directly — ready to promote to the hard gate"
+  else
+    echo "    NOTE: src/lib.rs direct verification in progress — non-fatal."
+  fi
+
   # Reported (non-fatal) targets — proofs under active development. They are
   # printed so their Verus errors are visible, but do not fail the job; each is
   # promoted to the hard gate above once it verifies clean.

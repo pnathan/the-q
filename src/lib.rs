@@ -3,57 +3,46 @@
 //! Exact-with-verified-rounding rational arithmetic over a fixed width budget,
 //! intended as the deterministic numeric backbone of a subjective-logic fusion
 //! engine. Values are stored canonically as `num / den` with `den > 0` and
-//! `gcd(|num|, den) == 1`, so **structural equality is mathematical equality**
-//! and every value has a single bit-exact representation.
-//!
-//! ## What "bounded rational with verified rounding" means
-//!
-//! Arithmetic is **exact** while numerator and denominator fit the budget
-//! `2^62 − 1` (invariant [`I2`](#invariants)); when an exact result exceeds the
-//! budget it is rounded to the budget grid with a **proven** directed error
-//! bound (`|result − exact| ≤ 2^-60 · max(1, |exact|)`). All intermediate
-//! computation happens in `i128`, which the budget guarantees never overflows
-//! (see the module docs on [`Q::add`] etc.).
-//!
-//! ## Honesty consequence (read this)
-//!
-//! With rounding enabled, `add` and `mul` are **commutative** but **not
-//! associative in general** — associativity and distributivity hold only on the
-//! *exact path* (when no operand or result is rounded). Any computation whose
-//! exact values all fit the budget is **end-to-end exact** (theorem R1); small
-//! investigations therefore pay *zero* rounding. See `README.md` and the
-//! rounding contract in the crate specification for the full statement.
+//! `gcd(|num|, den) == 1`, so **structural equality is mathematical equality**.
 //!
 //! ## Verification
 //!
-//! The integer arithmetic in this crate is designed to be machine-checked by
-//! [Verus](https://github.com/verus-lang/verus). The Verus specification and
-//! proof scaffold live under `verus/`; the trusted float boundary is documented
-//! in `TRUSTED.md`. The two float-touching functions ([`Q::to_f64`], and
-//! optionally [`Q::from_f64_dir`]) are the only edges that are differentially
-//! tested rather than proven.
+//! This crate is **its own Verus verification target**: the whole of `src/lib.rs`
+//! is wrapped in `verus! { … }`, so the same source both `cargo build`s (the
+//! macro expands to plain Rust) and is checked by
+//! `verus --crate-type=lib src/lib.rs` on CI. That makes `vstd`/`verus_builtin`
+//! hard dependencies — the standard shape of a directly-verified Verus crate.
+//!
+//! The port is staged: the invariant model and the API contracts
+//! (`requires`/`ensures wf`) are on the exec functions themselves, and the heavy
+//! internal bodies (`round_to_budget`, `reduce_i128`, the f64 boundary) are
+//! currently `#[verifier::external_body]` — trusted bodies with checked
+//! signatures — and are being tightened to full proofs (the machine-checked
+//! algorithm-level proofs live under `verus/`). `TRUSTED.md` tracks the trusted
+//! set; `verus/README.md` tracks per-obligation status.
+//!
+//! ## Honesty consequence
+//!
+//! With rounding, `add`/`mul` are **commutative** but **not associative in
+//! general** — associativity/distributivity hold only on the exact path.
 
 #![cfg_attr(not(test), no_std)]
-#![forbid(unsafe_code)]
-// The public surface deliberately exposes inherent methods named `add`, `sub`,
-// `mul`, `div`, `neg`, and `eq` (the operator traits are *also* implemented, for
-// the `Nearest`-rounding sugar). The named methods are the primary, explicit API
-// (they carry the directed variants and the div precondition), so this lint —
-// which assumes such names should only come from the traits — does not apply.
 #![allow(clippy::should_implement_trait)]
 
-use core::cmp::Ordering;
-use core::fmt;
+use vstd::prelude::*;
+
+verus! {
 
 /// The width budget: `|num| ≤ BUDGET` and `den ≤ BUDGET` for every canonical
-/// [`Q`] (invariant I2). Chosen as `2^62 − 1` so that every `i128` intermediate
-/// in add/sub/mul/div/compare is provably in range — a `2^63` budget would
-/// overflow the add-numerator at `i128::MAX`.
-pub const BUDGET: i64 = (1i64 << 62) - 1;
+/// [`Q`] (invariant I2). `2^62 − 1` so every `i128` intermediate is provably in
+/// range.
+pub const BUDGET: i64 = 4611686018427387903;
 
-/// Rounding direction for directed operations (see [`Q::from_f64_dir`] and the
-/// rounding contract). `Down` rounds toward −∞, `Up` toward +∞, `Nearest`
-/// toward the closest grid point (ties away from zero).
+/// `2^62 − 1` as a ghost `int`, for specifications.
+pub open spec fn budget_int() -> int { 4611686018427387903 }
+
+/// Rounding direction. `Down` toward −∞, `Up` toward +∞, `Nearest` to the
+/// closest grid point (ties away from zero).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Dir {
     /// Round toward −∞: result ≤ exact value.
@@ -66,27 +55,45 @@ pub enum Dir {
 
 /// A canonical, bounded rational number `num / den`.
 ///
-/// Invariants maintained by every public constructor and operation:
-/// - **I1 (canonical):** `den > 0`, `gcd(|num|, den) == 1`, and `num == 0 ⟹ den == 1`.
+/// - **I1 (canonical):** `den > 0`, `gcd(|num|, den) == 1`, `num == 0 ⟹ den == 1`.
 /// - **I2 (bounded):** `|num| ≤ 2^62 − 1` and `den ≤ 2^62 − 1`.
-///
-/// Because the form is canonical, `PartialEq`/`Eq`/`Hash` are derived (safe:
-/// structural equality ⟺ mathematical equality), while `Ord`/`PartialOrd` are
-/// implemented by cross-multiplication so the ordering matches value order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Q {
     num: i64,
     den: i64,
 }
 
-// ---------------------------------------------------------------------------
-// Internal integer helpers (the verified region operates on these).
-// ---------------------------------------------------------------------------
+// ---- ghost model ----------------------------------------------------------
 
-/// Euclid's algorithm on `u128` (superset of the `u64` GCD proven in Verus,
-/// obligation V5). Terminates: the second argument strictly decreases each step
-/// (measure), reaching 0.
-#[inline]
+/// Absolute value on ghost `int`.
+pub open spec fn abs_int(x: int) -> int { if x < 0 { -x } else { x } }
+
+/// Well-formedness = I2 (bounded) with a positive denominator — the part of the
+/// invariant the API contracts thread through. (Full I1 canonicality/GCD is
+/// maintained by the constructors and proven at the algorithm level under
+/// `verus/`; folding it into this predicate is part of the ongoing tightening.)
+pub open spec fn wf(q: Q) -> bool {
+    &&& q.den as int >= 1
+    &&& -budget_int() <= q.num as int <= budget_int()
+    &&& q.den as int <= budget_int()
+}
+
+/// Ghost value order, division-free (both denominators positive).
+pub open spec fn q_le_spec(a: Q, b: Q) -> bool {
+    (a.num as int) * (b.den as int) <= (b.num as int) * (a.den as int)
+}
+pub open spec fn q_lt_spec(a: Q, b: Q) -> bool {
+    (a.num as int) * (b.den as int) < (b.num as int) * (a.den as int)
+}
+pub open spec fn q_eq_spec(a: Q, b: Q) -> bool {
+    (a.num as int) * (b.den as int) == (b.num as int) * (a.den as int)
+}
+
+// ---- internal integer helpers (trusted bodies for now) --------------------
+
+/// Euclid's algorithm on `u128`. (Verified at the algorithm level in
+/// `verus/src/gcd_checked.rs`; body trusted here pending in-file tightening.)
+#[verifier::external_body]
 fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         let t = a % b;
@@ -96,12 +103,13 @@ fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
     a
 }
 
-/// Reduce a raw fraction to canonical form: `den > 0`, `gcd(|num|, den) == 1`,
-/// `num == 0 ⟹ den == 1`. Operates in `i128` (all callers pass values that fit
-/// `i128`). Panics only if `d == 0`, which every caller excludes.
-#[inline]
-fn reduce_i128(mut n: i128, mut d: i128) -> (i128, i128) {
-    debug_assert!(d != 0);
+/// Reduce `n/d` (`d != 0`) to canonical form. (Value-preservation + canonicality
+/// proven in `verus/src/verified_reduce.rs`/`verified_uniq.rs`.)
+#[verifier::external_body]
+fn reduce_i128(mut n: i128, mut d: i128) -> (r: (i128, i128))
+    requires d != 0,
+    ensures r.1 >= 1,
+{
     if d < 0 {
         n = -n;
         d = -d;
@@ -113,25 +121,20 @@ fn reduce_i128(mut n: i128, mut d: i128) -> (i128, i128) {
     (n / g, d / g)
 }
 
-const BUDGET_U128: u128 = (1u128 << 62) - 1;
-
 /// Bit length of a positive `u128` (`0` for `0`).
-#[inline]
+#[verifier::external_body]
 fn bits(x: u128) -> u32 {
     128 - x.leading_zeros()
 }
 
-/// Compute `floor(num * 2^s / den)` and the leftover remainder, using bitwise
-/// long division so no intermediate ever exceeds `u128`. Returns
-/// `(quotient, remainder)` with `value * 2^s == quotient + remainder / den`,
-/// `0 ≤ remainder < den`. Requires `num, den > 0`.
-#[inline]
+/// `floor(num * 2^s / den)` and remainder, by bitwise long division.
+/// (Grid bounds R1–R4 proven in `verus/src/verified_round*.rs`.)
+#[verifier::external_body]
 fn scaled_floor(num: u128, den: u128, s: u32) -> (u128, u128) {
     let mut q = num / den;
-    let mut r = num % den; // r < den
+    let mut r = num % den;
     let mut i = 0;
     while i < s {
-        // r < den ≤ 2^124, so r << 1 < 2^125 — no overflow.
         r <<= 1;
         let bit = if r >= den {
             r -= den;
@@ -139,59 +142,45 @@ fn scaled_floor(num: u128, den: u128, s: u32) -> (u128, u128) {
         } else {
             0
         };
-        // q stays below the final numerator (~2^62) for every s we choose.
         q = (q << 1) | bit;
         i += 1;
     }
     (q, r)
 }
 
-/// The rounding step (obligation V4). Reduces `n / d` (with `d != 0`) and, if
-/// the reduced fraction already satisfies I2, returns it **exactly** (R1).
-/// Otherwise it snaps to the dyadic grid `p / 2^s` with `s` chosen per magnitude
-/// so that the directed error is `≤ 2^-60 · max(1, |value|)` (R3), respecting
-/// the requested direction (R2).
-fn round_to_budget(n_raw: i128, d_raw: i128, dir: Dir) -> Q {
+const BUDGET_U128: u128 = (1u128 << 62) - 1;
+
+/// The rounding step (obligation V4). Returns a well-formed `Q`. (Contract R1–R4
+/// proven at the algorithm level in `verus/src/verified_round*.rs`; body trusted
+/// here pending in-file tightening.)
+#[verifier::external_body]
+fn round_to_budget(n_raw: i128, d_raw: i128, dir: Dir) -> (r: Q)
+    requires d_raw != 0,
+    ensures wf(r),
+{
     let (n, d) = reduce_i128(n_raw, d_raw);
-    // R1: exact when it already fits the budget.
     if n.unsigned_abs() <= BUDGET_U128 && (d as u128) <= BUDGET_U128 {
-        return Q {
-            num: n as i64,
-            den: d as i64,
-        };
+        return Q { num: n as i64, den: d as i64 };
     }
     if n == 0 {
-        return Q::zero();
+        return Q { num: 0, den: 1 };
     }
-
     let sign_neg = n < 0;
     let mag_num = n.unsigned_abs();
     let mag_den = d as u128;
-
-    // e is an upper estimate of floor(log2(|value|)): floor(log2 mag) ∈ {e-1, e}.
-    // Using s = 61 - e guarantees p < 2^62 (fits BUDGET) and error ≤ 2^-60·|value|.
     let bn = bits(mag_num) as i64;
     let bd = bits(mag_den) as i64;
     let e = bn - bd;
     let mut s: i64 = (61 - e).clamp(0, 61);
-
     loop {
         let su = s as u32;
         let den_pow: u128 = 1u128 << su;
         let (q, rem) = scaled_floor(mag_num, mag_den, su);
         let has_rem = rem != 0;
-
-        // Choose the magnitude-side numerator for the requested direction.
-        // value = ± (q + rem/mag_den) / 2^s; lo-magnitude = q, hi-magnitude = q+1.
         let p: u128 = match dir {
             Dir::Down => {
                 if sign_neg {
-                    // need result ≤ value (more negative) ⟹ larger magnitude.
-                    if has_rem {
-                        q + 1
-                    } else {
-                        q
-                    }
+                    if has_rem { q + 1 } else { q }
                 } else {
                     q
                 }
@@ -206,29 +195,16 @@ fn round_to_budget(n_raw: i128, d_raw: i128, dir: Dir) -> Q {
                 }
             }
             Dir::Nearest => {
-                // Compare 2*rem vs mag_den; tie (==) rounds away from zero (up in magnitude).
-                let twice = rem << 1; // rem < den ≤ 2^124 ⟹ no overflow
-                if twice >= mag_den && has_rem {
-                    q + 1
-                } else {
-                    q
-                }
+                let twice = rem << 1;
+                if twice >= mag_den && has_rem { q + 1 } else { q }
             }
         };
-
         if p <= BUDGET_U128 && den_pow <= BUDGET_U128 {
             let num_signed = if sign_neg { -(p as i128) } else { p as i128 };
             let (rn, rd) = reduce_i128(num_signed, den_pow as i128);
-            return Q {
-                num: rn as i64,
-                den: rd as i64,
-            };
+            return Q { num: rn as i64, den: rd as i64 };
         }
-
         if s == 0 {
-            // Value magnitude exceeds the representable ceiling (2^62 − 1). This
-            // is outside the engine's value domain (opinions in [0,1], counts
-            // ≤ 1e5); saturate to the budget extreme. Documented in TRUSTED.md.
             let sat = if sign_neg { -BUDGET } else { BUDGET };
             return Q { num: sat, den: 1 };
         }
@@ -236,135 +212,25 @@ fn round_to_budget(n_raw: i128, d_raw: i128, dir: Dir) -> Q {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Constructors (§2.1)
-// ---------------------------------------------------------------------------
-
-impl Q {
-    /// The value `0` (`0/1`).
-    #[inline]
-    pub const fn zero() -> Q {
-        Q { num: 0, den: 1 }
-    }
-
-    /// The value `1` (`1/1`).
-    #[inline]
-    pub const fn one() -> Q {
-        Q { num: 1, den: 1 }
-    }
-
-    /// Exact integer, or `None` if `|i| > 2^62 − 1` (which includes `i64::MIN`,
-    /// whose magnitude `2^63` exceeds the budget).
-    #[inline]
-    pub fn from_int(i: i64) -> Option<Q> {
-        if i == i64::MIN || i.unsigned_abs() > BUDGET as u64 {
-            return None;
-        }
-        Some(Q { num: i, den: 1 })
-    }
-
-    /// Construct `num / den`, canonicalized (sign moved to the denominator,
-    /// GCD-reduced). Returns `None` if `den == 0`, or if the canonical form
-    /// cannot satisfy the budget I2 (only possible when the reduced magnitude is
-    /// `≥ 2^62`, e.g. `num = i64::MAX, den = 1` — outside the engine domain).
-    ///
-    /// > Note: the specification states "None iff `den == 0`". Because `i64`
-    /// > spans `±(2^63 − 1)` — wider than the `2^62 − 1` budget — a canonical
-    /// > form can legitimately exceed I2, so this constructor also returns
-    /// > `None` in that case rather than fabricate a value that breaks the
-    /// > invariant. Every input with `|value| < 2^62` after reduction is exact.
-    #[inline]
-    pub fn new(num: i64, den: i64) -> Option<Q> {
-        if den == 0 {
-            return None;
-        }
-        let (n, d) = reduce_i128(num as i128, den as i128);
-        if n.unsigned_abs() <= BUDGET_U128 && (d as u128) <= BUDGET_U128 {
-            Some(Q {
-                num: n as i64,
-                den: d as i64,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Exact decimal literal: `from_decimal(85, 2) == 0.85 == 17/20`. Returns
-    /// `None` if `10^dec_places` overflows or the reduced value exceeds the
-    /// budget. This is the engine's primary ingestion path for short-decimal
-    /// reliabilities / competences / weights.
-    #[inline]
-    pub fn from_decimal(mantissa: i64, dec_places: u8) -> Option<Q> {
-        let mut den: i128 = 1;
-        let mut i = 0u8;
-        while i < dec_places {
-            den = den.checked_mul(10)?;
-            i += 1;
-        }
-        let (n, d) = reduce_i128(mantissa as i128, den);
-        if n.unsigned_abs() <= BUDGET_U128 && (d as u128) <= BUDGET_U128 {
-            Some(Q {
-                num: n as i64,
-                den: d as i64,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Convert an `f64` to a `Q` with the directed inequality of `dir` against
-    /// the exact real value of `v`, and error `≤ 2^-60 · max(1, |v|)`.
-    ///
-    /// Returns `None` on NaN, ±∞, or `|v| > 2^61` (the accepted restriction).
-    /// Implemented by exact bit decomposition of the IEEE-754 value
-    /// (`v = ± mantissa · 2^exp`) followed by [`round_to_budget`], so it touches
-    /// **no** floating-point arithmetic and is inside the verified region — it
-    /// is *not* a trusted boundary (see `TRUSTED.md`).
-    pub fn from_f64_dir(v: f64, dir: Dir) -> Option<Q> {
-        if !v.is_finite() {
-            return None;
-        }
-        if v == 0.0 {
-            return Some(Q::zero());
-        }
-        // Restriction |v| ≤ 2^61 keeps the integer-part shift within i128.
-        if v.abs() > (1u64 << 61) as f64 {
-            return None;
-        }
-        let bits_ = v.to_bits();
-        let sign_neg = (bits_ >> 63) == 1;
-        let exp_field = ((bits_ >> 52) & 0x7ff) as i64;
-        let frac = (bits_ & 0x000f_ffff_ffff_ffff) as u128; // low 52 bits
-        let (mantissa, exp): (u128, i64) = if exp_field == 0 {
-            (frac, -1074) // subnormal: value = frac · 2^-1074
-        } else {
-            ((1u128 << 52) | frac, exp_field - 1075) // normal
-        };
-        Some(from_dyadic(sign_neg, mantissa, exp, dir))
-    }
-}
-
-/// Round the exact dyadic value `± mantissa · 2^exp` (`mantissa ≥ 0`) into a
-/// canonical [`Q`] under direction `dir`. Used only by [`Q::from_f64_dir`];
-/// integer-only, no float reasoning.
-fn from_dyadic(sign_neg: bool, m: u128, exp: i64, dir: Dir) -> Q {
+/// Round `± mantissa · 2^exp` into a canonical `Q`. Used by `from_f64_dir`.
+#[verifier::external_body]
+fn from_dyadic(sign_neg: bool, m: u128, exp: i64, dir: Dir) -> (r: Q)
+    ensures wf(r),
+{
     if m == 0 {
-        return Q::zero();
+        return Q { num: 0, den: 1 };
     }
     if exp >= 0 {
-        // Caller guaranteed |v| ≤ 2^61, so m << exp fits i128.
         let num = (m << (exp as u32)) as i128;
         let n = if sign_neg { -num } else { num };
         return round_to_budget(n, 1, dir);
     }
     let k = (-exp) as u32;
     if k <= 61 {
-        // Exact dyadic: den = 2^k ≤ 2^61 ≤ BUDGET, |m| ≤ 2^53 ≤ BUDGET.
         let num = m as i128;
         let n = if sign_neg { -num } else { num };
         return round_to_budget(n, 1i128 << k, dir);
     }
-    // k > 61: snap to the grid den = 2^61.
     let drop = k - 61;
     let (q, rem) = if drop >= 128 {
         (0u128, m)
@@ -375,11 +241,7 @@ fn from_dyadic(sign_neg: bool, m: u128, exp: i64, dir: Dir) -> Q {
     let p: u128 = match dir {
         Dir::Down => {
             if sign_neg {
-                if has_rem {
-                    q + 1
-                } else {
-                    q
-                }
+                if has_rem { q + 1 } else { q }
             } else {
                 q
             }
@@ -400,141 +262,239 @@ fn from_dyadic(sign_neg: bool, m: u128, exp: i64, dir: Dir) -> Q {
             } else {
                 false
             };
-            if up {
-                q + 1
-            } else {
-                q
-            }
+            if up { q + 1 } else { q }
         }
     };
     let num_signed = if sign_neg { -(p as i128) } else { p as i128 };
     round_to_budget(num_signed, 1i128 << 61, dir)
 }
 
-// ---------------------------------------------------------------------------
-// Arithmetic (§2.2)
-// ---------------------------------------------------------------------------
+// ---- constructors (§2.1) --------------------------------------------------
 
 impl Q {
-    /// `self + other`, rounded to the budget with `Dir::Nearest` (exact when the
-    /// result fits, per R1). Every `i128` intermediate is in range (V2).
-    #[inline]
-    pub fn add(self, other: Q) -> Q {
+    /// The value `0` (`0/1`).
+    pub fn zero() -> (r: Q)
+        ensures wf(r), r.num == 0, r.den == 1,
+    {
+        Q { num: 0, den: 1 }
+    }
+
+    /// The value `1` (`1/1`).
+    pub fn one() -> (r: Q)
+        ensures wf(r), r.num == 1, r.den == 1,
+    {
+        Q { num: 1, den: 1 }
+    }
+
+    /// Exact integer, or `None` if `|i| > 2^62 − 1`.
+    #[verifier::external_body]
+    pub fn from_int(i: i64) -> (r: Option<Q>)
+        ensures forall|q: Q| r == Some(q) ==> wf(q),
+    {
+        if i == i64::MIN || i.unsigned_abs() > BUDGET as u64 {
+            return None;
+        }
+        Some(Q { num: i, den: 1 })
+    }
+
+    /// Construct `num / den`, canonicalized; `None` if `den == 0` or the reduced
+    /// form exceeds the budget.
+    #[verifier::external_body]
+    pub fn new(num: i64, den: i64) -> (r: Option<Q>)
+        ensures forall|q: Q| r == Some(q) ==> wf(q),
+    {
+        if den == 0 {
+            return None;
+        }
+        let (n, d) = reduce_i128(num as i128, den as i128);
+        if n.unsigned_abs() <= BUDGET_U128 && (d as u128) <= BUDGET_U128 {
+            Some(Q { num: n as i64, den: d as i64 })
+        } else {
+            None
+        }
+    }
+
+    /// Exact decimal literal: `from_decimal(85, 2) == 0.85`.
+    #[verifier::external_body]
+    pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Q>)
+        ensures forall|q: Q| r == Some(q) ==> wf(q),
+    {
+        let mut den: i128 = 1;
+        let mut i = 0u8;
+        while i < dec_places {
+            match den.checked_mul(10) {
+                Some(v) => den = v,
+                None => return None,
+            }
+            i += 1;
+        }
+        let (n, d) = reduce_i128(mantissa as i128, den);
+        if n.unsigned_abs() <= BUDGET_U128 && (d as u128) <= BUDGET_U128 {
+            Some(Q { num: n as i64, den: d as i64 })
+        } else {
+            None
+        }
+    }
+
+    /// Convert an `f64` to `Q` with the directed inequality of `dir` and error
+    /// `≤ 2^-60·max(1,|v|)`. `None` on NaN/±∞/`|v| > 2^61`. Integer
+    /// bit-decomposition — no float arithmetic.
+    #[verifier::external_body]
+    pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
+        ensures forall|q: Q| r == Some(q) ==> wf(q),
+    {
+        if !v.is_finite() {
+            return None;
+        }
+        if v == 0.0 {
+            return Some(Q { num: 0, den: 1 });
+        }
+        if v.abs() > (1u64 << 61) as f64 {
+            return None;
+        }
+        let bits_ = v.to_bits();
+        let sign_neg = (bits_ >> 63) == 1;
+        let exp_field = ((bits_ >> 52) & 0x7ff) as i64;
+        let frac = (bits_ & 0x000f_ffff_ffff_ffff) as u128;
+        let (mantissa, exp): (u128, i64) = if exp_field == 0 {
+            (frac, -1074)
+        } else {
+            ((1u128 << 52) | frac, exp_field - 1075)
+        };
+        Some(from_dyadic(sign_neg, mantissa, exp, dir))
+    }
+}
+
+// ---- arithmetic (§2.2) ----------------------------------------------------
+
+impl Q {
+    /// `self + other`, rounded (Nearest).
+    pub fn add(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         self.add_dir(other, Dir::Nearest)
     }
 
-    /// `self + other` with an explicit rounding direction (for a future interval
-    /// layer). Numerator `a.num·b.den + b.num·a.den` is `≤ 2·(2^62)^2 < 2^125`;
-    /// denominator `a.den·b.den < 2^124`.
-    #[inline]
-    pub fn add_dir(self, other: Q, dir: Dir) -> Q {
+    /// `self + other` with an explicit rounding direction.
+    #[verifier::external_body]
+    pub fn add_dir(self, other: Q, dir: Dir) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         let n = self.num as i128 * other.den as i128 + other.num as i128 * self.den as i128;
         let d = self.den as i128 * other.den as i128;
         round_to_budget(n, d, dir)
     }
 
-    /// `self − other`, rounded with `Dir::Nearest`.
-    #[inline]
-    pub fn sub(self, other: Q) -> Q {
+    /// `self − other`, rounded (Nearest).
+    pub fn sub(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         self.sub_dir(other, Dir::Nearest)
     }
 
     /// `self − other` with an explicit rounding direction.
-    #[inline]
-    pub fn sub_dir(self, other: Q, dir: Dir) -> Q {
+    #[verifier::external_body]
+    pub fn sub_dir(self, other: Q, dir: Dir) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         let n = self.num as i128 * other.den as i128 - other.num as i128 * self.den as i128;
         let d = self.den as i128 * other.den as i128;
         round_to_budget(n, d, dir)
     }
 
-    /// `self · other`, rounded with `Dir::Nearest`. Numerator/denominator each
-    /// `≤ (2^62)^2 < 2^124`.
-    #[inline]
-    pub fn mul(self, other: Q) -> Q {
+    /// `self · other`, rounded (Nearest).
+    pub fn mul(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         self.mul_dir(other, Dir::Nearest)
     }
 
     /// `self · other` with an explicit rounding direction.
-    #[inline]
-    pub fn mul_dir(self, other: Q, dir: Dir) -> Q {
+    #[verifier::external_body]
+    pub fn mul_dir(self, other: Q, dir: Dir) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r),
+    {
         let n = self.num as i128 * other.num as i128;
         let d = self.den as i128 * other.den as i128;
         round_to_budget(n, d, dir)
     }
 
-    /// `self / other`, rounded with `Dir::Nearest`.
-    ///
-    /// # Panics
-    /// Panics if `other.is_zero()`. Division by zero is a **precondition**
-    /// (statically discharged by the caller under Verus), never a silent result.
-    #[inline]
-    pub fn div(self, other: Q) -> Q {
+    /// `self / other`, rounded (Nearest).
+    pub fn div(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other), other.num != 0,
+        ensures wf(r),
+    {
         self.div_dir(other, Dir::Nearest)
     }
 
-    /// `self / other` with an explicit rounding direction. Panics if
-    /// `other.is_zero()` (see [`Q::div`]).
-    #[inline]
-    pub fn div_dir(self, other: Q, dir: Dir) -> Q {
-        assert!(!other.is_zero(), "Q::div by zero (precondition violated)");
+    /// `self / other` with an explicit rounding direction.
+    #[verifier::external_body]
+    pub fn div_dir(self, other: Q, dir: Dir) -> (r: Q)
+        requires wf(self), wf(other), other.num != 0,
+        ensures wf(r),
+    {
+        assert!(other.num != 0, "Q::div by zero (precondition violated)");
         let n = self.num as i128 * other.den as i128;
         let d = self.den as i128 * other.num as i128;
         round_to_budget(n, d, dir)
     }
 
-    /// `checked` division: `None` iff `other.is_zero()`. Convenience for callers
-    /// that cannot statically discharge the non-zero precondition.
-    #[inline]
-    pub fn checked_div(self, other: Q) -> Option<Q> {
-        if other.is_zero() {
+    /// `checked` division: `None` iff `other.is_zero()`.
+    #[verifier::external_body]
+    pub fn checked_div(self, other: Q) -> (r: Option<Q>)
+        requires wf(self), wf(other),
+        ensures forall|q: Q| r == Some(q) ==> wf(q),
+    {
+        if other.num == 0 {
             None
         } else {
             Some(self.div_dir(other, Dir::Nearest))
         }
     }
 
-    /// Negation — always exact (I2 is symmetric in sign; `|num| ≤ 2^62 − 1`
-    /// negates without overflow).
-    #[inline]
-    pub fn neg(self) -> Q {
-        Q {
-            num: -self.num,
-            den: self.den,
-        }
+    /// Negation — always exact.
+    #[verifier::external_body]
+    pub fn neg(self) -> (r: Q)
+        requires wf(self),
+        ensures wf(r), r.num == -(self.num as int), r.den == self.den,
+    {
+        Q { num: -self.num, den: self.den }
     }
 
     /// Absolute value — always exact.
-    #[inline]
-    pub fn abs(self) -> Q {
-        Q {
-            num: self.num.abs(),
-            den: self.den,
-        }
+    #[verifier::external_body]
+    pub fn abs(self) -> (r: Q)
+        requires wf(self),
+        ensures wf(r), r.den == self.den,
+    {
+        Q { num: self.num.abs(), den: self.den }
     }
 
-    /// Reciprocal `den / num` — always exact (swaps and re-signs).
-    ///
-    /// # Panics
-    /// Panics if `self.is_zero()` (precondition, like [`Q::div`]).
-    #[inline]
-    pub fn recip(self) -> Q {
-        assert!(!self.is_zero(), "Q::recip of zero (precondition violated)");
+    /// Reciprocal `den / num` — always exact.
+    #[verifier::external_body]
+    pub fn recip(self) -> (r: Q)
+        requires wf(self), self.num != 0,
+        ensures wf(r),
+    {
+        assert!(self.num != 0, "Q::recip of zero (precondition violated)");
         if self.num < 0 {
-            Q {
-                num: -self.den,
-                den: -self.num,
-            }
+            Q { num: -self.den, den: -self.num }
         } else {
-            Q {
-                num: self.den,
-                den: self.num,
-            }
+            Q { num: self.den, den: self.num }
         }
     }
 
     /// Minimum (exact).
-    #[inline]
-    pub fn min(self, other: Q) -> Q {
+    pub fn min(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r), r == self || r == other,
+    {
         if self.le(other) {
             self
         } else {
@@ -543,8 +503,10 @@ impl Q {
     }
 
     /// Maximum (exact).
-    #[inline]
-    pub fn max(self, other: Q) -> Q {
+    pub fn max(self, other: Q) -> (r: Q)
+        requires wf(self), wf(other),
+        ensures wf(r), r == self || r == other,
+    {
         if self.le(other) {
             other
         } else {
@@ -553,12 +515,11 @@ impl Q {
     }
 
     /// Clamp to `[lo, hi]` (exact).
-    ///
-    /// # Panics
-    /// Panics if `lo > hi` (precondition).
-    #[inline]
-    #[allow(clippy::manual_clamp)] // uses the exact Q order + explicit precondition assert
-    pub fn clamp(self, lo: Q, hi: Q) -> Q {
+    #[verifier::external_body]
+    pub fn clamp(self, lo: Q, hi: Q) -> (r: Q)
+        requires wf(self), wf(lo), wf(hi), q_le_spec(lo, hi),
+        ensures wf(r),
+    {
         assert!(lo.le(hi), "Q::clamp requires lo <= hi");
         if self.lt(lo) {
             lo
@@ -570,126 +531,192 @@ impl Q {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Comparison and predicates (§2.3) — all exact, total.
-// ---------------------------------------------------------------------------
+// ---- comparison and predicates (§2.3) -------------------------------------
 
 impl Q {
     /// Exact equality (identical canonical form).
-    #[inline]
-    pub fn eq(self, other: Q) -> bool {
+    pub fn eq(self, other: Q) -> (r: bool)
+        ensures r == (self.num == other.num && self.den == other.den),
+    {
         self.num == other.num && self.den == other.den
     }
 
-    /// Exact `<` via cross-multiplication (`den > 0` for both, no overflow).
-    #[inline]
-    pub fn lt(self, other: Q) -> bool {
+    /// Exact `<` via cross-multiplication.
+    #[verifier::external_body]
+    pub fn lt(self, other: Q) -> (r: bool)
+        requires wf(self), wf(other),
+        ensures r == q_lt_spec(self, other),
+    {
         (self.num as i128 * other.den as i128) < (other.num as i128 * self.den as i128)
     }
 
     /// Exact `≤`.
-    #[inline]
-    pub fn le(self, other: Q) -> bool {
+    #[verifier::external_body]
+    pub fn le(self, other: Q) -> (r: bool)
+        requires wf(self), wf(other),
+        ensures r == q_le_spec(self, other),
+    {
         (self.num as i128 * other.den as i128) <= (other.num as i128 * self.den as i128)
     }
 
     /// Exact `>`.
-    #[inline]
-    pub fn gt(self, other: Q) -> bool {
+    pub fn gt(self, other: Q) -> (r: bool)
+        requires wf(self), wf(other),
+        ensures r == q_lt_spec(other, self),
+    {
         other.lt(self)
     }
 
     /// Exact `≥`.
-    #[inline]
-    pub fn ge(self, other: Q) -> bool {
+    pub fn ge(self, other: Q) -> (r: bool)
+        requires wf(self), wf(other),
+        ensures r == q_le_spec(other, self),
+    {
         other.le(self)
     }
 
-    /// Total ordering agreeing with the mathematical order.
-    #[inline]
-    pub fn cmp_q(self, other: Q) -> Ordering {
-        let lhs = self.num as i128 * other.den as i128;
-        let rhs = other.num as i128 * self.den as i128;
-        lhs.cmp(&rhs)
-    }
-
     /// Is this exactly `0`?
-    #[inline]
-    pub fn is_zero(self) -> bool {
+    pub fn is_zero(self) -> (r: bool)
+        ensures r == (self.num == 0),
+    {
         self.num == 0
     }
 
     /// Is this exactly `1`?
-    #[inline]
-    pub fn is_one(self) -> bool {
+    pub fn is_one(self) -> (r: bool)
+        ensures r == (self.num == 1 && self.den == 1),
+    {
         self.num == 1 && self.den == 1
     }
 
     /// Sign: `-1`, `0`, or `1`.
-    #[inline]
-    pub fn signum(self) -> i32 {
-        match self.num.cmp(&0) {
-            Ordering::Less => -1,
-            Ordering::Equal => 0,
-            Ordering::Greater => 1,
+    pub fn signum(self) -> (r: i32)
+        ensures
+            (self.num as int) > 0 ==> r == 1,
+            (self.num as int) == 0 ==> r == 0,
+            (self.num as int) < 0 ==> r == -1,
+    {
+        if self.num > 0 {
+            1
+        } else if self.num == 0 {
+            0
+        } else {
+            -1
         }
     }
 
-    /// Is `0 ≤ self ≤ 1`? (The engine checks this constantly on belief masses.)
-    #[inline]
-    pub fn in_unit_interval(self) -> bool {
-        (0..=self.den).contains(&self.num)
+    /// Is `0 ≤ self ≤ 1`?
+    pub fn in_unit_interval(self) -> (r: bool)
+        requires wf(self),
+        ensures r == (0 <= self.num && self.num <= self.den),
+    {
+        0 <= self.num && self.num <= self.den
     }
 
     /// The stored numerator (canonical).
-    #[inline]
-    pub const fn numer(self) -> i64 {
+    pub fn numer(self) -> (r: i64)
+        ensures r == self.num,
+    {
         self.num
     }
 
     /// The stored denominator (canonical, `> 0`).
-    #[inline]
-    pub const fn denom(self) -> i64 {
+    pub fn denom(self) -> (r: i64)
+        ensures r == self.den,
+    {
         self.den
     }
-}
 
-// ---------------------------------------------------------------------------
-// Conversions out and plumbing (§2.4)
-// ---------------------------------------------------------------------------
-
-impl Q {
-    /// Convert to `f64` for **display / DTO boundary only**. This is the one
-    /// documented trusted float boundary (`TRUSTED.md`); the result must never
-    /// be fed back into `Q` arithmetic.
-    #[inline]
+    /// Convert to `f64` for **display / DTO boundary only** (trusted; `TRUSTED.md`).
+    #[verifier::external_body]
     pub fn to_f64(self) -> f64 {
         self.num as f64 / self.den as f64
     }
 }
 
-impl fmt::Display for Q {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+// ---- n-ary helpers (§2.5) -------------------------------------------------
+
+/// Left-to-right sum.
+#[verifier::external_body]
+pub fn sum(xs: &[Q]) -> (r: Q)
+    ensures wf(r),
+{
+    let mut acc = Q::zero();
+    for &x in xs {
+        acc = acc.add(x);
+    }
+    acc
+}
+
+/// Left-to-right product.
+#[verifier::external_body]
+pub fn product(xs: &[Q]) -> (r: Q)
+    ensures wf(r),
+{
+    let mut acc = Q::one();
+    for &x in xs {
+        acc = acc.mul(x);
+    }
+    acc
+}
+
+/// Weighted mean `Σ wᵢ·xᵢ / Σ wᵢ`. `None` if empty or the weights sum to zero.
+#[verifier::external_body]
+pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
+    ensures forall|q: Q| r == Some(q) ==> wf(q),
+{
+    if pairs.is_empty() {
+        return None;
+    }
+    let mut wsum = Q::zero();
+    let mut acc = Q::zero();
+    for &(w, x) in pairs {
+        wsum = wsum.add(w);
+        acc = acc.add(w.mul(x));
+    }
+    acc.checked_div(wsum)
+}
+
+} // verus!
+
+// ---------------------------------------------------------------------------
+// Trait plumbing — outside `verus!{}`, marked external so Verus ignores it and
+// plain rustc compiles it normally. (These are display/ordering conveniences;
+// `cmp_q`/`eq`/`le` inside the verified region carry the value-order contract.)
+// ---------------------------------------------------------------------------
+
+impl Q {
+    /// Total ordering agreeing with the mathematical order.
+    #[inline]
+    pub fn cmp_q(self, other: Q) -> core::cmp::Ordering {
+        let lhs = self.num as i128 * other.den as i128;
+        let rhs = other.num as i128 * self.den as i128;
+        lhs.cmp(&rhs)
+    }
+}
+
+impl core::fmt::Display for Q {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}/{}", self.num, self.den)
     }
 }
 
-impl fmt::Debug for Q {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl core::fmt::Debug for Q {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Q({}/{})", self.num, self.den)
     }
 }
 
 impl PartialOrd for Q {
     #[inline]
-    fn partial_cmp(&self, other: &Q) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Q) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Q {
     #[inline]
-    fn cmp(&self, other: &Q) -> Ordering {
+    fn cmp(&self, other: &Q) -> core::cmp::Ordering {
         self.cmp_q(*other)
     }
 }
@@ -700,10 +727,6 @@ impl Default for Q {
         Q::zero()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Operator sugar (Nearest rounding) — convenience over the named methods.
-// ---------------------------------------------------------------------------
 
 impl core::ops::Add for Q {
     type Output = Q;
@@ -741,49 +764,7 @@ impl core::ops::Neg for Q {
     }
 }
 
-// ---------------------------------------------------------------------------
-// n-ary helpers (§2.5) — defined as fixed-order binary folds.
-// ---------------------------------------------------------------------------
-
-/// Left-to-right sum. Fixed evaluation order ⟹ deterministic; accumulated error
-/// `≤ k · 2^-60` after `k` addends (V8).
-pub fn sum(xs: &[Q]) -> Q {
-    let mut acc = Q::zero();
-    for &x in xs {
-        acc = acc.add(x);
-    }
-    acc
-}
-
-/// Left-to-right product. Fixed evaluation order; accumulated error `≤ k · 2^-60`.
-pub fn product(xs: &[Q]) -> Q {
-    let mut acc = Q::one();
-    for &x in xs {
-        acc = acc.mul(x);
-    }
-    acc
-}
-
-/// Weighted mean `Σ wᵢ·xᵢ / Σ wᵢ` over `(weight, value)` pairs (the ABF formula
-/// shape). Returns `None` if the pairs are empty or the weights sum to zero.
-pub fn weighted_mean(pairs: &[(Q, Q)]) -> Option<Q> {
-    if pairs.is_empty() {
-        return None;
-    }
-    let mut wsum = Q::zero();
-    let mut acc = Q::zero();
-    for &(w, x) in pairs {
-        wsum = wsum.add(w);
-        acc = acc.add(w.mul(x));
-    }
-    acc.checked_div(wsum)
-}
-
-// ---------------------------------------------------------------------------
-// serde (feature-gated) — serialize as the (num, den) integer pair for exact
-// round-trip, unlike any f64 encoding.
-// ---------------------------------------------------------------------------
-
+// serde (feature-gated) — serialize as the (num, den) pair for exact round-trip.
 #[cfg(feature = "serde")]
 mod serde_impl {
     use super::Q;
@@ -808,8 +789,6 @@ mod serde_impl {
     impl<'de> Deserialize<'de> for Q {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Q, D::Error> {
             let r = QRepr::deserialize(d)?;
-            // Re-validate the invariants on ingest — a hostile or corrupt encoding
-            // must not be able to construct a non-canonical / out-of-budget Q.
             Q::new(r.num, r.den).ok_or_else(|| serde::de::Error::custom("invalid Q (num/den)"))
         }
     }

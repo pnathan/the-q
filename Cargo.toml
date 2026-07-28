@@ -16,6 +16,14 @@ serde = ["dep:serde"]
 
 [dependencies]
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
+# Verus standard library + the `verus!` macro. These make `src/lib.rs` itself the
+# verification target (rather than a standalone transcription): the same source
+# both `cargo build`s (the macro expands to plain Rust) and is verified by
+# `verus --crate-type=lib src/lib.rs`. Pinned to the release the CI `verus`
+# binary is pinned to (see .github/workflows/ci.yml, VERUS_DATE).
+vstd = "=0.0.0-2026-07-27-0206"
+verus_builtin = "=0.0.0-2026-07-27-0206"
+verus_builtin_macros = "=0.0.0-2026-07-27-0206"
 
 [dev-dependencies]
 # LGPL-3.0 oracle — dev-only, MUST NOT appear in the release dependency tree.
