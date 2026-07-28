@@ -282,6 +282,7 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
         // `lemma_gcd_reduce_coprime` speaks about `|n| / g`; this identifies
         // that with `|red_num|`, which is what `gcd_int(rn, rd)` unfolds to.
         lemma_reduce_abs(n, d);
+        lemma_reduce_magnitude_fits(n, d);
         if fits_budget(rn, rd) {
         } else {
             let s = snap_shift(rn, rd);
@@ -1069,6 +1070,16 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         lemma_reduce_exact(n as int, d as int);
         lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
         lemma_reduce_abs(n as int, d as int);
+        lemma_reduce_magnitude_fits(n as int, d as int);
+        // The reduction equations come out as `x == r·g`; the quotient lemma
+        // wants `g·r`, and outside a nonlinear block those are distinct terms.
+        assert((g as int) * red_num(n as int, d as int) == red_num(n as int, d as int) * (
+        g as int)) by (nonlinear_arith);
+        assert((g as int) * red_den(n as int, d as int) == red_den(n as int, d as int) * (
+        g as int)) by (nonlinear_arith);
+        assert((g as int) * abs_int(red_num(n as int, d as int)) == abs_int(
+            red_num(n as int, d as int),
+        ) * (g as int)) by (nonlinear_arith);
     }
     let rn: i128 = n / g;
     let rd: i128 = d / g;
@@ -1217,6 +1228,36 @@ pub proof fn lemma_reduce_quotient(m: int, d: int, g: int, rm: int, rd: int)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(m, d, q, g * r);
 }
 
+/// Reduction preserves representability: if `|n| <= MAX_MAG·d` then
+/// `|rn| <= MAX_MAG·rd`.
+///
+/// Both `lemma_round_frac_wf` and [`round_frac_exec`] test the magnitude on the
+/// unreduced pair but hand the reduced one to `lemma_snap_in_budget`.
+pub proof fn lemma_reduce_magnitude_fits(n: int, d: int)
+    requires
+        d > 0,
+        magnitude_fits(n, d),
+    ensures
+        magnitude_fits(red_num(n, d), red_den(n, d)),
+{
+    let g = gcd_int(n, d);
+    let rn = red_num(n, d);
+    let rd = red_den(n, d);
+    lemma_reduce_exact(n, d);
+    lemma_reduce_abs(n, d);
+    assert(abs_int(rn) * g <= (max_mag() * rd) * g) by (nonlinear_arith)
+        requires
+            abs_int(n) == abs_int(rn) * g,
+            d == rd * g,
+            abs_int(n) <= max_mag() * d,
+    ;
+    assert(abs_int(rn) <= max_mag() * rd) by (nonlinear_arith)
+        requires
+            g > 0,
+            abs_int(rn) * g <= (max_mag() * rd) * g,
+    ;
+}
+
 /// The `shift_div` precondition holds for the shift the algorithm picks.
 pub proof fn lemma_shift_div_precondition(m: int, rd: int, s: nat, k: nat)
     requires
@@ -1309,6 +1350,10 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
 {
     let a = rn * pow2(s);
     lemma_pow2_pos(s);
+    // Outside a `nonlinear_arith` block multiplication is uninterpreted, so
+    // `qf * rd` and `rd * qf` are different terms to the solver — and
+    // `lemma_fundamental_div_mod_converse` wants the divisor first.
+    assert(rd * qf == qf * rd) by (nonlinear_arith);
     if rn >= 0 {
         assert(a == abs_int(rn) * pow2(s));
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, qf, rf);
@@ -1465,8 +1510,10 @@ pub proof fn lemma_coprime_forces_unit(rn: int, rd: int)
     ensures
         rd == 1,
 {
-    crate::gcd::lemma_gcd_greatest(abs_int(rn) as nat, rd as nat, rd);
+    // `divides(rd, rd)` is a precondition of `lemma_gcd_greatest`, so it has to
+    // be in scope *before* the call, not after it.
     crate::model::lemma_divides_basic(rd);
+    crate::gcd::lemma_gcd_greatest(abs_int(rn) as nat, rd as nat, rd);
     crate::model::lemma_divides_le(rd, 1);
 }
 
