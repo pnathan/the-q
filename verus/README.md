@@ -6,10 +6,17 @@ proof target (`verus <file>`); the CI `verus` job installs the toolchain and
 runs them (`../.github/workflows/ci.yml`, `../ci/verify.sh`), failing the build
 if any hard-gated file regresses.
 
-## Status: all spec obligations V1–V8 discharged
+## Status: all obligations V1–V8 discharged — on standalone transcriptions
 
 **~106 verified conditions** across twelve admit-free files, `0 errors` every
 run. No `assume`/`admit` anywhere in the hard-gated set.
+
+> **Important scope note.** These files are **standalone transcriptions** of the
+> algorithms — none of them is `../src/lib.rs`, and nothing yet enforces that a
+> transcription agrees with its `src/lib.rs` counterpart (e.g.
+> `verified_round.rs` vs. the exec `round_to_budget`). So each row below is
+> "machine-checked *on a transcription*", not on the shipped code. Closing that
+> gap (see "Remaining") is the work relevant to §6/§8 acceptance.
 
 | File | Obligations | Conds |
 |---|---|---|
@@ -45,16 +52,22 @@ Per spec obligation:
 - **V8** ✅ — n-ary accumulation: `k` per-step errors within `±eps` sum to
   within `±k·eps`.
 
-## Remaining (by design, not an obligation gap)
+## Remaining — verify `src/lib.rs` itself (§6/§8-relevant)
 
-The proofs are stated over the mathematical model (ghost `int`/`Seq`). The one
-piece of *engineering* still open is the **exec-level refinement**: threading
-these ghost-level facts through the concrete `../src/lib.rs` implementation —
-in particular `round_to_budget`'s bitwise long division — so that the shipped
-binary is literally the verified artifact (Verus's cargo integration). The
-shipped code implements exactly these algorithms and is independently validated
-end-to-end by the `malachite-q` differential oracle (60k+ cases) and the
-property suite, so behavior is pinned from both directions today.
+The proofs are stated over the mathematical model (ghost `int`/`Seq`) in files
+separate from the shipped crate. The open item is to make **`../src/lib.rs` the
+verification target**: wire `vstd` as a dependency and move the
+`requires`/`ensures` onto the exec functions themselves (start with
+`reduce_i128` and `round_to_budget`, since everything funnels through them), so
+CI machine-checks the code that actually ships rather than a copy of it. This is
+proof effort on the same toolchain, not a redesign — a sibling approach verifies
+the shipped crate directly with `verus --crate-type=lib src/lib.rs`.
+
+Until then, agreement between each transcription and its `src/lib.rs` counterpart
+is **not enforced by CI** — a later edit to an exec op would not fail the `verus`
+job. What pins the shipped behavior today is the `malachite-q` differential
+oracle (60k+ cases) plus the property/adversarial suite, which exercise
+`src/lib.rs` end-to-end from the other direction.
 
 ## Development note
 
