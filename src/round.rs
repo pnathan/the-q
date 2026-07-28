@@ -357,7 +357,12 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // what `wf` looks at. `sn == on·g2`, so a zero `on` means a zero
             // `sn`, which makes the gcd the whole denominator.
             if on == 0 {
-                assert(sn == 0);
+                // Even `0 · g2` is an uninterpreted product out here.
+                assert(sn == 0) by (nonlinear_arith)
+                    requires
+                        sn == on * g2,
+                        on == 0,
+                ;
                 crate::gcd::lemma_gcd_zero(sd as nat);
                 assert(g2 == sd);
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
