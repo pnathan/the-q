@@ -250,11 +250,15 @@ pub proof fn lemma_same_value_eq(x: Q, y: Q, n: int, d: int)
 /// The left bracketing of `a + b + c`, on the exact path, denotes the common
 /// sum `((a.n·b.d + b.n·a.d)·c.d + c.n·a.d·b.d) / (a.d·b.d·c.d)`.
 ///
-/// The derivation is: take the outer step's cross-multiplication, scale it by
-/// `a.d·b.d`, substitute the inner step, and cancel the positive `ab.d`. Doing
-/// it by hand rather than handing the whole system to `nonlinear_arith` is the
-/// difference between closing and exhausting the budget — the solver would have
-/// to eliminate `ab.n` and `ab.d` across a product, which it will not do.
+/// Take the outer step's cross-multiplication, scale it by `a.d·b.d`,
+/// substitute the inner step, and cancel the positive `ab.d`.
+///
+/// Two disciplines make this go through, and both were learned the hard way:
+/// a `by (nonlinear_arith)` block sees **only** what its own `requires` lists —
+/// it does not inherit the surrounding context — so every step that combines
+/// earlier facts is a plain `assert`, and only pure ring identities are handed
+/// to the nonlinear tactic. And those identities are kept small by naming
+/// subterms, because a five-variable degree-five goal exhausts the budget.
 pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, sd: int)
     requires
         a.wf(),
@@ -272,23 +276,36 @@ pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, s
     let ad = a.d();
     let bd = b.d();
     let cd = c.d();
+    let ld = left.d();
     let nab = a.n() * bd + b.n() * ad;
-    // Scale the outer relation by ad·bd.
-    assert(left.n() * (ab.d() * cd) == (ab.n() * cd + c.n() * ab.d()) * left.d());
-    assert((left.n() * (ab.d() * cd)) * (ad * bd) == ((ab.n() * cd + c.n() * ab.d()) * left.d()) * (
-    ad * bd));
-    // Left side regroups to ab.d · (left.n · sd).
+    let x = nab * cd;
+    let y = c.n() * (ad * bd);
+    // Scale the outer relation by ad·bd. Plain assert: linear in the hypothesis.
+    assert((left.n() * (ab.d() * cd)) * (ad * bd) == ((ab.n() * cd + c.n() * ab.d()) * ld) * (ad
+        * bd));
+    // Left side regroups to ab.d · (left.n · sd). Pure identity.
     assert((left.n() * (ab.d() * cd)) * (ad * bd) == ab.d() * (left.n() * ((ad * bd) * cd)))
         by (nonlinear_arith);
-    // Right side: distribute, then substitute ab.n·(ad·bd) == nab·ab.d.
-    assert(((ab.n() * cd + c.n() * ab.d()) * left.d()) * (ad * bd) == ((ab.n() * (ad * bd)) * cd)
-        * left.d() + ((c.n() * (ad * bd)) * ab.d()) * left.d()) by (nonlinear_arith);
+    assert(left.n() * ((ad * bd) * cd) == left.n() * sd);
+    // Right side: distribute, then rearrange each half. Pure identities.
+    assert(((ab.n() * cd + c.n() * ab.d()) * ld) * (ad * bd) == ((ab.n() * cd) * ld) * (ad * bd)
+        + ((c.n() * ab.d()) * ld) * (ad * bd)) by (nonlinear_arith);
+    assert(((ab.n() * cd) * ld) * (ad * bd) == (ab.n() * (ad * bd)) * (cd * ld))
+        by (nonlinear_arith);
+    assert(((c.n() * ab.d()) * ld) * (ad * bd) == ab.d() * (y * ld)) by (nonlinear_arith);
+    // Substitute the inner step. Plain assert.
     assert(ab.n() * (ad * bd) == nab * ab.d());
-    assert(((nab * ab.d()) * cd) * left.d() + ((c.n() * (ad * bd)) * ab.d()) * left.d() == ab.d() * (
-    (nab * cd + c.n() * (ad * bd)) * left.d())) by (nonlinear_arith);
-    assert(ab.d() * (left.n() * sd) == ab.d() * (sn * left.d()));
-    assert((left.n() * sd) * ab.d() == (sn * left.d()) * ab.d()) by (nonlinear_arith);
-    lemma_cancel_pos(left.n() * sd, sn * left.d(), ab.d());
+    assert((ab.n() * (ad * bd)) * (cd * ld) == (nab * ab.d()) * (cd * ld));
+    assert((nab * ab.d()) * (cd * ld) == ab.d() * (x * ld)) by (nonlinear_arith);
+    // Recombine. Small identity in named subterms.
+    assert(ab.d() * (x * ld) + ab.d() * (y * ld) == ab.d() * ((x + y) * ld)) by (nonlinear_arith);
+    assert(x + y == sn);
+    assert(ab.d() * (left.n() * sd) == ab.d() * (sn * ld));
+    assert((left.n() * sd) * ab.d() == (sn * ld) * ab.d()) by (nonlinear_arith)
+        requires
+            ab.d() * (left.n() * sd) == ab.d() * (sn * ld),
+    ;
+    lemma_cancel_pos(left.n() * sd, sn * ld, ab.d());
 }
 
 /// The right bracketing of `a + b + c` denotes the same common sum.
@@ -309,21 +326,37 @@ pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int,
     let ad = a.d();
     let bd = b.d();
     let cd = c.d();
+    let rd = right.d();
     let nbc = b.n() * cd + c.n() * bd;
-    assert(right.n() * (ad * bc.d()) == (a.n() * bc.d() + bc.n() * ad) * right.d());
-    assert((right.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.d() + bc.n() * ad) * right.d())
-        * (bd * cd));
+    let x = a.n() * (bd * cd);
+    let y = nbc * ad;
+    assert((right.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.d() + bc.n() * ad) * rd) * (bd
+        * cd));
     assert((right.n() * (ad * bc.d())) * (bd * cd) == bc.d() * (right.n() * ((ad * bd) * cd)))
         by (nonlinear_arith);
-    assert(((a.n() * bc.d() + bc.n() * ad) * right.d()) * (bd * cd) == ((a.n() * (bd * cd))
-        * bc.d()) * right.d() + ((bc.n() * (bd * cd)) * ad) * right.d()) by (nonlinear_arith);
+    assert(right.n() * ((ad * bd) * cd) == right.n() * sd);
+    assert(((a.n() * bc.d() + bc.n() * ad) * rd) * (bd * cd) == ((a.n() * bc.d()) * rd) * (bd * cd)
+        + ((bc.n() * ad) * rd) * (bd * cd)) by (nonlinear_arith);
+    assert(((a.n() * bc.d()) * rd) * (bd * cd) == bc.d() * (x * rd)) by (nonlinear_arith);
+    assert(((bc.n() * ad) * rd) * (bd * cd) == (bc.n() * (bd * cd)) * (ad * rd))
+        by (nonlinear_arith);
     assert(bc.n() * (bd * cd) == nbc * bc.d());
-    assert(((a.n() * (bd * cd)) * bc.d()) * right.d() + ((nbc * bc.d()) * ad) * right.d()
-        == bc.d() * ((a.n() * (bd * cd) + nbc * ad) * right.d())) by (nonlinear_arith);
+    assert((bc.n() * (bd * cd)) * (ad * rd) == (nbc * bc.d()) * (ad * rd));
+    assert((nbc * bc.d()) * (ad * rd) == bc.d() * (y * rd)) by (nonlinear_arith);
+    assert(bc.d() * (x * rd) + bc.d() * (y * rd) == bc.d() * ((x + y) * rd)) by (nonlinear_arith);
     // The two numerators agree by ring.
-    assert(a.n() * (bd * cd) + nbc * ad == sn) by (nonlinear_arith);
-    assert((right.n() * sd) * bc.d() == (sn * right.d()) * bc.d()) by (nonlinear_arith);
-    lemma_cancel_pos(right.n() * sd, sn * right.d(), bc.d());
+    assert(x + y == sn) by (nonlinear_arith)
+        requires
+            x == a.n() * (bd * cd),
+            y == (b.n() * cd + c.n() * bd) * ad,
+            sn == (a.n() * bd + b.n() * ad) * cd + c.n() * (ad * bd),
+    ;
+    assert(bc.d() * (right.n() * sd) == bc.d() * (sn * rd));
+    assert((right.n() * sd) * bc.d() == (sn * rd) * bc.d()) by (nonlinear_arith)
+        requires
+            bc.d() * (right.n() * sd) == bc.d() * (sn * rd),
+    ;
+    lemma_cancel_pos(right.n() * sd, sn * rd, bc.d());
 }
 
 /// The pure-rational core of associativity: with every step exact, both
@@ -408,17 +441,25 @@ pub proof fn lemma_mul_chain_value(a: Q, b: Q, c: Q, ab: Q, left: Q, pn: int, pd
     let ad = a.d();
     let bd = b.d();
     let cd = c.d();
-    assert(left.n() * (ab.d() * cd) == (ab.n() * c.n()) * left.d());
-    assert((left.n() * (ab.d() * cd)) * (ad * bd) == ((ab.n() * c.n()) * left.d()) * (ad * bd));
+    let ld = left.d();
+    assert(left.n() * (ab.d() * cd) == (ab.n() * c.n()) * ld);
+    assert((left.n() * (ab.d() * cd)) * (ad * bd) == ((ab.n() * c.n()) * ld) * (ad * bd));
     assert((left.n() * (ab.d() * cd)) * (ad * bd) == ab.d() * (left.n() * ((ad * bd) * cd)))
         by (nonlinear_arith);
-    assert(((ab.n() * c.n()) * left.d()) * (ad * bd) == ((ab.n() * (ad * bd)) * c.n()) * left.d())
+    assert(left.n() * ((ad * bd) * cd) == left.n() * pd);
+    assert(((ab.n() * c.n()) * ld) * (ad * bd) == (ab.n() * (ad * bd)) * (c.n() * ld))
         by (nonlinear_arith);
     assert(ab.n() * (ad * bd) == (a.n() * b.n()) * ab.d());
-    assert((((a.n() * b.n()) * ab.d()) * c.n()) * left.d() == ab.d() * (pn * left.d()))
+    assert((ab.n() * (ad * bd)) * (c.n() * ld) == ((a.n() * b.n()) * ab.d()) * (c.n() * ld));
+    assert(((a.n() * b.n()) * ab.d()) * (c.n() * ld) == ab.d() * (((a.n() * b.n()) * c.n()) * ld))
         by (nonlinear_arith);
-    assert((left.n() * pd) * ab.d() == (pn * left.d()) * ab.d()) by (nonlinear_arith);
-    lemma_cancel_pos(left.n() * pd, pn * left.d(), ab.d());
+    assert(((a.n() * b.n()) * c.n()) * ld == pn * ld);
+    assert(ab.d() * (left.n() * pd) == ab.d() * (pn * ld));
+    assert((left.n() * pd) * ab.d() == (pn * ld) * ab.d()) by (nonlinear_arith)
+        requires
+            ab.d() * (left.n() * pd) == ab.d() * (pn * ld),
+    ;
+    lemma_cancel_pos(left.n() * pd, pn * ld, ab.d());
 }
 
 /// `a·(b·c)` denotes the same product.
@@ -439,17 +480,25 @@ pub proof fn lemma_mul_chain_value_right(a: Q, b: Q, c: Q, bc: Q, right: Q, pn: 
     let ad = a.d();
     let bd = b.d();
     let cd = c.d();
-    assert(right.n() * (ad * bc.d()) == (a.n() * bc.n()) * right.d());
-    assert((right.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.n()) * right.d()) * (bd * cd));
+    let rd = right.d();
+    assert(right.n() * (ad * bc.d()) == (a.n() * bc.n()) * rd);
+    assert((right.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.n()) * rd) * (bd * cd));
     assert((right.n() * (ad * bc.d())) * (bd * cd) == bc.d() * (right.n() * ((ad * bd) * cd)))
         by (nonlinear_arith);
-    assert(((a.n() * bc.n()) * right.d()) * (bd * cd) == (a.n() * (bc.n() * (bd * cd)))
-        * right.d()) by (nonlinear_arith);
-    assert(bc.n() * (bd * cd) == (b.n() * c.n()) * bc.d());
-    assert((a.n() * ((b.n() * c.n()) * bc.d())) * right.d() == bc.d() * (pn * right.d()))
+    assert(right.n() * ((ad * bd) * cd) == right.n() * pd);
+    assert(((a.n() * bc.n()) * rd) * (bd * cd) == (bc.n() * (bd * cd)) * (a.n() * rd))
         by (nonlinear_arith);
-    assert((right.n() * pd) * bc.d() == (pn * right.d()) * bc.d()) by (nonlinear_arith);
-    lemma_cancel_pos(right.n() * pd, pn * right.d(), bc.d());
+    assert(bc.n() * (bd * cd) == (b.n() * c.n()) * bc.d());
+    assert((bc.n() * (bd * cd)) * (a.n() * rd) == ((b.n() * c.n()) * bc.d()) * (a.n() * rd));
+    assert(((b.n() * c.n()) * bc.d()) * (a.n() * rd) == bc.d() * (((a.n() * b.n()) * c.n()) * rd))
+        by (nonlinear_arith);
+    assert(((a.n() * b.n()) * c.n()) * rd == pn * rd);
+    assert(bc.d() * (right.n() * pd) == bc.d() * (pn * rd));
+    assert((right.n() * pd) * bc.d() == (pn * rd) * bc.d()) by (nonlinear_arith)
+        requires
+            bc.d() * (right.n() * pd) == bc.d() * (pn * rd),
+    ;
+    lemma_cancel_pos(right.n() * pd, pn * rd, bc.d());
 }
 
 /// **Distributivity on the exact path:** `a·(b + c) == a·b + a·c`.
@@ -515,20 +564,30 @@ pub proof fn lemma_distrib_lhs_value(a: Q, b: Q, c: Q, bc: Q, lhs: Q, dn: int, d
     let bd = b.d();
     let cd = c.d();
     let nbc = b.n() * cd + c.n() * bd;
-    assert(lhs.n() * (ad * bc.d()) == (a.n() * bc.n()) * lhs.d());
-    assert((lhs.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.n()) * lhs.d()) * (bd * cd));
+    let ld = lhs.d();
+    assert(lhs.n() * (ad * bc.d()) == (a.n() * bc.n()) * ld);
+    assert((lhs.n() * (ad * bc.d())) * (bd * cd) == ((a.n() * bc.n()) * ld) * (bd * cd));
     assert((lhs.n() * (ad * bc.d())) * (bd * cd) == bc.d() * (lhs.n() * (ad * (bd * cd))))
         by (nonlinear_arith);
-    assert(((a.n() * bc.n()) * lhs.d()) * (bd * cd) == (a.n() * (bc.n() * (bd * cd))) * lhs.d())
+    assert(lhs.n() * (ad * (bd * cd)) == lhs.n() * dd);
+    assert(((a.n() * bc.n()) * ld) * (bd * cd) == (bc.n() * (bd * cd)) * (a.n() * ld))
         by (nonlinear_arith);
     assert(bc.n() * (bd * cd) == nbc * bc.d());
-    assert((a.n() * (nbc * bc.d())) * lhs.d() == bc.d() * ((a.n() * nbc) * lhs.d()))
-        by (nonlinear_arith);
-    assert((lhs.n() * dd) * bc.d() == (dn * lhs.d()) * bc.d()) by (nonlinear_arith);
-    lemma_cancel_pos(lhs.n() * dd, dn * lhs.d(), bc.d());
+    assert((bc.n() * (bd * cd)) * (a.n() * ld) == (nbc * bc.d()) * (a.n() * ld));
+    assert((nbc * bc.d()) * (a.n() * ld) == bc.d() * ((a.n() * nbc) * ld)) by (nonlinear_arith);
+    assert((a.n() * nbc) * ld == dn * ld);
+    assert(bc.d() * (lhs.n() * dd) == bc.d() * (dn * ld));
+    assert((lhs.n() * dd) * bc.d() == (dn * ld) * bc.d()) by (nonlinear_arith)
+        requires
+            bc.d() * (lhs.n() * dd) == bc.d() * (dn * ld),
+    ;
+    lemma_cancel_pos(lhs.n() * dd, dn * ld, bc.d());
 }
 
 /// `a·b + a·c` denotes the same fraction.
+///
+/// Scale the sum's cross-multiplication by `(a.d·b.d)·(a.d·c.d)`, substitute
+/// both products, cancel `ab.d·ac.d`, and what is left is a pure ring identity.
 pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn: int, dd: int)
     requires
         a.wf(),
@@ -548,30 +607,66 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
     let ad = a.d();
     let bd = b.d();
     let cd = c.d();
-    // rhs · (ab.d · ac.d) == (ab.n·ac.d + ac.n·ab.d) · rhs.d; scale by
-    // (ad·bd)·(ad·cd) and substitute both products.
-    assert(rhs.n() * (ab.d() * ac.d()) == (ab.n() * ac.d() + ac.n() * ab.d()) * rhs.d());
+    let rd = rhs.d();
+    let g = ab.d() * ac.d();
     let k = (ad * bd) * (ad * cd);
-    assert((rhs.n() * (ab.d() * ac.d())) * k == ((ab.n() * ac.d() + ac.n() * ab.d()) * rhs.d())
-        * k);
-    assert(((ab.n() * ac.d() + ac.n() * ab.d()) * rhs.d()) * k == ((ab.n() * (ad * bd)) * (ac.d()
-        * (ad * cd))) * rhs.d() + ((ac.n() * (ad * cd)) * (ab.d() * (ad * bd))) * rhs.d())
-        by (nonlinear_arith);
+    assert(g > 0) by (nonlinear_arith)
+        requires
+            ab.d() > 0,
+            ac.d() > 0,
+    ;
+    assert(k > 0) by (nonlinear_arith)
+        requires
+            ad > 0,
+            bd > 0,
+            cd > 0,
+    ;
+    // The sum relation, scaled by k.
+    assert(rhs.n() * g == (ab.n() * ac.d() + ac.n() * ab.d()) * rd);
+    assert((rhs.n() * g) * k == ((ab.n() * ac.d() + ac.n() * ab.d()) * rd) * k);
+    // Distribute the right side and rearrange each half so the two product
+    // relations can be substituted.
+    assert(((ab.n() * ac.d() + ac.n() * ab.d()) * rd) * k == ((ab.n() * (ad * bd)) * (ac.d() * (ad
+        * cd))) * rd + ((ac.n() * (ad * cd)) * (ab.d() * (ad * bd))) * rd) by (nonlinear_arith);
     assert(ab.n() * (ad * bd) == (a.n() * b.n()) * ab.d());
     assert(ac.n() * (ad * cd) == (a.n() * c.n()) * ac.d());
-    assert((((a.n() * b.n()) * ab.d()) * (ac.d() * (ad * cd))) * rhs.d() + (((a.n() * c.n())
-        * ac.d()) * (ab.d() * (ad * bd))) * rhs.d() == (ab.d() * ac.d()) * (((a.n() * b.n()) * (ad
-        * cd) + (a.n() * c.n()) * (ad * bd)) * rhs.d())) by (nonlinear_arith);
-    assert((rhs.n() * (ab.d() * ac.d())) * k == (ab.d() * ac.d()) * (rhs.n() * k))
+    assert(((ab.n() * (ad * bd)) * (ac.d() * (ad * cd))) * rd == (((a.n() * b.n()) * ab.d()) * (
+    ac.d() * (ad * cd))) * rd);
+    assert(((ac.n() * (ad * cd)) * (ab.d() * (ad * bd))) * rd == (((a.n() * c.n()) * ac.d()) * (
+    ab.d() * (ad * bd))) * rd);
+    // Both halves carry the factor g == ab.d·ac.d.
+    let u = (a.n() * b.n()) * (ad * cd);
+    let v = (a.n() * c.n()) * (ad * bd);
+    assert((((a.n() * b.n()) * ab.d()) * (ac.d() * (ad * cd))) * rd == g * (u * rd))
         by (nonlinear_arith);
-    assert((a.n() * b.n()) * (ad * cd) + (a.n() * c.n()) * (ad * bd) == ad * dn)
+    assert((((a.n() * c.n()) * ac.d()) * (ab.d() * (ad * bd))) * rd == g * (v * rd))
         by (nonlinear_arith);
-    assert(k == ad * dd) by (nonlinear_arith);
-    assert((rhs.n() * (ad * dd)) * (ab.d() * ac.d()) == ((ad * dn) * rhs.d()) * (ab.d() * ac.d()))
-        by (nonlinear_arith);
-    lemma_cancel_pos(rhs.n() * (ad * dd), (ad * dn) * rhs.d(), ab.d() * ac.d());
-    assert((rhs.n() * dd) * ad == (dn * rhs.d()) * ad) by (nonlinear_arith);
-    lemma_cancel_pos(rhs.n() * dd, dn * rhs.d(), ad);
+    assert(g * (u * rd) + g * (v * rd) == g * ((u + v) * rd)) by (nonlinear_arith);
+    assert((rhs.n() * g) * k == g * (rhs.n() * k)) by (nonlinear_arith);
+    assert(g * (rhs.n() * k) == g * ((u + v) * rd));
+    assert((rhs.n() * k) * g == ((u + v) * rd) * g) by (nonlinear_arith)
+        requires
+            g * (rhs.n() * k) == g * ((u + v) * rd),
+    ;
+    lemma_cancel_pos(rhs.n() * k, (u + v) * rd, g);
+    // What remains is pure ring: k == ad·dd and u + v == ad·dn.
+    assert(k == ad * dd) by (nonlinear_arith)
+        requires
+            k == (ad * bd) * (ad * cd),
+            dd == ad * (bd * cd),
+    ;
+    assert(u + v == ad * dn) by (nonlinear_arith)
+        requires
+            u == (a.n() * b.n()) * (ad * cd),
+            v == (a.n() * c.n()) * (ad * bd),
+            dn == a.n() * (b.n() * cd + c.n() * bd),
+    ;
+    assert(rhs.n() * (ad * dd) == (ad * dn) * rd);
+    assert((rhs.n() * dd) * ad == (dn * rd) * ad) by (nonlinear_arith)
+        requires
+            rhs.n() * (ad * dd) == (ad * dn) * rd,
+    ;
+    lemma_cancel_pos(rhs.n() * dd, dn * rd, ad);
 }
 
 /// Additive and multiplicative identities are exact.
