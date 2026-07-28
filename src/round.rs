@@ -39,8 +39,9 @@
 //! so rounding up can land on `2^62` exactly — one past `MAX_MAG`. That is the
 //! *carry*, and it costs nothing: the pair is then `±2^62 / 2^s` with `s >= 1`,
 //! and `2^s` divides `2^62`, so the reduction every operation already performs
-//! turns it into `±2^(62-s) / 1`, comfortably inside I2. See
-//! [`lemma_carry_reduces`]. The cap at `s <= 61` is what keeps the
+//! turns it into `±2^(62-s) / 1`, comfortably inside I2. The proof is
+//! `lemma_carry_reduces` (no intra-doc link: items inside `verus!` are not
+//! resolvable from module docs). The cap at `s <= 61` is what keeps the
 //! *denominator* `2^s` inside the budget in the `k == 0` case, where no carry
 //! is possible anyway.
 //!
