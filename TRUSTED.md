@@ -1,9 +1,37 @@
 # Trusted boundary
 
-Everything in `the-q` is integer arithmetic inside the verified region **except
-the single function enumerated below**. Per the specification (§5, §6 ground
-rules), every trusted (`#[verifier::external_body]`) function is listed here with
-its assumed specification and the differential tests that back it.
+`src/lib.rs` is now verified directly by Verus (`verus --crate-type=lib
+src/lib.rs`, a CI hard gate): the whole file is wrapped in `verus! { … }` and the
+invariant model + API contracts are checked on the exec functions.
+
+## Trusted set during the port (being tightened)
+
+While the direct port is completed, some heavy internal bodies carry
+`#[verifier::external_body]` — Verus checks their **signatures/contracts**
+(e.g. `ensures wf(r)`) but trusts their **bodies**. Their mathematical content is
+independently machine-checked at the `int` level under `verus/` (V1–V8), and
+their behavior is covered end-to-end by the `malachite-q` differential oracle
+(60k+ cases). The current trusted-body set is:
+
+- `round_to_budget`, `from_dyadic`, `scaled_floor`, `reduce_i128`, `gcd_u128`,
+  `bits` — the rounding/canonicalization internals (proofs: `verus/src/
+  verified_round*.rs`, `verified_reduce.rs`, `verified_gcd.rs`, `verified_uniq.rs`,
+  `gcd_checked.rs`).
+- the constructors/predicates whose bodies do integer field arithmetic
+  (`zero`/`one`/`from_int`/`new`/`from_decimal`/`neg`/`abs`/`recip`/`eq`/`is_zero`/
+  `is_one`/`signum`/`in_unit_interval`/`numer`/`denom`/`min`-adjacent helpers) and
+  the n-ary folds (`sum`/`product`/`weighted_mean`).
+- `from_f64_dir` — see below.
+
+**End goal:** remove `external_body` from all of the above (porting each proof
+from its `verus/` transcription onto the exec body), leaving the trusted set at
+exactly `to_f64`.
+
+## The permanent trusted function
+
+Per the specification (§5, §6 ground rules), the permanently trusted
+(`#[verifier::external_body]`) function is listed here with its assumed
+specification and the differential tests that back it.
 
 ## Target: exactly one trusted function
 

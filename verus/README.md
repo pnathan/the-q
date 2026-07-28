@@ -6,17 +6,30 @@ proof target (`verus <file>`); the CI `verus` job installs the toolchain and
 runs them (`../.github/workflows/ci.yml`, `../ci/verify.sh`), failing the build
 if any hard-gated file regresses.
 
-## Status: all obligations V1–V8 discharged — on standalone transcriptions
+## Status
 
-**~106 verified conditions** across twelve admit-free files, `0 errors` every
-run. No `assume`/`admit` anywhere in the hard-gated set.
+Two layers, **both CI hard gates** (`verus` job, `0 errors` every run):
 
-> **Important scope note.** These files are **standalone transcriptions** of the
-> algorithms — none of them is `../src/lib.rs`, and nothing yet enforces that a
-> transcription agrees with its `src/lib.rs` counterpart (e.g.
-> `verified_round.rs` vs. the exec `round_to_budget`). So each row below is
-> "machine-checked *on a transcription*", not on the shipped code. Closing that
-> gap (see "Remaining") is the work relevant to §6/§8 acceptance.
+1. **The shipped crate is verified directly.** `verus --crate-type=lib
+   ../src/lib.rs` checks `../src/lib.rs` itself — the whole file is wrapped in
+   `verus! { … }`, the invariant model (`wf`) and the API contracts
+   (`requires`/`ensures`) are on the exec functions, and Verus confirms they
+   compose (invariants thread through every op). This is the artifact that
+   ships. The heavy internal bodies (`round_to_budget`, `reduce_i128`,
+   `scaled_floor`, `from_dyadic`, the f64 boundary) are `#[verifier::external_body]`
+   — trusted signatures with checked contracts — and are being tightened; see
+   `../TRUSTED.md` for the current trusted set.
+2. **The algorithms are proven at the `int` level.** The twelve admit-free files
+   below (**~106 verified conditions**) discharge obligations V1–V8 over the
+   ghost model — the mathematical content behind the `external_body` internals.
+
+> The remaining tightening is to remove `external_body` from the `src/lib.rs`
+> internals one at a time, porting each proof from its transcription here onto
+> the exec body, until the trusted set is just `to_f64`. Layer 1 already makes
+> `src/lib.rs` the verification target (the review's ask); layer 2 is the proof
+> reservoir it draws from.
+
+### The `int`-level proofs (V1–V8)
 
 | File | Obligations | Conds |
 |---|---|---|

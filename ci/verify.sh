@@ -53,16 +53,17 @@ if command -v verus >/dev/null 2>&1; then
     fi
   done
 
-  # The shipped crate itself, verified directly (the review's core ask). Reported
-  # non-fatal while the port is in progress: the invariant model + API contracts
-  # are on the exec functions, with the heavy internals `external_body` (trusted)
-  # and being tightened. Promote to the hard gate once it verifies clean with the
-  # trusted set down to `to_f64`.
-  echo "==> verus --crate-type=lib src/lib.rs   (shipped crate; reported, non-fatal)"
+  # The shipped crate itself, verified directly (the review's core ask) — HARD
+  # GATE. The invariant model (wf) + the API contracts (requires/ensures) are on
+  # the exec functions of src/lib.rs; the heavy internal bodies (round_to_budget,
+  # reduce_i128, the f64 boundary) are `external_body` (trusted signatures) and
+  # are being tightened, with their algorithm-level proofs under verus/.
+  echo "==> verus --crate-type=lib src/lib.rs   (shipped crate; hard gate)"
   if verus --crate-type=lib src/lib.rs; then
-    echo "    ok: src/lib.rs verified directly — ready to promote to the hard gate"
+    echo "    ok: src/lib.rs verified directly"
   else
-    echo "    NOTE: src/lib.rs direct verification in progress — non-fatal."
+    echo "ERROR: direct verification of the shipped src/lib.rs failed."
+    rc=1
   fi
 
   # Reported (non-fatal) targets — proofs under active development. They are
