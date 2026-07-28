@@ -7,7 +7,7 @@ latest run:
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  305 verified, 46 errors    <- the-q
+verification results::  373 verified, 20 errors    <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -23,12 +23,29 @@ The trajectory so far, one row per CI round:
 | `67661e1` | 255 | 36 |
 | `ab17e4d` | 288 | 53 |
 | `8b689af` | 305 | 46 |
+| `864e499` | 317 | 45 |
+| `823818e` | 319 | 45 |
+| `686bcc9` | 329 | 42 |
+| `ddaac00` | 355 | 22 |
+| `6a82bb1` | 357 | 24 |
+| `72d9115` | 362 | 23 |
+| `048899e` | 373 | 20 |
 
 Verified conditions are increasing monotonically. The error count is not
 monotone, and both directions have honest causes: it rises when a fixed
 well-formedness failure unblocks checking of proofs that were previously never
-reached, and when new obligations are added (restating V7/V8 added ~25
-`requires`/`ensures`); it falls when proofs actually land.
+reached, when new obligations are added (restating V7/V8 added ~25
+`requires`/`ensures`), and when a strengthened precondition hands its callers a
+new obligation (`6a82bb1`, where `magnitude_fits_exec` acquired the input bound
+its `0 - n` actually needed); it falls when proofs land.
+
+The jump at `ddaac00` is worth understanding, because it is the shape of most of
+the remaining work. `lemma_pow2_124`, `lemma_pow2_125` and `lemma_pow2_126` were
+stated by `reveal_with_fuel`, and past roughly `2^64` that stops working — the
+unfolding is linear in the exponent and Z3 exhausts its resource limit before
+reaching the literal. Every `i128` overflow check in the crate is discharged
+from one of those literals, so three unproven lemmas were starving the whole
+rounding path. Deriving them by squaring `2^62` closed twenty errors at once.
 
 ## How this crate came to be written without a verifier
 
@@ -63,8 +80,9 @@ Verified: not yet.
 ## Where the remaining work is
 
 Concentrated in `round.rs` — the dyadic-snap rounding contract, which §3 calls
-"the heart of the design" and which is the hardest thing in the crate. Every
-other module is in single or low double digits.
+"the heart of the design" and which is the hardest thing in the crate.
+`gcd.rs`, `interval.rs`, `convert.rs`, `types.rs`, `model.rs` and `lipschitz.rs`
+are at zero; `laws.rs`, `nary.rs` and `q.rs` are in low single digits.
 
 Three classes of problem accounted for most of what has been fixed so far, and
 each is worth knowing before touching this code:
@@ -81,6 +99,20 @@ each is worth knowing before touching this code:
    rearrangement leaves goals that are pure associativity/commutativity
    shuffles, which Z3 normalises for free. This alone took `interval.rs` to
    zero.
+4. **Outside a `nonlinear_arith` block, multiplication is uninterpreted.** So
+   `qf * rd` and `rd * qf` are simply different terms, and a plain `assert` that
+   needs them identified will fail without any hint that commutativity was the
+   problem. `lemma_fundamental_div_mod_converse` wants the divisor first, which
+   is the far end of the crate's own reduction equations; three call sites
+   needed an explicit `assert(a * b == b * a) by (nonlinear_arith)` to bridge.
+5. **A recursive spec function's default fuel is 1.** `pow2(1)` unfolds once, to
+   `2 · pow2(0)`, and stops — so `assert(pow2(1) == 2)` fails. Conversely
+   `reveal_with_fuel(pow2, 125)` is not a proof either; it is an rlimit
+   exhaustion waiting to happen. Both ends of the range need pinned lemmas.
+6. **A failing lemma still hands its `ensures` to its callers.** This makes a
+   broken foundation invisible in the call graph: `lemma_op_widths` verified
+   cleanly for rounds while the `pow2` literals it rests on did not. Read the
+   whole error list, not just the errors in the module you are working on.
 
 ## One thing verification found that testing could not
 
