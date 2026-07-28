@@ -16,6 +16,36 @@
 //! The human-facing contract R1-R3 is derived from it in
 //! `lemma_round_char_correct`; R4 (per-grid monotonicity) is
 //! `lemma_mag_round_monotone`.
+//!
+//! ## Why binary search over exact comparisons (and not shift-then-divide)
+//!
+//! The obvious implementation - truncate `un`/`ud` down to machine width,
+//! then divide - introduces a *pre-truncation error* before the snap. That
+//! error must then be (a) budgeted against R3, eating roughly a bit of the
+//! error bound, and (b) direction-corrected for R2, because a truncated
+//! quotient can land on the wrong side of the exact value. Both analyses
+//! are delicate and infect every proof downstream. Binary search over
+//! exact 192-bit comparisons dissolves the problem: every step decides
+//! `k * ud <= un * 2^s` *exactly*, so the result is characterized by the
+//! division-free floor property `k*ud <= un*2^s < (k+1)*ud` with no error
+//! term at all. R1-R4 and the uniqueness (determinism) theorems then
+//! follow from integer algebra alone. The cost - ~60 wide comparisons per
+//! rounded op, on the *cold* path only (exact results never round) - is
+//! noise for the consuming engine.
+//!
+//! ## The magnitude ceiling (why saturation is forced, not chosen)
+//!
+//! For `|exact| > 2^62 - 1` **no representable `Q` can satisfy R3 at
+//! all**: since `den >= 1`, every representable value obeys
+//! `|num/den| <= |num| <= 2^62 - 1`, so any result is at least
+//! `|exact| - (2^62 - 1)` away from the exact value - far beyond the
+//! `2^-60 * |exact|` budget as soon as `|exact|` meaningfully exceeds the
+//! ceiling. The spec leaves this case unspecified; the only honest options
+//! are panicking, `Option`-izing every op, or saturating with the R2/R3
+//! guarantees stated conditionally on `|exact| <= MAX`. We saturate at
+//! `+-MAX/1` (deterministic, total, sign-preserving) and state the
+//! contract conditionally; the consuming engine's [0, 1] opinion space
+//! never approaches the ceiling.
 
 use vstd::prelude::*;
 #[allow(unused_imports)]
