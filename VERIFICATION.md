@@ -2,96 +2,107 @@
 
 ## Read this first
 
-The specifications and proofs in this crate are **written but not yet
-machine-checked**.
+`cargo verus verify` **runs against this crate and reports a count**. As of the
+latest run:
 
-The Verus verifier is distributed as a binary through GitHub releases. The
-environment this crate was authored in routes all outbound HTTPS through a
-policy-enforcing proxy that returns `403` for `github.com`, so the verifier
-could not be obtained or run. What *was* available on crates.io — `vstd`,
-`verus_builtin`, `verus_builtin_macros` — is enough to compile the annotated
-sources with plain rustc, which is why `cargo build` works and the crate is
-usable today.
+```
+verification results:: 2058 verified, 0 errors     <- vstd
+verification results::  305 verified, 46 errors    <- the-q
+```
 
-Concretely, this means:
+That second line is the number that matters, and it is the one to quote. Do not
+count `error:` lines in the log: Verus prints callee context lines that also
+start with `error`, so grepping inflates the total by roughly half. (I did
+exactly that for several rounds and reported numbers 60–80% too high. The
+authoritative figure is the `verification results` line.)
 
-* **Proven-by-construction claims you can rely on now:** none of the `ensures`
-  clauses have been discharged by the solver.
-* **What *is* established:** the executable behaviour, by a differential test
-  suite against an independent arbitrary-precision oracle (`malachite-q`) —
-  20,000 random cases per operation per rounding direction against R1/R2/R3,
-  90,000 exhaustive small-input pairs, the `f64` boundary, budget-edge fixtures,
-  saturation, and a 10⁴-operation chain. Plus every algebraic law below,
-  property-tested. Overflow checks are on in both `dev` and `release`, so the
-  V2 claim (no `i128` intermediate overflows) has been executed against roughly
-  ten million operations without a panic.
-* **What to expect on first verification:** proof debugging. Nonlinear
-  arithmetic is where SMT solvers struggle most, and this crate is nothing but
-  nonlinear arithmetic. Expect to add intermediate assertions, split
-  `by(nonlinear_arith)` blocks, and adjust `vstd` lemma paths (`vstd`'s
-  `arithmetic::div_mod` module is used for the Euclidean division facts and its
-  API may have drifted). The *statements* — the specifications, the invariants,
-  the theorem shapes — are the durable part; the tactics inside proof bodies are
-  the disposable part.
+The trajectory so far, one row per CI round:
 
-The CI workflow already runs `cargo verus verify`. It is marked
-`continue-on-error: true` **only** because a permanently-red required check is
-worse than an honest advisory one. **Flip it to required the moment the proofs
-go through**; the line is commented in `.github/workflows/ci.yml`.
+| head | verified | errors |
+|---|---|---|
+| `67661e1` | 255 | 36 |
+| `ab17e4d` | 288 | 53 |
+| `8b689af` | 305 | 46 |
 
-Two things the first CI run established about the *harness*, both now fixed:
+Verified conditions are increasing monotonically. The error count is not
+monotone, and both directions have honest causes: it rises when a fixed
+well-formedness failure unblocks checking of proofs that were previously never
+reached, and when new obligations are added (restating V7/V8 added ~25
+`requires`/`ensures`); it falls when proofs actually land.
 
-* Verus is a rustc driver, so it links against one exact compiler version and
-  refuses to run against any other (release `0.2026.07.27.31579f0` wants
-  `1.97.1`). The workflow now reads that version out of the release archive's
-  `rust-toolchain.toml`, installs it with rustup, and makes it the default.
-* `cargo verus` verifies nothing unless the crate opts in. `Cargo.toml` now
-  carries `[package.metadata.verus] verify = true`.
+## How this crate came to be written without a verifier
 
-The plumbing is exercised and working — the verifier loads, checks `vstd`
-(2058 verified, 0 errors), and reaches this crate. Three layers of problem have
-surfaced so far, in order:
+The Verus verifier is a binary distributed through GitHub releases, and the
+environment this crate was authored in returns `403` for `github.com`. The
+libraries (`vstd`, `verus_builtin`, `verus_builtin_macros`) are on crates.io and
+do compile, which is why `cargo build` works and the crate is usable. CI, which
+does have egress, installs the verifier and runs it.
 
-1. **Ghost-code type errors** that plain rustc cannot catch, because rustc
-   erases exactly the code they live in: unsuffixed integer literals in `spec`
-   position, `int`-vs-`i64` in a spec-constructed `Q`, `i128`-vs-`int` at a
-   `proof fn` call site. Fixed.
-2. **Datatype opaqueness.** Verus treats a type as opaque wherever any field is
-   invisible, and a public specification must be well-formed everywhere it is
-   visible. `Q`'s `pub(crate)` fields made `Q::wf` unable to mention `self.num`
-   at all. Fixed by making the fields public; see the note on `Q` and the
-   README for what that costs and why it costs less than it looks.
-3. **Actual proof obligations.** This is where it now is.
+The practical consequence, and the thing to keep in mind reading the proof
+bodies: **`cargo build` passing means the executable code is well-typed and says
+nothing whatsoever about the specifications.** Ghost code is erased by rustc, so
+type errors in specs, missing triggers, and datatype-opaqueness violations are
+all invisible locally and only surface in CI. Every proof change here costs a
+~12-minute round trip.
 
-The practical lesson of authoring Verus without the verifier: `cargo build`
-passing means the *executable* code is well-typed and says nothing whatsoever
-about the specifications.
+## What is established independently of the proofs
 
-### Where the proofs stand
+* 41 tests green in debug and release, on every commit.
+* Differential tests against `malachite-q` — arbitrary precision, fully
+  independent: 20,000 random cases per operation per rounding direction against
+  R1, R2 and R3, plus exhaustive coverage of every `p/q` with `|p| <= 12,
+  q <= 12` (90,000 pairs x 4 operations x 3 directions).
+* Overflow checks on in both profiles, so the V2 no-overflow claim has been
+  executed against roughly ten million operations without a panic.
+* Determinism checked byte-for-byte across eight concurrent threads.
 
-Round three reported 20 errors. Fixed since:
+This is strong evidence and it is *not* what the specification asks for. §6 puts
+V1–V6 at MUST and §8 sets acceptance at "M1–M5 verified and green". Green: yes.
+Verified: not yet.
 
-* the missing `#[trigger]` on `divides` — the only candidate term is a
-  multiplication and Verus will not pick an arithmetic operator on its own;
-* an unproven `i128` bound in `from_f64_dir`, and its `round_frac_exec`
-  denominator precondition;
-* four `d > 0` preconditions in `interval::add`/`sub`;
-* `theorem_interval_add_contains`, rewritten as four small steps through a new
-  `lemma_add_endpoint_order` instead of one large `nonlinear_arith` goal;
-* three `rlimit` exhaustions in `lipschitz`, split into smaller ring steps with
-  the limit raised.
+## Where the remaining work is
 
-**Known still-failing, both SHOULD tier:**
-`lipschitz::lemma_error_accumulates_additively` and the V8 theorems in `nary`
-(`theorem_sum_error_accumulation`, `theorem_exact_fold_is_exact`). These are
-stated correctly but their proof bodies are sketches, not discharged arguments —
-see V8 below. They are not claimed as proven anywhere in this crate.
+Concentrated in `round.rs` — the dyadic-snap rounding contract, which §3 calls
+"the heart of the design" and which is the hardest thing in the crate. Every
+other module is in single or low double digits.
 
-And a standing caveat on reading any of this: Verus reports **one error per
-function body** by default. A module with no reported error has not necessarily
-verified — it may simply not have been reached, or have further errors behind
-the first. Do not read silence as success until a clean run says
-`0 errors`.
+Three classes of problem accounted for most of what has been fixed so far, and
+each is worth knowing before touching this code:
+
+1. **Bounds stated with `pow2(n)` prove nothing about an `i128`.** `pow2` is an
+   opaque recursive spec function. Every arithmetic operation in `q.rs` was
+   failing its overflow check until `lemma_op_widths` was restated with literal
+   bounds alongside the `pow2` ones.
+2. **`by (nonlinear_arith)` blocks are context-isolated.** They see only what
+   their own `requires` lists — *not* the surrounding proof context. Steps that
+   combine earlier facts must be plain `assert`s.
+3. **Partially-factored ring identities exhaust the resource limit,** because
+   the solver has to rediscover the factorisation. Splitting distribution from
+   rearrangement leaves goals that are pure associativity/commutativity
+   shuffles, which Z3 normalises for free. This alone took `interval.rs` to
+   zero.
+
+## One thing verification found that testing could not
+
+`lemma_snap_in_budget` was stated with a hypothesis missing, and the stated
+bound was **false without it**. At the clamped shift (`k >= 61`, `s == 0`) the
+snap returns `ceil(|x|)`, so the budget bound needs `floor(|x|) < MAX_MAG`
+strictly; nothing ruled out equality. If it were equal then
+`|rn| == MAX_MAG * rd` exactly, so `rd` divides `|rn|`. Coprimality of the
+reduced pair rules that out — it forces `rd == 1`, whence `|rn| == MAX_MAG`,
+which means the pair *did* fit the budget, contradicting the hypothesis that it
+did not.
+
+The differential suite could never have caught this: it only ever exercises
+reduced pairs, so the missing hypothesis always happened to hold. That is the
+case for doing this at all.
+
+## The advisory CI check
+
+`verus verify` is `continue-on-error: true`, so the job reports **red** while
+the overall run stays unblocked. That is deliberate: the check should show the
+failure rather than hide it. **Flip it to required when the count reaches zero**
+— it is one clearly-marked line in `.github/workflows/ci.yml`.
 
 No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 `external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.

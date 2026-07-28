@@ -93,4 +93,6 @@ pub mod laws;
 pub mod lipschitz;
 pub mod nary;
 
+pub use convert::{from_f64_dir, to_f64};
+pub use interval::QI;
 pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
