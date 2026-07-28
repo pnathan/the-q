@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  442 verified, 0 errors     <- the-q
+verification results::  478 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -71,7 +71,7 @@ all invisible locally and only surface in CI. Every proof change here costs a
 
 ## What is established independently of the proofs
 
-* 41 tests green in debug and release, on every commit.
+* 46 tests green in debug and release, on every commit.
 * Differential tests against `malachite-q` — arbitrary precision, fully
   independent: 20,000 random cases per operation per rounding direction against
   R1, R2 and R3, plus exhaustive coverage of every `p/q` with `|p| <= 12,

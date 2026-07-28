@@ -111,16 +111,20 @@ this crate does.
 
 For an exact value whose magnitude exceeds `2^62 - 1`, R3 is declared not to
 apply: such results **saturate** to `±(2^62 - 1)`, and `checked_add`,
-`checked_sub`, `checked_mul` and `checked_div` report the condition as `None`.
-Division saturates on the same ceiling as the other three —
-`(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so `checked_div` closes the
-family rather than leaving it asymmetric. The exclusion is
-a choice rather than a necessity — some unrepresentable values *do* have a `Q`
-inside the bound — made to keep the contract on one clean side of a boundary. No engine value comes anywhere
-near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
-10⁵ — the budget pressure is entirely in the *denominator*. This is a documented
-departure from a literal reading of the specification, which states R3
-unconditionally.
+`checked_sub`, `checked_mul` and `checked_div` all report the condition as
+`None`. Division saturates on the same ceiling as the other three —
+`(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so `checked_div` closes the family
+rather than leaving it asymmetric.
+
+The exclusion is a choice rather than a necessity: some unrepresentable values
+*do* have a `Q` inside the bound, and `saturation::lemma_saturation_is_a_choice`
+proves it by exhibiting one. Scoping R3 below the ceiling keeps the contract on
+one clean side of a boundary; it is not that nothing could satisfy it.
+
+No engine value comes anywhere near this ceiling — opinions live in `[0, 1]` and
+evidence counts top out around 10⁵ — so the budget pressure is entirely in the
+*denominator*. This is a documented departure from a literal reading of the
+specification, which states R3 unconditionally.
 
 Relatedly, `Q::new` returns `None` for `i64` pairs above the budget
 (`Q::new(i64::MAX, 1)` does not fit), not only for a zero denominator.
@@ -243,7 +247,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `442 verified, 0 errors`,
+**Current status: every proof obligation discharges — `478 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
