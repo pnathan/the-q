@@ -683,7 +683,7 @@ pub fn product(xs: &[Q]) -> (r: Q)
 /// Weighted mean `Σ wᵢ·xᵢ / Σ wᵢ`. `None` if empty or the weights sum to zero.
 #[verifier::external_body]
 pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
-    ensures forall|q: Q| r == Some(q) ==> wf(q),
+    ensures r matches Some(q) ==> wf(q),
 {
     if pairs.is_empty() {
         return None;
