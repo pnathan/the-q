@@ -733,6 +733,7 @@ pub fn pow2_i128(s: u32) -> (r: i128)
     let mut i: u32 = 0;
     proof {
         lemma_pow2_pos(126nat);
+        crate::model::lemma_pow2_126();
     }
     while i < s
         invariant
@@ -740,11 +741,18 @@ pub fn pow2_i128(s: u32) -> (r: i128)
             s <= 126,
             p == pow2(i as nat),
             p > 0,
+            // The literal is what discharges the `i128` overflow check on
+            // `p * 2`; `p <= pow2(126)` alone tells the solver nothing about
+            // the machine type.
+            p <= 85070591730234615865843651857942052864,
         decreases s - i,
     {
         proof {
             lemma_pow2_mono((i + 1) as nat, 126nat);
             lemma_pow2_pos((i + 1) as nat);
+            crate::model::lemma_pow2_126();
+            crate::model::lemma_pow2_125();
+            lemma_pow2_mono(i as nat, 125nat);
         }
         p = p * 2;
         i = i + 1;
@@ -765,6 +773,7 @@ pub fn bitlen_i128(x: i128) -> (k: u32)
     let mut k: u32 = 0;
     proof {
         lemma_pow2_pos(0nat);
+        crate::model::lemma_pow2_126();
     }
     while p <= x
         invariant
@@ -772,12 +781,21 @@ pub fn bitlen_i128(x: i128) -> (k: u32)
             p > 0,
             k <= 126,
             x < pow2(126),
+            // Literal, for the same reason as in `pow2_i128`: inside the loop
+            // `p <= x < 2^126`, so `p * 2 < 2^127` and the doubling is safe.
+            x <= 85070591730234615865843651857942052864,
             forall|j: nat| j < k as nat ==> pow2(j) <= x,
         decreases x - p,
     {
         proof {
             lemma_pow2_mono((k + 1) as nat, 126nat);
             lemma_pow2_pos((k + 1) as nat);
+            crate::model::lemma_pow2_126();
+            // The measure decreases because `p` strictly grows.
+            assert(p * 2 > p) by (nonlinear_arith)
+                requires
+                    p > 0,
+            ;
         }
         p = p * 2;
         k = k + 1;
@@ -836,6 +854,8 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
     proof {
         lemma_pow2_pos(62nat);
         lemma_pow2_pos(124nat);
+        crate::model::lemma_pow2_62();
+        crate::model::lemma_pow2_124();
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, d as int);
         assert(pow2(0) == 1);
         assert(pow2(i as nat) <= pow2(s as nat)) by {
@@ -855,10 +875,17 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
             q < pow2(62),
             n * pow2(s as nat) < d * pow2(62),
             0 <= n,
+            // Literal forms of the two bounds above. `rem < d <= 2^124` makes
+            // `rem * 2 < 2^125` safe, and `q < 2^62` makes `q * 2 + 1` safe;
+            // stated with `pow2` they discharge neither.
+            d <= 21267647932558653966460912964485513216,
+            q < 4611686018427387904,
         decreases s - i,
     {
         proof {
             lemma_pow2_pos(124nat);
+            crate::model::lemma_pow2_62();
+            crate::model::lemma_pow2_124();
         }
         rem = rem * 2;
         q = q * 2;
@@ -870,6 +897,7 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
         proof {
             crate::model::lemma_pow2_add(1nat, (i - 1) as nat);
             lemma_quotient_bound(q as int, rem as int, d as int, n as int, i as nat, s as nat);
+            crate::model::lemma_pow2_62();
         }
     }
     (q, rem)

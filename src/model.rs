@@ -405,6 +405,14 @@ pub proof fn lemma_pow2_124()
     reveal_with_fuel(pow2, 125);
 }
 
+/// `2^125`.
+pub proof fn lemma_pow2_125()
+    ensures
+        pow2(125) == 42535295865117307932921825928971026432,
+{
+    reveal_with_fuel(pow2, 126);
+}
+
 /// `2^126`.
 pub proof fn lemma_pow2_126()
     ensures
