@@ -230,6 +230,32 @@ pub proof fn lemma_reduce_exact(n: int, d: int)
     }
 }
 
+/// The magnitude of the reduced numerator is the reduction of the magnitude:
+/// `|n| / g == |n / g|`.
+///
+/// This is the bridge between [`crate::gcd::lemma_gcd_reduce_coprime`], which is
+/// stated on `nat` magnitudes, and `gcd_int(red_num, red_den) == 1`, which is
+/// what invariant I1 actually asks for.
+pub proof fn lemma_reduce_abs(n: int, d: int)
+    requires
+        d > 0,
+    ensures
+        abs_int(n) == abs_int(red_num(n, d)) * gcd_int(n, d),
+        abs_int(n) / gcd_int(n, d) == abs_int(red_num(n, d)),
+{
+    let g = gcd_int(n, d);
+    let rn = red_num(n, d);
+    lemma_reduce_exact(n, d);
+    assert(abs_int(n) == abs_int(rn) * g) by (nonlinear_arith)
+        requires
+            n == rn * g,
+            g > 0,
+            abs_int(n) == (if n >= 0 { n } else { -n }),
+            abs_int(rn) == (if rn >= 0 { rn } else { -rn }),
+    ;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(abs_int(n), g, abs_int(rn), 0);
+}
+
 /// `round_frac` always produces a well-formed `Q` — the V1 obligation stated at
 /// the specification level, so proof code can use it without going through the
 /// executable function.
@@ -977,6 +1003,11 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         r == round_frac(n as int, d as int, dir),
 {
     proof {
+        // The input bounds are stated with `pow2`, which discharges no `i128`
+        // overflow or range check on its own; pin the two literals down first.
+        crate::model::lemma_pow2_124();
+        crate::model::lemma_pow2_126();
+        crate::model::lemma_max_mag_pow2();
         lemma_round_frac_wf(n as int, d as int, dir);
     }
     if n == 0 {
@@ -1007,6 +1038,13 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
     }
     let g: i128 = gcd_abs_i128(n, d);
+    proof {
+        // `red_den > 0` (hence `g <= d`, hence the divisions below are safe) and
+        // the two exactness equations `n == rn·g`, `d == rd·g`.
+        lemma_reduce_exact(n as int, d as int);
+        lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
+        lemma_reduce_abs(n as int, d as int);
+    }
     let rn: i128 = n / g;
     let rd: i128 = d / g;
     let arn: i128 = if rn < 0 {
@@ -1015,13 +1053,12 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         rn
     };
     if arn <= mm && rd <= mm {
-        proof {
-            lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
-            lemma_reduce_exact(n as int, d as int);
-        }
         return Q { num: rn as i64, den: rd as i64 };
     }
     // --- dyadic snap -------------------------------------------------------
+    proof {
+        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(arn as int, rd as int);
+    }
     let ip: i128 = arn / rd;
     let k: u32 = bitlen_i128(ip);
     let s: u32 = if k >= 61 {
@@ -1030,6 +1067,10 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         61 - k
     };
     proof {
+        // The overflow test above bounded `|n| / d`; the shift is chosen from
+        // `arn / rd`. Reduction does not move the integer part, so the bound
+        // carries across.
+        lemma_reduce_quotient(m0 as int, d as int, g as int, arn as int, rd as int);
         lemma_shift_div_precondition(arn as int, rd as int, s as nat, k as nat);
     }
     let (qf, rf) = shift_div(arn, rd, s);
@@ -1109,6 +1150,46 @@ pub proof fn lemma_magnitude_test(m: int, d: int, ip: int, fr: int)
             m == d * ip + fr,
             0 <= fr,
     ;
+    // The boundary case `ip == max_mag()` is the one the two implications above
+    // leave open: there `m == max_mag()·d + fr`, so `m <= max_mag()·d` holds
+    // exactly when `fr == 0`. Commuting the product is all Z3 needs to see it.
+    assert(d * ip == ip * d) by (nonlinear_arith);
+}
+
+/// Reducing a fraction by a common divisor leaves its integer part alone:
+/// `(g·rm) / (g·rd) == rm / rd`.
+///
+/// The overflow test in [`round_frac_exec`] runs on the *unreduced* pair, but
+/// the shift is chosen from the *reduced* one; this is what lets the first
+/// bound travel to the second.
+pub proof fn lemma_reduce_quotient(m: int, d: int, g: int, rm: int, rd: int)
+    requires
+        g > 0,
+        rd > 0,
+        rm >= 0,
+        m == g * rm,
+        d == g * rd,
+    ensures
+        m / d == rm / rd,
+{
+    let q = rm / rd;
+    let r = rm % rd;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(rm, rd);
+    assert(0 <= r < rd);
+    // `m == d·q + g·r` with `0 <= g·r < g·rd == d`, which pins `m / d` to `q`.
+    assert(m == d * q + g * r) by (nonlinear_arith)
+        requires
+            m == g * rm,
+            d == g * rd,
+            rm == rd * q + r,
+    ;
+    assert(0 <= g * r < d) by (nonlinear_arith)
+        requires
+            g > 0,
+            0 <= r < rd,
+            d == g * rd,
+    ;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(m, d, q, g * r);
 }
 
 /// The `shift_div` precondition holds for the shift the algorithm picks.
@@ -1132,8 +1213,10 @@ pub proof fn lemma_shift_div_precondition(m: int, rd: int, s: nat, k: nat)
     ;
     if k >= 61 {
         assert(s == 0 && pow2(s) == 1);
+        // `ip <= max_mag()` is a hypothesis, and `max_mag() == 2^62 - 1`; the
+        // bound is unreachable without that identity.
         assert(ip + 1 <= pow2(62)) by {
-            lemma_pow2_pos(62nat);
+            crate::model::lemma_max_mag_pow2();
         }
         assert(m * 1 < rd * pow2(62)) by (nonlinear_arith)
             requires
@@ -1206,14 +1289,20 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, qf, rf);
         assert(a / rd == qf && a % rd == rf);
     } else {
+        // `a` is a `let`-bound local, and a `nonlinear_arith` block sees only
+        // its own `requires` — so its definition has to be restated here.
         assert(-a == abs_int(rn) * pow2(s)) by (nonlinear_arith)
             requires
-                rn < 0,
+                a == rn * pow2(s),
                 abs_int(rn) == -rn,
         ;
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(-a, rd, qf, rf);
         assert((-a) / rd == qf && (-a) % rd == rf);
         if rf == 0 {
+            assert(a == rd * (-qf) + 0) by (nonlinear_arith)
+                requires
+                    -a == rd * qf + 0,
+            ;
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, -qf, 0);
         } else {
             assert(a == rd * (-(qf + 1)) + (rd - rf)) by (nonlinear_arith)
