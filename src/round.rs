@@ -189,6 +189,13 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
         ;
         let r = round_frac(n, d, dir);
         assert(r == Q { num: rn as i64, den: rd as i64 });
+        // I1's zero clause: `n != 0` and `n == rn·g` force `rn != 0`, so the
+        // clause is vacuous here.
+        assert(rn != 0) by (nonlinear_arith)
+            requires
+                n != 0,
+                n == rn * g,
+        ;
         assert(r.n() * d == n * r.d()) by (nonlinear_arith)
             requires
                 n == rn * g,
@@ -304,6 +311,12 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
             lemma_reduce_abs(sn, sd);
+            // I1's zero clause. A zero snapped numerator makes the gcd the
+            // whole denominator, so the reduced denominator is exactly one.
+            if sn == 0 {
+                crate::gcd::lemma_gcd_zero(sd as nat);
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
+            }
         }
     }
 }
@@ -479,6 +492,9 @@ pub proof fn lemma_r2_directed(n: int, d: int)
         assert(((-a) / rd) * rd == rd * ((-a) / rd)) by (nonlinear_arith);
         assert((rn * sd) / rd * rd <= rn * sd);
         assert(rn * sd <= -(((-(rn * sd)) / rd) * rd));
+        // `grid_num(.., Up) == -((-a) / rd)`, so its product with `rd` is the
+        // negation of the product above — a nonlinear step.
+        assert((-(((-a) / rd))) * rd == -(((-a) / rd) * rd)) by (nonlinear_arith);
         lemma_grid_reduce_preserves_order(rn, rd, s, Dir::Down);
         lemma_grid_reduce_preserves_order(rn, rd, s, Dir::Up);
         // Carry the inequality from the snapped pair to the reduced one: both
@@ -1596,6 +1612,26 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
         assert(a == abs_int(rn) * pow2(s));
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, qf, rf);
         assert(a / rd == qf && a % rd == rf);
+        // `Up` is specified as `-((-a) / rd)`, so the negated quotient is
+        // needed here too — it is `-qf` on the nose and `-(qf + 1)` otherwise.
+        if rf == 0 {
+            assert(-a == rd * (-qf) + 0) by (nonlinear_arith)
+                requires
+                    a == rd * qf + 0,
+            ;
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(-a, rd, -qf, 0);
+        } else {
+            assert(-a == rd * (-(qf + 1)) + (rd - rf)) by (nonlinear_arith)
+                requires
+                    a == rd * qf + rf,
+            ;
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                -a,
+                rd,
+                -(qf + 1),
+                rd - rf,
+            );
+        }
     } else {
         // `a` is a `let`-bound local, and a `nonlinear_arith` block sees only
         // its own `requires` — so its definition has to be restated here.

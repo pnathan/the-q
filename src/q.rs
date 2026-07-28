@@ -189,8 +189,13 @@ impl Q {
                 // I1's zero clause: `gcd(0, d) == d`, so a zero numerator
                 // reduces the denominator all the way to one.
                 if num == 0 {
-                    assert(0nat % (d as nat) == 0nat);
-                    assert(gcd_int(0, d as int) == d as int);
+                    crate::gcd::lemma_gcd_zero(d as nat);
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                        d as int,
+                        d as int,
+                        1,
+                        0,
+                    );
                 }
                 // n == rn·g and d == rd·g, and (n, d) is (num, den) up to a
                 // shared sign flip, so rn/rd is num/den as a value either way.
