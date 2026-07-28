@@ -440,7 +440,7 @@ impl Q {
 
     /// `self / other`, rounded (Nearest).
     pub fn div(self, other: Q) -> (r: Q)
-        requires wf(self), wf(other), other.num != 0,
+        requires wf(self), wf(other), other.spec_num() != 0,
         ensures wf(r),
     {
         self.div_dir(other, Dir::Nearest)
@@ -449,7 +449,7 @@ impl Q {
     /// `self / other` with an explicit rounding direction.
     #[verifier::external_body]
     pub fn div_dir(self, other: Q, dir: Dir) -> (r: Q)
-        requires wf(self), wf(other), other.num != 0,
+        requires wf(self), wf(other), other.spec_num() != 0,
         ensures wf(r),
     {
         assert!(other.num != 0, "Q::div by zero (precondition violated)");
@@ -492,7 +492,7 @@ impl Q {
     /// Reciprocal `den / num` — always exact.
     #[verifier::external_body]
     pub fn recip(self) -> (r: Q)
-        requires wf(self), self.num != 0,
+        requires wf(self), self.spec_num() != 0,
         ensures wf(r),
     {
         assert!(self.num != 0, "Q::recip of zero (precondition violated)");
