@@ -956,6 +956,8 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
             crate::model::lemma_pow2_62();
             crate::model::lemma_pow2_124();
         }
+        let ghost q_old: int = q as int;
+        let ghost rem_old: int = rem as int;
         rem = rem * 2;
         q = q * 2;
         if rem >= d {
@@ -967,6 +969,12 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
             crate::model::lemma_pow2_add(1nat, (i - 1) as nat);
             crate::model::lemma_pow2_small();
             assert(pow2(i as nat) == 2 * pow2((i - 1) as nat));
+            // Doubling the carried identity: `(2q)·d == 2·(q·d)` is nonlinear,
+            // and outside a nonlinear block the two are unrelated terms.
+            assert((2 * q_old) * (d as int) == 2 * (q_old * (d as int))) by (nonlinear_arith);
+            assert((2 * q_old + 1) * (d as int) == 2 * (q_old * (d as int)) + (d as int))
+                by (nonlinear_arith);
+            assert(2 * (q_old * (d as int) + rem_old) == 2 * (q_old * (d as int)) + 2 * rem_old);
             // Doubling both sides of the carried identity is nonlinear in `n`.
             assert(2 * ((n as int) * pow2((i - 1) as nat)) == (n as int) * (2 * pow2(
                 (i - 1) as nat,
@@ -1170,6 +1178,9 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
     let sd: i128 = pow2_i128(s);
     proof {
         lemma_grid_num_matches(rn as int, rd as int, s as nat, dir, qf as int, rf as int, sn as int);
+        // `lemma_snap_in_budget` wants the one-grid-step bound on `|sn|`, which
+        // is `lemma_snap_magnitude`'s conclusion.
+        lemma_snap_magnitude(rn as int, rd as int, s as nat, dir);
         lemma_snap_in_budget(rn as int, rd as int, s as nat, sn as int, k as nat);
     }
     let g2: i128 = gcd_abs_i128(sn, sd);

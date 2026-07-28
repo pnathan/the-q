@@ -184,6 +184,7 @@ impl Q {
             proof {
                 crate::round::lemma_reduce_exact(n as int, d as int);
                 crate::gcd::lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
+                crate::round::lemma_reduce_abs(n as int, d as int);
                 // n == rn·g and d == rd·g, and (n, d) is (num, den) up to a
                 // shared sign flip, so rn/rd is num/den as a value either way.
                 lemma_new_value(
