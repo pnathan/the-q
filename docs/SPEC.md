@@ -311,10 +311,13 @@ therefore partial in two ways — `None` on `den == 0` *and* on an over-budget
 reduced form — and `Q::new_rounded` is the total variant, returning `None`
 **iff** `den == 0`.
 
-**§3 R3 — the error bound is unsatisfiable above the magnitude ceiling.** For an
-exact value with `|n/d| > 2^62 − 1`, no representable `Q` lies within
-`2^-60 · |exact|` of it, because no representable `Q` is that large. R3 is
-therefore stated under `!saturated(n, d)`; such results saturate to `±MAX_MAG`,
+**§3 R3 — the contract is scoped below the magnitude ceiling.** For an exact
+value with `|n/d| > 2^62 − 1` the crate declines to state R3, and results
+saturate. Note this is a *choice*: it is tempting to say no representable `Q`
+could satisfy the bound there, but that is false — `n/d = MAX_MAG + 1/2` is
+within `2^-61` of `MAX_MAG/1`. The exclusion keeps the contract on one clean
+side of a boundary rather than being forced. R3 is therefore stated under
+`!saturated(n, d)`; such results saturate to `±MAX_MAG`,
 and `checked_add`/`checked_sub`/`checked_mul` report them as `None` exactly
 there (`ensures r.is_none() <==> saturated(...)`).
 

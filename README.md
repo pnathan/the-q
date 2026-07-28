@@ -110,8 +110,10 @@ this crate does.
 ### Magnitude overflow saturates
 
 For an exact value whose magnitude exceeds `2^62 - 1`, R3 is declared not to
-apply and such results **saturate** to `±(2^62 - 1)`, and `checked_add`, `checked_sub` and
-`checked_mul` report the condition as `None`. No engine value comes anywhere
+apply: such results **saturate** to `±(2^62 - 1)`, and `checked_add`,
+`checked_sub` and `checked_mul` report the condition as `None`. The exclusion is
+a choice rather than a necessity — some unrepresentable values *do* have a `Q`
+inside the bound — made to keep the contract on one clean side of a boundary. No engine value comes anywhere
 near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
 10⁵ — the budget pressure is entirely in the *denominator*. This is a documented
 departure from a literal reading of the specification, which states R3
