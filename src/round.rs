@@ -374,6 +374,12 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             assert(od <= max_mag());
             assert(on == 0 ==> od == 1);
             assert(gcd_int(on, od) == 1);
+            // `wf` reads the `i64` *fields*, not the `int`s the bounds above
+            // are about. Both are well inside the range, so the casts are the
+            // identity — but that has to be said before the clauses transfer.
+            crate::model::lemma_max_mag_pow2();
+            assert(((on as i64) as int) == on);
+            assert(((od as i64) as int) == od);
         }
     }
 }
