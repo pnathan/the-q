@@ -303,8 +303,92 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
+            lemma_reduce_abs(sn, sd);
         }
     }
+}
+
+/// In the snapping branch the result's fields *are* the reduced snapped pair.
+///
+/// `round_frac` writes them through `as i64`, so this is where the round-trip
+/// is discharged — which is what `lemma_snap_in_budget` is for.
+pub proof fn lemma_snap_result_fields(n: int, d: int, dir: Dir)
+    requires
+        d > 0,
+        n != 0,
+        magnitude_fits(n, d),
+        !exact_path(n, d),
+    ensures
+        ({
+            let rn = red_num(n, d);
+            let rd = red_den(n, d);
+            let s = snap_shift(rn, rd);
+            let sn = grid_num(rn, rd, s, dir);
+            let sd = pow2(s);
+            let r = round_frac(n, d, dir);
+            &&& r.n() == red_num(sn, sd)
+            &&& r.d() == red_den(sn, sd)
+            &&& sn == r.n() * gcd_int(sn, sd)
+            &&& sd == r.d() * gcd_int(sn, sd)
+            &&& gcd_int(sn, sd) > 0
+            &&& r.d() > 0
+        }),
+{
+    lemma_round_frac_wf(n, d, dir);
+    crate::model::lemma_max_mag_pow2();
+    lemma_reduce_exact(n, d);
+    lemma_gcd_reduce_coprime(abs_int(n) as nat, d as nat);
+    lemma_reduce_abs(n, d);
+    lemma_reduce_magnitude_fits(n, d);
+    let rn = red_num(n, d);
+    let rd = red_den(n, d);
+    let s = snap_shift(rn, rd);
+    let sn = grid_num(rn, rd, s, dir);
+    let sd = pow2(s);
+    lemma_pow2_pos(s);
+    lemma_grid_error_step(rn, rd, s, dir);
+    lemma_snap_magnitude(rn, rd, s, dir);
+    lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
+    lemma_reduce_exact(sn, sd);
+}
+
+/// Re-reducing the snapped pair by its gcd preserves the grid error bound.
+///
+/// The bound comes out of `lemma_grid_error_step` and `lemma_shift_covers_bound`
+/// stated against `sn / 2^s`; `round_frac` returns that pair divided through by
+/// its gcd, and the inequality survives because both sides carry the factor.
+pub proof fn lemma_error_after_reduce(rn: int, rd: int, sn: int, sd: int, g2: int, r: Q)
+    requires
+        g2 > 0,
+        r.d() > 0,
+        sn == r.n() * g2,
+        sd == r.d() * g2,
+        abs_int(sn * rd - rn * sd) * pow2(precision_b()) <= sd * max_int(rd, abs_int(rn)),
+    ensures
+        abs_int(r.n() * rd - rn * r.d()) * pow2(precision_b()) <= r.d() * max_int(rd, abs_int(rn)),
+{
+    let e = abs_int(r.n() * rd - rn * r.d());
+    let m = max_int(rd, abs_int(rn));
+    assert(sn * rd - rn * sd == (r.n() * rd - rn * r.d()) * g2) by (nonlinear_arith)
+        requires
+            sn == r.n() * g2,
+            sd == r.d() * g2,
+    ;
+    assert(abs_int((r.n() * rd - rn * r.d()) * g2) == e * g2) by (nonlinear_arith)
+        requires
+            g2 > 0,
+            e == abs_int(r.n() * rd - rn * r.d()),
+    ;
+    assert((e * g2) * pow2(precision_b()) == (e * pow2(precision_b())) * g2) by (nonlinear_arith);
+    assert(sd * m == (r.d() * m) * g2) by (nonlinear_arith)
+        requires
+            sd == r.d() * g2,
+    ;
+    assert(e * pow2(precision_b()) <= r.d() * m) by (nonlinear_arith)
+        requires
+            g2 > 0,
+            (e * pow2(precision_b())) * g2 <= (r.d() * m) * g2,
+    ;
 }
 
 /// `gcd(x, 1) == 1` for every `x` — needed for the zero and saturating branches,
@@ -397,6 +481,12 @@ pub proof fn lemma_r2_directed(n: int, d: int)
         assert(rn * sd <= -(((-(rn * sd)) / rd) * rd));
         lemma_grid_reduce_preserves_order(rn, rd, s, Dir::Down);
         lemma_grid_reduce_preserves_order(rn, rd, s, Dir::Up);
+        // Carry the inequality from the snapped pair to the reduced one: both
+        // sides pick up the same positive factor `g2`, which then cancels.
+        lemma_snap_result_fields(n, d, Dir::Down);
+        lemma_snap_result_fields(n, d, Dir::Up);
+        lemma_order_after_reduce(rn, rd, s, Dir::Down);
+        lemma_order_after_reduce(rn, rd, s, Dir::Up);
         lemma_scale_frac_order(n, d, g, rn, rd, round_frac(n, d, Dir::Down));
         lemma_scale_frac_order(n, d, g, rn, rd, round_frac(n, d, Dir::Up));
     }
@@ -426,6 +516,46 @@ pub proof fn lemma_grid_reduce_preserves_order(rn: int, rd: int, s: nat, dir: Di
         requires
             sn == (sn / g2) * g2,
             sd == (sd / g2) * g2,
+    ;
+}
+
+/// The reduced snapped pair sits on the same side of `rn/rd` as the snapped
+/// pair does.
+///
+/// `Down` gives `sn·rd <= rn·2^s` and `Up` gives `sn·rd >= rn·2^s`; dividing
+/// both members through by `g2 == gcd(sn, 2^s)` multiplies each side of the
+/// inequality by the same positive factor, so it survives.
+pub proof fn lemma_order_after_reduce(rn: int, rd: int, s: nat, dir: Dir)
+    requires
+        rd > 0,
+    ensures
+        ({
+            let sn = grid_num(rn, rd, s, dir);
+            let sd = pow2(s);
+            let g2 = gcd_int(sn, sd);
+            &&& (sn * rd <= rn * sd) ==> ((sn / g2) * rd <= rn * (sd / g2))
+            &&& (sn * rd >= rn * sd) ==> ((sn / g2) * rd >= rn * (sd / g2))
+        }),
+{
+    let sn = grid_num(rn, rd, s, dir);
+    let sd = pow2(s);
+    lemma_pow2_pos(s);
+    lemma_reduce_exact(sn, sd);
+    let g2 = gcd_int(sn, sd);
+    let rsn = sn / g2;
+    let rsd = sd / g2;
+    assert(sn * rd == (rsn * rd) * g2) by (nonlinear_arith)
+        requires
+            sn == rsn * g2,
+    ;
+    assert(rn * sd == (rn * rsd) * g2) by (nonlinear_arith)
+        requires
+            sd == rsd * g2,
+    ;
+    assert(forall|x: int, y: int| #[trigger] (x * g2) <= #[trigger] (y * g2) <==> x <= y)
+        by (nonlinear_arith)
+        requires
+            g2 > 0,
     ;
 }
 
@@ -491,12 +621,27 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
         let rn = red_num(n, d);
         let rd = red_den(n, d);
         let s = snap_shift(rn, rd);
+        let sn = grid_num(rn, rd, s, dir);
+        let sd = pow2(s);
         lemma_pow2_pos(s);
+        lemma_pow2_pos(precision_b());
         lemma_grid_error_step(rn, rd, s, dir);
         lemma_shift_covers_bound(rn, rd);
-        // `lemma_error_scales` wants `r.d() > 0`, which is part of `wf`.
         lemma_round_frac_wf(n, d, dir);
-        lemma_error_scales(n, d, g, rn, rd, round_frac(n, d, dir), s);
+        lemma_snap_result_fields(n, d, dir);
+        let r = round_frac(n, d, dir);
+        let g2 = gcd_int(sn, sd);
+        // One grid step, scaled: `|sn·rd − rn·2^s| <= rd`, and
+        // `rd·2^60 <= 2^s·max(rd, |rn|)` from the shift bound.
+        assert(abs_int(sn * rd - rn * sd) * pow2(precision_b()) <= rd * pow2(precision_b()))
+            by (nonlinear_arith)
+            requires
+                abs_int(sn * rd - rn * sd) <= rd,
+                pow2(precision_b()) > 0,
+        ;
+        assert(abs_int(sn * rd - rn * sd) * pow2(precision_b()) <= sd * max_int(rd, abs_int(rn)));
+        lemma_error_after_reduce(rn, rd, sn, sd, g2, r);
+        lemma_error_scales(n, d, g, rn, rd, r, s);
     }
 }
 
