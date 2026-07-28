@@ -354,6 +354,16 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
                 crate::gcd::lemma_gcd_zero(sd as nat);
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
             }
+            // Spell out the five clauses of `wf` against the returned pair, so
+            // a future failure names the clause instead of the conjunction.
+            let on = red_num(sn, sd);
+            let od = red_den(sn, sd);
+            assert(round_frac(n, d, dir) == Q { num: on as i64, den: od as i64 });
+            assert(od > 0);
+            assert(abs_int(on) <= max_mag());
+            assert(od <= max_mag());
+            assert(on == 0 ==> od == 1);
+            assert(gcd_int(on, od) == 1);
         }
     }
 }
