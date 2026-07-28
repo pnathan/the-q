@@ -20,14 +20,32 @@
 //! # Choosing the shift
 //!
 //! With `k = bitlen(floor(|x|))` (so `2^(k-1) <= |x| < 2^k` for `|x| >= 1`, and
-//! `k = 0` for `|x| < 1`), the shift is `s = 61 - k`, clamped to `0`.
+//! `k = 0` for `|x| < 1`), the shift is `s = 62 - k`, capped at `61` and
+//! floored at `0`.
 //!
-//! * The grid step is `2^-s`, so the error is at most `2^-s = 2^(k-61)`.
-//! * The bound R3 demands is `2^-60 · max(1, |x|) >= 2^-60 · 2^(k-1) = 2^(k-61)`.
+//! * The grid step is `2^-s`, so the error is at most `2^-s = 2^(k-62)`.
+//! * The bound R3 demands is `2^-61 · max(1, |x|) >= 2^-61 · 2^(k-1) = 2^(k-62)`.
 //!
-//! The two meet exactly: `B = 60` is achieved, which is the specification's
-//! acceptance bar. The numerator stays inside the budget because
-//! `|x| · 2^s < 2^k · 2^(61-k) = 2^61`, and the denominator is `2^s <= 2^61`.
+//! The two meet exactly: `B = 61` is achieved, one bit better than the
+//! specification's `B >= 60` bar.
+//!
+//! # Why the shift is `62 - k` and not `61 - k`
+//!
+//! The obvious choice reserves a bit of headroom — `|x| · 2^s < 2^61`, so a
+//! rounding carry can never push the numerator past the budget. That costs a
+//! bit of precision to avoid a case that is cheap to handle directly.
+//!
+//! Spending the whole budget instead gives `|x| · 2^s < 2^k · 2^(62-k) = 2^62`,
+//! so rounding up can land on `2^62` exactly — one past `MAX_MAG`. That is the
+//! *carry*, and it costs nothing: the pair is then `±2^62 / 2^s` with `s >= 1`,
+//! and `2^s` divides `2^62`, so the reduction every operation already performs
+//! turns it into `±2^(62-s) / 1`, comfortably inside I2. See
+//! [`lemma_carry_reduces`]. The cap at `s <= 61` is what keeps the
+//! *denominator* `2^s` inside the budget in the `k == 0` case, where no carry
+//! is possible anyway.
+//!
+//! Ties are broken to even, as IEEE-754 does, so that long fold chains do not
+//! drift in a fixed direction.
 //!
 //! # No overflow (V2)
 //!
@@ -55,12 +73,17 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// The dyadic shift chosen for the value `n / d`.
+///
+/// `s = 62 - k`, capped at `61` so the denominator `2^s` itself stays inside
+/// the budget, and floored at `0` once the value is too large to scale.
 pub open spec fn snap_shift(n: int, d: int) -> nat {
     let k = bitlen(abs_int(n) / d);
-    if k >= 61 {
+    if k >= 62 {
         0nat
+    } else if k == 0 {
+        61nat
     } else {
-        (61 - k) as nat
+        (62 - k) as nat
     }
 }
 
@@ -347,6 +370,11 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // above established it.
             assert(gcd_int(rn, rd) == 1);
             lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
+            // The carry: `|sn|` is one past the budget exactly when the snap
+            // rounded up onto `2^62`, and there the reduction brings it back.
+            if abs_int(sn) > max_mag() {
+                lemma_carry_reduces(sn, s);
+            }
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
             lemma_reduce_abs(sn, sd);
@@ -687,12 +715,12 @@ pub proof fn lemma_scale_frac_order(n: int, d: int, g: int, rn: int, rd: int, r:
 // R3 — the error bound
 // ---------------------------------------------------------------------------
 
-/// **R3.** `|result - exact| <= 2^-60 · max(1, |exact|)`, for every direction.
+/// **R3.** `|result - exact| <= 2^-61 · max(1, |exact|)`, for every direction.
 ///
 /// The proof is the shift analysis from the module header, carried out
 /// division-free. The three cases are `k = 0` (`|x| < 1`, `s = 61`),
-/// `1 <= k <= 61` (`s = 61 - k`), and `k >= 62` (`s = 0`); in each the grid step
-/// `2^-s` is below `2^-60 · max(1, |x|)`.
+/// `1 <= k <= 61` (`s = 62 - k`), and `k >= 62` (`s = 0`); in each the grid step
+/// `2^-s` is below `2^-61 · max(1, |x|)`.
 pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
     requires
         d > 0,
@@ -728,7 +756,7 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
         let r = round_frac(n, d, dir);
         let g2 = gcd_int(sn, sd);
         // One grid step, scaled: `|sn·rd − rn·2^s| <= rd`, and
-        // `rd·2^60 <= 2^s·max(rd, |rn|)` from the shift bound.
+        // `rd·2^61 <= 2^s·max(rd, |rn|)` from the shift bound.
         assert(abs_int(sn * rd - rn * sd) * pow2(precision_b()) <= rd * pow2(precision_b()))
             by (nonlinear_arith)
             requires
@@ -782,12 +810,12 @@ pub proof fn lemma_grid_error_step(rn: int, rd: int, s: nat, dir: Dir)
     }
 }
 
-/// The shift is large enough for R3: `rd · 2^60 <= 2^s · max(rd, |rn|)`.
+/// The shift is large enough for R3: `rd · 2^61 <= 2^s · max(rd, |rn|)`.
 ///
 /// This is the heart of the bound. `k = bitlen(|rn|/rd)` gives
-/// `|rn| >= 2^(k-1) · rd` whenever `k >= 1`, and `s = 61 - k`, so
-/// `2^s · |rn| >= 2^(61-k) · 2^(k-1) · rd = 2^60 · rd`. For `k = 0` the shift is
-/// `61` and `max(rd, |rn|) >= rd` already suffices.
+/// `|rn| >= 2^(k-1) · rd` whenever `k >= 1`, and `s = 62 - k`, so
+/// `2^s · |rn| >= 2^(62-k) · 2^(k-1) · rd = 2^61 · rd`. For `k = 0` the shift is
+/// capped at `61` and `max(rd, |rn|) >= rd` already suffices.
 pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
     requires
         rd > 0,
@@ -802,20 +830,13 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
     // These have to be in the *enclosing* context: a `nonlinear_arith` block
     // sees only its own `requires`, so facts established inside a nested `by`
     // block never reach one.
-    lemma_pow2_pos(60nat);
     lemma_pow2_pos(61nat);
+    lemma_pow2_pos(62nat);
     lemma_pow2_pos(s);
     if k == 0 {
         assert(s == 61);
-        assert(pow2(61) == 2 * pow2(60));
         assert(max_int(rd, abs_int(rn)) >= rd);
-        assert(rd * pow2(60) <= pow2(61) * rd) by (nonlinear_arith)
-            requires
-                rd > 0,
-                pow2(61) == 2 * pow2(60),
-                pow2(60) > 0,
-        ;
-        assert(pow2(61) * rd <= pow2(61) * max_int(rd, abs_int(rn))) by (nonlinear_arith)
+        assert(rd * pow2(61) <= pow2(61) * max_int(rd, abs_int(rn))) by (nonlinear_arith)
             requires
                 pow2(61) > 0,
                 rd <= max_int(rd, abs_int(rn)),
@@ -834,13 +855,13 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
                 abs_int(rn) >= ip * rd,
                 pow2((k - 1) as nat) <= ip,
         ;
-        if k >= 61 {
+        if k >= 62 {
             assert(s == 0 && pow2(s) == 1);
-            lemma_pow2_mono(60nat, (k - 1) as nat);
-            assert(rd * pow2(60) <= pow2((k - 1) as nat) * rd) by (nonlinear_arith)
+            lemma_pow2_mono(61nat, (k - 1) as nat);
+            assert(rd * pow2(61) <= pow2((k - 1) as nat) * rd) by (nonlinear_arith)
                 requires
                     rd > 0,
-                    pow2(60) <= pow2((k - 1) as nat),
+                    pow2(61) <= pow2((k - 1) as nat),
             ;
             assert(pow2((k - 1) as nat) * rd <= max_int(rd, abs_int(rn)));
             assert(pow2(s) * max_int(rd, abs_int(rn)) == max_int(rd, abs_int(rn)))
@@ -849,16 +870,16 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
                     pow2(s) == 1,
             ;
         } else {
-            assert(s == 61 - k);
+            assert(s == 62 - k);
             crate::model::lemma_pow2_add(s, (k - 1) as nat);
-            assert(s + (k - 1) == 60);
-            assert(pow2(s) * pow2((k - 1) as nat) == pow2(60));
-            assert(rd * pow2(60) <= pow2(s) * abs_int(rn)) by (nonlinear_arith)
+            assert(s + (k - 1) == 61);
+            assert(pow2(s) * pow2((k - 1) as nat) == pow2(61));
+            assert(rd * pow2(61) <= pow2(s) * abs_int(rn)) by (nonlinear_arith)
                 requires
                     rd > 0,
                     pow2(s) > 0,
                     abs_int(rn) >= pow2((k - 1) as nat) * rd,
-                    pow2(s) * pow2((k - 1) as nat) == pow2(60),
+                    pow2(s) * pow2((k - 1) as nat) == pow2(61),
             ;
             assert(pow2(s) * abs_int(rn) <= pow2(s) * max_int(rd, abs_int(rn)))
                 by (nonlinear_arith)
@@ -1435,10 +1456,12 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
     }
     let ip: i128 = arn / rd;
     let k: u32 = bitlen_i128(ip);
-    let s: u32 = if k >= 61 {
+    let s: u32 = if k >= 62 {
         0
+    } else if k == 0 {
+        61
     } else {
-        61 - k
+        62 - k
     };
     proof {
         // The overflow test above bounded `|n| / d`; the shift is chosen from
@@ -1628,7 +1651,7 @@ pub proof fn lemma_shift_div_precondition(m: int, rd: int, s: nat, k: nat)
         rd > 0,
         m >= 0,
         k == bitlen(m / rd),
-        s == (if k >= 61 { 0nat } else { (61 - k) as nat }),
+        s == (if k >= 62 { 0nat } else if k == 0 { 61nat } else { (62 - k) as nat }),
         m / rd <= max_mag(),
     ensures
         m * pow2(s) < rd * pow2(62),
@@ -1641,7 +1664,7 @@ pub proof fn lemma_shift_div_precondition(m: int, rd: int, s: nat, k: nat)
             m == rd * ip + m % rd,
             0 <= m % rd < rd,
     ;
-    if k >= 61 {
+    if k >= 62 {
         assert(s == 0 && pow2(s) == 1);
         // `ip <= max_mag()` is a hypothesis, and `max_mag() == 2^62 - 1`; the
         // bound is unreachable without that identity.
@@ -1655,28 +1678,35 @@ pub proof fn lemma_shift_div_precondition(m: int, rd: int, s: nat, k: nat)
                 ip + 1 <= pow2(62),
         ;
     } else {
+        // `s + k` is `61` at the capped shift (`k == 0`) and `62` otherwise;
+        // both branches land at or under the `2^62` the caller needs.
+        let b: nat = if k == 0 {
+            61nat
+        } else {
+            62nat
+        };
         assert(ip < pow2(k));
         assert(ip + 1 <= pow2(k));
         crate::model::lemma_pow2_add(s, k);
-        assert(s + k == 61);
-        assert(pow2(s) * pow2(k) == pow2(61));
+        assert(s + k == b);
+        assert(pow2(s) * pow2(k) == pow2(b));
         lemma_pow2_pos(s);
         lemma_pow2_pos(k);
-        assert(m * pow2(s) < rd * pow2(61)) by (nonlinear_arith)
+        assert(m * pow2(s) < rd * pow2(b)) by (nonlinear_arith)
             requires
                 rd > 0,
                 pow2(s) > 0,
                 m < (ip + 1) * rd,
                 ip + 1 <= pow2(k),
-                pow2(s) * pow2(k) == pow2(61),
+                pow2(s) * pow2(k) == pow2(b),
         ;
-        assert(pow2(61) <= pow2(62)) by {
-            lemma_pow2_mono(61nat, 62nat);
+        assert(pow2(b) <= pow2(62)) by {
+            lemma_pow2_mono(b, 62nat);
         }
-        assert(rd * pow2(61) <= rd * pow2(62)) by (nonlinear_arith)
+        assert(rd * pow2(b) <= rd * pow2(62)) by (nonlinear_arith)
             requires
                 rd > 0,
-                pow2(61) <= pow2(62),
+                pow2(b) <= pow2(62),
         ;
     }
 }
@@ -1793,14 +1823,76 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
     }
 }
 
-/// The snapped numerator and denominator both fit the budget.
+/// The carry case: the snapped numerator lands exactly on `2^62`, one past the
+/// budget.
+///
+/// This is the price of spending the whole budget on the scaled numerator
+/// instead of reserving a bit of headroom in the shift, and it is paid here
+/// rather than avoided by construction. It costs nothing, because the pair is
+/// `±2^62 / 2^s` with `s >= 1`: `2^s` divides `2^62`, so the reduction is
+/// `±2^(62-s) / 1`, and `62 - s <= 61` puts it comfortably inside I2.
+pub proof fn lemma_carry_reduces(sn: int, s: nat)
+    requires
+        abs_int(sn) == pow2(62),
+        1 <= s <= 61,
+    ensures
+        fits_budget(red_num(sn, pow2(s)), red_den(sn, pow2(s))),
+{
+    crate::model::lemma_max_mag_pow2();
+    lemma_pow2_pos(s);
+    lemma_pow2_pos((62 - s) as nat);
+    crate::model::lemma_pow2_add(s, (62 - s) as nat);
+    assert(pow2(s) * pow2((62 - s) as nat) == pow2(62));
+    let p = pow2(s);
+    let t = pow2((62 - s) as nat);
+    let g = gcd_int(sn, p);
+    // `2^s` is a common divisor of `|sn| == 2^62` and of `2^s`, so it divides
+    // the gcd; the gcd divides `2^s`; both are positive, so they are equal.
+    assert(divides(p, abs_int(sn))) by {
+        assert(abs_int(sn) == p * t);
+    }
+    assert(divides(p, p)) by {
+        assert(p == p * 1);
+    }
+    lemma_gcd_greatest(abs_int(sn) as nat, p as nat, p);
+    lemma_gcd_pos(abs_int(sn) as nat, p as nat);
+    lemma_gcd_le(abs_int(sn) as nat, p as nat);
+    crate::model::lemma_divides_le(p, g);
+    assert(g == p);
+    // `|sn| / 2^s == 2^(62-s) <= 2^61 <= MAX_MAG`, and the denominator is 1.
+    lemma_pow2_mono((62 - s) as nat, 61nat);
+    assert(abs_int(red_num(sn, p)) == t) by {
+        if sn > 0 {
+            assert(sn == p * t);
+            vstd::arithmetic::div_mod::lemma_div_multiples_vanish(t, p);
+        } else {
+            assert(sn == -(p * t));
+            assert(sn == p * (-t)) by (nonlinear_arith)
+                requires
+                    sn == -(p * t),
+            ;
+            vstd::arithmetic::div_mod::lemma_div_multiples_vanish(-t, p);
+        }
+    }
+    assert(red_den(sn, p) == 1) by {
+        vstd::arithmetic::div_mod::lemma_div_multiples_vanish(1, p);
+        assert(p * 1 == p);
+    }
+}
+
+/// The snapped denominator fits the budget, and the numerator does too except
+/// in the single carry case handled by [`lemma_carry_reduces`].
 ///
 /// Denominator: `2^s <= 2^61 <= MAX_MAG`.
 ///
-/// Numerator, for `k <= 60`: `s = 61 - k` and `|rn| < 2^k·rd`, so the snapped
-/// quotient is below `2^61` and one more than it still fits.
+/// Numerator, for `k == 0` (`|x| < 1`, shift capped at `61`): the snapped
+/// quotient is below `2^61`, and one more than it still fits.
 ///
-/// Numerator, for `k >= 61` (shift clamped to `0`): the result is `ceil(|x|)`,
+/// Numerator, for `1 <= k <= 61`: `s = 62 - k` and `|rn| < 2^k·rd`, so the
+/// quotient is below `2^62`. Rounding up can therefore land on `2^62` exactly —
+/// one past the budget — which is the carry.
+///
+/// Numerator, for `k >= 62` (shift clamped to `0`): the result is `ceil(|x|)`,
 /// so it is enough that `floor(|x|) < MAX_MAG`. If it were equal, then
 /// `|rn| == MAX_MAG·rd` exactly, so `rd` divides `|rn|`; coprimality forces
 /// `rd == 1`, and then `|rn| == MAX_MAG` means the pair *did* fit the budget —
@@ -1814,10 +1906,10 @@ pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
         abs_int(rn) <= max_mag() * rd,
         !fits_budget(rn, rd),
         k == bitlen(abs_int(rn) / rd),
-        s == (if k >= 61 { 0nat } else { (61 - k) as nat }),
+        s == (if k >= 62 { 0nat } else if k == 0 { 61nat } else { (62 - k) as nat }),
         abs_int(sn) <= abs_int(rn) * pow2(s) / rd + 1,
     ensures
-        abs_int(sn) <= max_mag(),
+        abs_int(sn) <= max_mag() || (abs_int(sn) == pow2(62) && 1 <= s <= 61),
         pow2(s) <= max_mag(),
 {
     crate::model::lemma_max_mag_pow2();
@@ -1831,7 +1923,7 @@ pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m, rd);
     assert(abs_int(rn) == rd * ip + abs_int(rn) % rd);
     assert(m == rd * q + m % rd);
-    if k >= 61 {
+    if k >= 62 {
         assert(s == 0 && pow2(s) == 1);
         assert(m == abs_int(rn));
         assert(q == ip);
@@ -1864,9 +1956,17 @@ pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
             assert(fits_budget(rn, rd));
         }
     } else {
-        assert(s == 61 - k);
+        // `s + k` is `61` at the capped shift (`k == 0`, where no carry is
+        // possible) and `62` otherwise — where rounding up may land exactly on
+        // `2^62`, which is the carry the postcondition's disjunct admits.
+        let b: nat = if k == 0 {
+            61nat
+        } else {
+            62nat
+        };
+        assert(s + k == b);
         crate::model::lemma_pow2_add(s, k);
-        assert(pow2(s) * pow2(k) == pow2(61));
+        assert(pow2(s) * pow2(k) == pow2(b));
         lemma_pow2_pos(k);
         // |rn| < (ip + 1)·rd <= 2^k·rd
         assert(abs_int(rn) < (ip + 1) * rd) by (nonlinear_arith)
@@ -1881,26 +1981,32 @@ pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
                 abs_int(rn) < (ip + 1) * rd,
                 ip + 1 <= pow2(k),
         ;
-        // q·rd <= m == |rn|·2^s < 2^k·rd·2^s == 2^61·rd, so q < 2^61.
+        // q·rd <= m == |rn|·2^s < 2^k·rd·2^s == 2^b·rd, so q < 2^b.
         assert(q * rd <= m) by (nonlinear_arith)
             requires
                 m == rd * q + m % rd,
                 m % rd >= 0,
         ;
-        assert(m < pow2(61) * rd) by (nonlinear_arith)
+        assert(m < pow2(b) * rd) by (nonlinear_arith)
             requires
                 rd > 0,
                 pow2(s) > 0,
                 m == abs_int(rn) * pow2(s),
                 abs_int(rn) < pow2(k) * rd,
-                pow2(s) * pow2(k) == pow2(61),
+                pow2(s) * pow2(k) == pow2(b),
         ;
-        assert(q < pow2(61)) by (nonlinear_arith)
+        assert(q < pow2(b)) by (nonlinear_arith)
             requires
                 rd > 0,
                 q * rd <= m,
-                m < pow2(61) * rd,
+                m < pow2(b) * rd,
         ;
+        // `|sn| <= q + 1 <= 2^b`. At `b == 61` that is inside the budget; at
+        // `b == 62` it is either inside or exactly the carry value.
+        if k == 0 {
+            crate::model::lemma_max_mag_pow2();
+            lemma_pow2_mono(61nat, 62nat);
+        }
     }
 }
 

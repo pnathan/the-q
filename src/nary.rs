@@ -12,7 +12,7 @@
 //! N-ary `i128` accumulation would re-open the overflow analysis for no
 //! benefit, so it is not done.
 //!
-//! The accumulated error after `k` elements is `k · 2^-60 · max(1, |exact|)`
+//! The accumulated error after `k` elements is `k · 2^-61 · max(1, |exact|)`
 //! (theorem `theorem_sum_error_accumulation`).
 
 use verus_builtin_macros::verus;
@@ -294,15 +294,15 @@ pub proof fn lemma_fold_wf(s: Seq<Q>)
 }
 
 /// **V8.** After `k` folded elements the accumulated error against the exact
-/// fold is at most `k · m · 2^-60`.
+/// fold is at most `k · m · 2^-61`.
 ///
 /// The induction is exactly the two-line argument: each `add` contributes one
-/// fresh `2^-60` unit (R3), and the error already accumulated passes through
+/// fresh `2^-61` unit (R3), and the error already accumulated passes through
 /// the addition untouched, because addition is exactly 1-Lipschitz. Both halves
 /// live in `crate::lipschitz::lemma_abs_error_step`.
 ///
 /// For the consuming engine's worst case of ~2·10⁴ sequential operations with
-/// `m == 1` this is `2·10⁴ · 2^-60 ≈ 2^-45.7 ≈ 2·10^-14` — the same precision
+/// `m == 1` this is `2·10⁴ · 2^-61 ≈ 2^-46.7 ≈ 1·10^-14` — the same precision
 /// class as `f64` accumulation, but deterministic and proven rather than
 /// assumed.
 pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)

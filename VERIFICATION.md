@@ -208,7 +208,7 @@ discharged statically by the caller. There is no runtime zero-check to fail.
 Specifications never divide. "`r` is the value `n/d`" is
 `q_is(r, n, d) := r.num * d == n * r.den`, and the order relations are
 cross-multiplied likewise. The R3 bound is stated the same way: the real claim
-`|r − n/d| ≤ 2^-60 · max(1, |n/d|)` is written
+`|r − n/d| ≤ 2^-61 · max(1, |n/d|)` is written
 
 ```
 |r.num·d − n·r.den| · 2^60  ≤  r.den · max(d, |n|)
@@ -229,7 +229,7 @@ commutativity and cross-run determinism provable at all.
 * **R1** (`lemma_r1_identity`) — if the exact reduced result satisfies I2 it is
   returned exactly.
 * **R2** (`lemma_r2_directed`) — `Down ≤ exact ≤ Up`.
-* **R3** (`lemma_r3_error`) — the bound above, with `B = 60`. The proof splits
+* **R3** (`lemma_r3_error`) — the bound above, with `B = 61`. The proof splits
   on `k = bitlen(floor(|x|))`: `k = 0` (shift 61), `1 ≤ k ≤ 60` (shift `61−k`),
   and `k ≥ 61` (shift 0). `lemma_shift_covers_bound` is the arithmetic core.
 * **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
@@ -238,7 +238,7 @@ commutativity and cross-run determinism provable at all.
 
 **Documented departure.** R3 is stated under `!saturated(n, d)`. An exact value
 with magnitude above `2^62 − 1` has no representable neighbour within
-`2^-60 · |exact|`, so the bound is unachievable there; those results saturate,
+`2^-61 · |exact|`, so the bound is unachievable there; those results saturate,
 and `checked_add`/`checked_sub`/`checked_mul` return `None` exactly in that
 case (`ensures r.is_none() <==> saturated(...)`).
 
@@ -301,14 +301,14 @@ These are what an interval or affine-arithmetic layer would be built on.
 ### V8 — n-ary accumulation (SHOULD)
 
 `nary::theorem_sum_error_accumulation` states that after `k` folded elements the
-result is within `k · m · 2^-60` of the exact fold, where `m` bounds the
+result is within `k · m · 2^-61` of the exact fold, where `m` bounds the
 intermediates. The induction is: each `add` contributes one fresh unit (R3), and
 the carried error passes through addition with Lipschitz constant `1` (V7); both
 halves are `lipschitz::lemma_abs_error_step`.
 
 **This is stated as an absolute bound, not a relative one, and that is a
 correction rather than a weakening.** The specification's phrasing suggests
-`k · 2^-60 · max(1, |exact|)`, but relative error does not accumulate by
+`k · 2^-61 · max(1, |exact|)`, but relative error does not accumulate by
 induction: the magnitude in the bound is the magnitude of the *running* sum,
 which moves at every step, so the induction hypothesis and the goal are about
 different quantities. Carrying an explicit magnitude bound `m` on the
@@ -318,7 +318,7 @@ thing.
 
 The empirical claim is checked independently:
 `oracle::long_fold_chain_tracks_oracle` runs 10⁴ mixed operations and asserts
-the accumulated error against the oracle stays inside `k · 2^-60`.
+the accumulated error against the oracle stays inside `k · 2^-61`.
 
 ---
 

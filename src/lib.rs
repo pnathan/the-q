@@ -36,7 +36,7 @@
 //! Verus ecosystem. The middle road is a bounded rational with a proven
 //! rounding contract: computations that stay inside the budget are bit-exact
 //! and order-independent, and computations that leave it carry a machine-stated
-//! error bound of `2^-60 · max(1, |exact|)` per operation instead of `f64`
+//! error bound of `2^-61 · max(1, |exact|)` per operation instead of `f64`
 //! folklore.
 //!
 //! ## Honesty notes (read these)

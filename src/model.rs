@@ -110,7 +110,7 @@ pub open spec fn fits_budget(n: int, d: int) -> bool {
 /// `|n/d| <= MAX_MAG`. Written division-free.
 ///
 /// When this fails, no `Q` can be within the R3 error bound of `n/d` — the
-/// nearest representable value is more than `2^-60 · |n/d|` away — so the
+/// nearest representable value is more than `2^-61 · |n/d|` away — so the
 /// operations saturate and the `checked_*` variants return `None`.
 pub open spec fn magnitude_fits(n: int, d: int) -> bool {
     abs_int(n) <= max_mag() * d
@@ -188,16 +188,21 @@ pub open spec fn q_ge_frac(r: Q, n: int, d: int) -> bool {
 
 /// The precision exponent `B` of the rounding contract. R3 is
 /// `|result - exact| <= 2^-B · max(1, |exact|)`; the specification's acceptance
-/// bar is `B >= 60` and the dyadic-snap implementation achieves exactly 60.
+/// bar is `B >= 60` and the dyadic-snap implementation achieves 61.
+///
+/// The extra bit over the obvious `60` comes from spending the whole budget on
+/// the scaled numerator instead of reserving a bit of headroom against a
+/// rounding carry: see [`crate::round::snap_shift`]. The carry is handled where
+/// it actually occurs rather than avoided by construction.
 pub open spec fn precision_b() -> nat {
-    60nat
+    61nat
 }
 
 /// R3, division-free.
 ///
-/// The real statement is `|r - n/d| <= 2^-60 · max(1, |n/d|)`. Multiplying
-/// through by `r.den · d · 2^60` (both denominators positive) gives
-/// `|r.num·d - n·r.den| · 2^60 <= r.den · max(d, |n|)`, which is what is
+/// The real statement is `|r - n/d| <= 2^-61 · max(1, |n/d|)`. Multiplying
+/// through by `r.den · d · 2^61` (both denominators positive) gives
+/// `|r.num·d - n·r.den| · 2^61 <= r.den · max(d, |n|)`, which is what is
 /// written here — no division anywhere.
 pub open spec fn within_error_bound(r: Q, n: int, d: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= r.d() * max_int(d, abs_int(n))
@@ -224,7 +229,7 @@ pub open spec fn within_error_bound_k(r: Q, n: int, d: int, k: nat) -> bool {
 /// gives you. Absolute error does accumulate cleanly, because addition is
 /// exactly 1-Lipschitz. And for this crate's actual domain the two coincide:
 /// every engine value lives in `[0, 1]`, so `max(1, |exact|) == 1` throughout
-/// and `m == 1`, making the bound `k · 2^-60` outright.
+/// and `m == 1`, making the bound `k · 2^-61` outright.
 pub open spec fn within_abs_error(r: Q, n: int, d: int, k: nat, m: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= (k as int) * m * (r.d() * d)
 }

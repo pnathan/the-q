@@ -313,7 +313,7 @@ fn long_fold_chain_tracks_oracle() {
         one()
     };
     assert!(
-        err.clone() * two_pow_60() <= bound_num * scale,
+        err.clone() * two_pow_b() <= bound_num * scale,
         "accumulated error {err} exceeds the k · 2^-60 bound after {k} ops"
     );
 }

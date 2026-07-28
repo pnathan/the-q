@@ -40,9 +40,11 @@ pub fn rabs(x: Rational) -> Rational {
     }
 }
 
-/// `2^60`, the R3 precision unit.
-pub fn two_pow_60() -> Rational {
-    Rational::from_signeds(1i128 << 60, 1i128)
+/// `2^61`, the R3 precision unit. The specification's bar is `B >= 60`; the
+/// implementation achieves 61, and the differential suite pins the stronger
+/// bound so a regression to `60` fails here rather than passing quietly.
+pub fn two_pow_b() -> Rational {
+    Rational::from_signeds(1i128 << 61, 1i128)
 }
 
 /// `MAX_MAG` as an oracle rational.
@@ -65,7 +67,7 @@ pub fn magnitude_fits(r: &Rational) -> bool {
     rabs(r.clone()) <= max_mag_rat()
 }
 
-/// Assert the R3 error bound: `|result - exact| * 2^60 <= max(1, |exact|)`.
+/// Assert the R3 error bound: `|result - exact| * 2^61 <= max(1, |exact|)`.
 pub fn assert_r3(result: Q, exact: &Rational, what: &str) {
     let got = rat(result);
     let err = rabs(got.clone() - exact.clone());
@@ -75,7 +77,7 @@ pub fn assert_r3(result: Q, exact: &Rational, what: &str) {
         one()
     };
     assert!(
-        err * two_pow_60() <= bound,
+        err * two_pow_b() <= bound,
         "R3 violated for {what}: got {got}, exact {exact}"
     );
 }

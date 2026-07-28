@@ -48,7 +48,7 @@ actors per group — never rounds at all. Not "accurate to 15 digits". Exact.
 
 **2. Large computations round, with a proven bound.** When an exact result no
 longer fits, it snaps to a dyadic grid chosen per magnitude, and the error is at
-most `2^-60 · max(1, |exact|)` (R3). Over the consuming engine's worst case of
+most `2^-61 · max(1, |exact|)` (R3). Over the consuming engine's worst case of
 ~2·10⁴ sequential operations that accumulates to roughly `2^-45.7 ≈ 2·10^-14`
 relative — the same precision class as `f64`, except deterministic and *proven*
 rather than folklore.
@@ -110,7 +110,7 @@ this crate does.
 ### Magnitude overflow saturates
 
 R3 cannot hold for an exact value whose magnitude exceeds `2^62 - 1`: no
-representable `Q` is that large, so nothing is within `2^-60 · |exact|` of it.
+representable `Q` is that large, so nothing is within `2^-61 · |exact|` of it.
 Such results **saturate** to `±(2^62 - 1)`, and `checked_add`, `checked_sub` and
 `checked_mul` report the condition as `None`. No engine value comes anywhere
 near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
@@ -147,14 +147,32 @@ quotient (`< 2^62`) and a remainder (`< d ≤ 2^124`), so the widest live value 
 ## How the rounding works
 
 With `k = bitlen(floor(|x|))` — so `2^(k-1) ≤ |x| < 2^k` for `|x| ≥ 1`, and
-`k = 0` for `|x| < 1` — the shift is `s = 61 - k`, clamped to `0`:
+`k = 0` for `|x| < 1` — the shift is `s = 62 - k`, capped at `61` and floored
+at `0`:
 
-* the grid step is `2^-s = 2^(k-61)`, so that is the worst-case error;
-* R3 demands `2^-60 · max(1, |x|) ≥ 2^-60 · 2^(k-1) = 2^(k-61)`.
+* the grid step is `2^-s = 2^(k-62)`, so that is the worst-case error;
+* R3 demands `2^-61 · max(1, |x|) ≥ 2^-61 · 2^(k-1) = 2^(k-62)`.
 
-The two meet exactly, so `B = 60` — the specification's acceptance bar — is
-achieved and not exceeded. The numerator stays inside the budget because
-`|x| · 2^s < 2^k · 2^(61-k) = 2^61`, and the denominator is `2^s ≤ 2^61`.
+The two meet exactly, so `B = 61` — one bit better than the specification's
+`B >= 60` bar — is achieved and not exceeded.
+
+### Why `62 - k` and not `61 - k`
+
+The obvious choice reserves a bit of headroom, keeping `|x| · 2^s < 2^61` so
+that a rounding carry can never push the numerator past the budget. That spends
+a bit of precision to avoid a case which is cheap to handle directly.
+
+Spending the whole budget gives `|x| · 2^s < 2^k · 2^(62-k) = 2^62`, so rounding
+up can land on `2^62` exactly — one past `MAX_MAG`. That is the *carry*, and it
+costs nothing: the pair is then `±2^62 / 2^s` with `s ≥ 1`, and `2^s` divides
+`2^62`, so the GCD reduction every operation already performs turns it into
+`±2^(62-s) / 1`, comfortably inside I2. The proof is `lemma_carry_reduces`.
+
+The cap at `s ≤ 61` is what keeps the *denominator* `2^s` inside the budget in
+the `k == 0` case, where no carry is possible anyway.
+
+Ties are broken to even, as IEEE-754 does, so long fold chains do not drift in
+a fixed direction.
 
 ## API
 

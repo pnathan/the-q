@@ -36,6 +36,8 @@ malachite-q = "0.10"
 malachite-base = "0.10"
 malachite-nz = "0.10"
 serde_json = "1"
+# Shrinking property tests over the trusted f64 boundary and the trait glue.
+proptest = "1"
 
 [features]
 default = []
