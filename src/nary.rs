@@ -426,16 +426,33 @@ pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int,
     // r == (an·bd + bn·ad)/(ad·bd) and an/ad == pn/pd, so r == tn/td.
     assert(r.n() * (ad * bd) == (an * bd + bn * ad) * r.d());
     assert(an * pd == pn * ad);
-    assert(r.n() * td * (ad * bd) == (tn * r.d()) * (ad * bd)) by (nonlinear_arith)
+    // Handed over whole this exhausts the rlimit — six atoms, degree four, and
+    // a hypothesis to substitute. Do it in four steps that each move one thing.
+    assert(r.n() * td * (ad * bd) == (r.n() * (ad * bd)) * (pd * bd)) by (nonlinear_arith)
         requires
-            ad > 0,
-            bd > 0,
-            pd > 0,
-            an * pd == pn * ad,
-            r.n() * (ad * bd) == (an * bd + bn * ad) * r.d(),
-            tn == pn * bd + bn * pd,
             td == pd * bd,
     ;
+    assert((r.n() * (ad * bd)) * (pd * bd) == ((an * bd + bn * ad) * r.d()) * (pd * bd))
+        by (nonlinear_arith)
+        requires
+            r.n() * (ad * bd) == (an * bd + bn * ad) * r.d(),
+    ;
+    assert((tn * r.d()) * (ad * bd) == ((pn * bd + bn * pd) * r.d()) * (ad * bd))
+        by (nonlinear_arith)
+        requires
+            tn == pn * bd + bn * pd,
+    ;
+    // The remaining identity is the cross-multiplication hypothesis, scaled by
+    // bd and by r.d().
+    assert((an * bd + bn * ad) * (pd * bd) == (pn * bd + bn * pd) * (ad * bd))
+        by (nonlinear_arith)
+        requires
+            an * pd == pn * ad,
+    ;
+    assert(((an * bd + bn * ad) * r.d()) * (pd * bd) == ((an * bd + bn * ad) * (pd * bd)) * r.d())
+        by (nonlinear_arith);
+    assert(((pn * bd + bn * pd) * r.d()) * (ad * bd) == ((pn * bd + bn * pd) * (ad * bd)) * r.d())
+        by (nonlinear_arith);
     assert(r.n() * td == tn * r.d()) by (nonlinear_arith)
         requires
             ad > 0,

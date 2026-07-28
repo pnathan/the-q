@@ -489,6 +489,8 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
         lemma_pow2_pos(s);
         lemma_grid_error_step(rn, rd, s, dir);
         lemma_shift_covers_bound(rn, rd);
+        // `lemma_error_scales` wants `r.d() > 0`, which is part of `wf`.
+        lemma_round_frac_wf(n, d, dir);
         lemma_error_scales(n, d, g, rn, rd, round_frac(n, d, dir), s);
     }
 }
@@ -551,17 +553,26 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
     let s = snap_shift(rn, rd);
     lemma_bitlen_char(ip);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_int(rn), rd);
+    // These have to be in the *enclosing* context: a `nonlinear_arith` block
+    // sees only its own `requires`, so facts established inside a nested `by`
+    // block never reach one.
+    lemma_pow2_pos(60nat);
+    lemma_pow2_pos(61nat);
+    lemma_pow2_pos(s);
     if k == 0 {
         assert(s == 61);
-        assert(pow2(61) == 2 * pow2(60)) by {
-            lemma_pow2_pos(60nat);
-        }
+        assert(pow2(61) == 2 * pow2(60));
         assert(max_int(rd, abs_int(rn)) >= rd);
         assert(rd * pow2(60) <= pow2(61) * rd) by (nonlinear_arith)
             requires
                 rd > 0,
                 pow2(61) == 2 * pow2(60),
                 pow2(60) > 0,
+        ;
+        assert(pow2(61) * rd <= pow2(61) * max_int(rd, abs_int(rn))) by (nonlinear_arith)
+            requires
+                pow2(61) > 0,
+                rd <= max_int(rd, abs_int(rn)),
         ;
     } else {
         // |rn| >= ip * rd >= 2^(k-1) * rd
@@ -585,6 +596,12 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
                     rd > 0,
                     pow2(60) <= pow2((k - 1) as nat),
             ;
+            assert(pow2((k - 1) as nat) * rd <= max_int(rd, abs_int(rn)));
+            assert(pow2(s) * max_int(rd, abs_int(rn)) == max_int(rd, abs_int(rn)))
+                by (nonlinear_arith)
+                requires
+                    pow2(s) == 1,
+            ;
         } else {
             assert(s == 61 - k);
             crate::model::lemma_pow2_add(s, (k - 1) as nat);
@@ -596,6 +613,12 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
                     pow2(s) > 0,
                     abs_int(rn) >= pow2((k - 1) as nat) * rd,
                     pow2(s) * pow2((k - 1) as nat) == pow2(60),
+            ;
+            assert(pow2(s) * abs_int(rn) <= pow2(s) * max_int(rd, abs_int(rn)))
+                by (nonlinear_arith)
+                requires
+                    pow2(s) > 0,
+                    abs_int(rn) <= max_int(rd, abs_int(rn)),
             ;
         }
     }

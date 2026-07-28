@@ -868,6 +868,9 @@ pub proof fn theorem_sub_is_add_neg(a: Q, b: Q)
             sub_n(a, b) == add_n(a, nb) && prod_d(a, b) == prod_d(a, nb)
         }),
 {
+    crate::model::lemma_max_mag_pow2();
+    // Pushing the negation through the product is nonlinear.
+    assert((-b.n()) * a.d() == -(b.n() * a.d())) by (nonlinear_arith);
 }
 
 /// `a / b == a * (1/b)` as exact rationals.
