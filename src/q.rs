@@ -199,6 +199,11 @@ impl Q {
         q_from_i128(n, d, Dir::Nearest)
     }
 
+    /// Divide. Returns None if other == 0.
+    pub fn checked_div(self, other: Q) -> Option<Q> {
+        if other.is_zero() { None } else { Some(self.div(other)) }
+    }
+
     /// Divide. Precondition: other != 0 (statically ensured by Verus).
     pub fn div(self, other: Q) -> Q {
         debug_assert!(!other.is_zero(), "div by zero");

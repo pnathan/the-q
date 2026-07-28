@@ -68,7 +68,7 @@ pub fn from_f64_dir(v: f64, dir: Dir) -> Option<Q> {
         // m_signed * 2^e: m_signed fits i128, shift is small, check against 2^61
         let limit: i128 = 1i128 << 61;
         let abs_val = if m_signed < 0 { -m_signed } else { m_signed };
-        if abs_val >= (limit >> e) {
+        if abs_val > (limit >> e) {
             return None;
         }
     }
