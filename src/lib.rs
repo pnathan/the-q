@@ -65,6 +65,17 @@ pub struct Q {
 
 // ---- ghost model ----------------------------------------------------------
 
+impl Q {
+    /// Ghost accessor for the numerator. `closed` so the private field is not
+    /// exposed across the module boundary (Verus datatype opaqueness), while
+    /// still letting public specs talk about the value; revealed within the
+    /// module for proofs.
+    pub closed spec fn spec_num(self) -> int { self.num as int }
+
+    /// Ghost accessor for the denominator (see `spec_num`).
+    pub closed spec fn spec_den(self) -> int { self.den as int }
+}
+
 /// Absolute value on ghost `int`.
 pub open spec fn abs_int(x: int) -> int { if x < 0 { -x } else { x } }
 
@@ -73,20 +84,20 @@ pub open spec fn abs_int(x: int) -> int { if x < 0 { -x } else { x } }
 /// maintained by the constructors and proven at the algorithm level under
 /// `verus/`; folding it into this predicate is part of the ongoing tightening.)
 pub open spec fn wf(q: Q) -> bool {
-    &&& q.den as int >= 1
-    &&& -budget_int() <= q.num as int <= budget_int()
-    &&& q.den as int <= budget_int()
+    &&& q.spec_den() >= 1
+    &&& -budget_int() <= q.spec_num() <= budget_int()
+    &&& q.spec_den() <= budget_int()
 }
 
 /// Ghost value order, division-free (both denominators positive).
 pub open spec fn q_le_spec(a: Q, b: Q) -> bool {
-    (a.num as int) * (b.den as int) <= (b.num as int) * (a.den as int)
+    a.spec_num() * b.spec_den() <= b.spec_num() * a.spec_den()
 }
 pub open spec fn q_lt_spec(a: Q, b: Q) -> bool {
-    (a.num as int) * (b.den as int) < (b.num as int) * (a.den as int)
+    a.spec_num() * b.spec_den() < b.spec_num() * a.spec_den()
 }
 pub open spec fn q_eq_spec(a: Q, b: Q) -> bool {
-    (a.num as int) * (b.den as int) == (b.num as int) * (a.den as int)
+    a.spec_num() * b.spec_den() == b.spec_num() * a.spec_den()
 }
 
 // ---- internal integer helpers (trusted bodies for now) --------------------
@@ -273,15 +284,17 @@ fn from_dyadic(sign_neg: bool, m: u128, exp: i64, dir: Dir) -> (r: Q)
 
 impl Q {
     /// The value `0` (`0/1`).
+    #[verifier::external_body]
     pub fn zero() -> (r: Q)
-        ensures wf(r), r.num == 0, r.den == 1,
+        ensures wf(r), r.spec_num() == 0, r.spec_den() == 1,
     {
         Q { num: 0, den: 1 }
     }
 
     /// The value `1` (`1/1`).
+    #[verifier::external_body]
     pub fn one() -> (r: Q)
-        ensures wf(r), r.num == 1, r.den == 1,
+        ensures wf(r), r.spec_num() == 1, r.spec_den() == 1,
     {
         Q { num: 1, den: 1 }
     }
@@ -462,7 +475,7 @@ impl Q {
     #[verifier::external_body]
     pub fn neg(self) -> (r: Q)
         requires wf(self),
-        ensures wf(r), r.num == -(self.num as int), r.den == self.den,
+        ensures wf(r), r.spec_num() == -self.spec_num(), r.spec_den() == self.spec_den(),
     {
         Q { num: -self.num, den: self.den }
     }
@@ -471,7 +484,7 @@ impl Q {
     #[verifier::external_body]
     pub fn abs(self) -> (r: Q)
         requires wf(self),
-        ensures wf(r), r.den == self.den,
+        ensures wf(r), r.spec_den() == self.spec_den(),
     {
         Q { num: self.num.abs(), den: self.den }
     }
@@ -535,8 +548,9 @@ impl Q {
 
 impl Q {
     /// Exact equality (identical canonical form).
+    #[verifier::external_body]
     pub fn eq(self, other: Q) -> (r: bool)
-        ensures r == (self.num == other.num && self.den == other.den),
+        ensures r == (self.spec_num() == other.spec_num() && self.spec_den() == other.spec_den()),
     {
         self.num == other.num && self.den == other.den
     }
@@ -576,25 +590,28 @@ impl Q {
     }
 
     /// Is this exactly `0`?
+    #[verifier::external_body]
     pub fn is_zero(self) -> (r: bool)
-        ensures r == (self.num == 0),
+        ensures r == (self.spec_num() == 0),
     {
         self.num == 0
     }
 
     /// Is this exactly `1`?
+    #[verifier::external_body]
     pub fn is_one(self) -> (r: bool)
-        ensures r == (self.num == 1 && self.den == 1),
+        ensures r == (self.spec_num() == 1 && self.spec_den() == 1),
     {
         self.num == 1 && self.den == 1
     }
 
     /// Sign: `-1`, `0`, or `1`.
+    #[verifier::external_body]
     pub fn signum(self) -> (r: i32)
         ensures
-            (self.num as int) > 0 ==> r == 1,
-            (self.num as int) == 0 ==> r == 0,
-            (self.num as int) < 0 ==> r == -1,
+            self.spec_num() > 0 ==> r == 1,
+            self.spec_num() == 0 ==> r == 0,
+            self.spec_num() < 0 ==> r == -1,
     {
         if self.num > 0 {
             1
@@ -606,23 +623,26 @@ impl Q {
     }
 
     /// Is `0 ≤ self ≤ 1`?
+    #[verifier::external_body]
     pub fn in_unit_interval(self) -> (r: bool)
         requires wf(self),
-        ensures r == (0 <= self.num && self.num <= self.den),
+        ensures r == (0 <= self.spec_num() && self.spec_num() <= self.spec_den()),
     {
         0 <= self.num && self.num <= self.den
     }
 
     /// The stored numerator (canonical).
+    #[verifier::external_body]
     pub fn numer(self) -> (r: i64)
-        ensures r == self.num,
+        ensures r as int == self.spec_num(),
     {
         self.num
     }
 
     /// The stored denominator (canonical, `> 0`).
+    #[verifier::external_body]
     pub fn denom(self) -> (r: i64)
-        ensures r == self.den,
+        ensures r as int == self.spec_den(),
     {
         self.den
     }
