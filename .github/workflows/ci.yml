@@ -79,3 +79,37 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+
+  # Verus verification of the *shipped* code (TRUSTED.md "concrete next
+  # steps" #1, now done): vstd is a real (non-optional) dependency and
+  # verus!{} blocks live inline in src/rounding.rs (canonicalize_i128,
+  # gcd_u128, ...), rather than only in the standalone verus/ mirrors above.
+  # Hard-gated, not continue-on-error -- proven out locally (36 verified, 0
+  # errors) before being promoted here.
+  verus-real-code:
+    runs-on: ubuntu-24.04 # matches verus-lang's published prebuilt-artifact target
+    env:
+      VERUS_VERSION: 0.2026.07.18.3a4d30b
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verus
+        run: |
+          curl -sSL -o verus.zip \
+            "https://github.com/verus-lang/verus/releases/download/release/${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          unzip -q verus.zip
+          mv verus-x86-linux verus-install
+          chmod +x verus-install/verus
+      - name: Install the rust toolchain verus requires
+        run: |
+          set +e
+          out=$(./verus-install/verus --version 2>&1)
+          set -e
+          if echo "$out" | grep -q "required rust toolchain"; then
+            toolchain=$(echo "$out" | grep -oP "required rust toolchain \K\S+")
+            echo "Installing required toolchain: $toolchain"
+            rustup install "$toolchain"
+          else
+            echo "$out"
+          fi
+      - name: verus verify src/lib.rs (real shipped code, not a mirror)
+        run: ./verus-install/verus --rlimit 60 src/lib.rs --crate-type=lib

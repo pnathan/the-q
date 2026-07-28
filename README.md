@@ -9,27 +9,31 @@ authoritative version is the design document this crate was built from
 ## Status: partially Verus-verified
 
 **Read this before relying on this crate for anything safety-critical.**
-[Verus](https://github.com/verus-lang/verus) **is wired into CI**
-(`.github/workflows/ci.yml`, `verus` job) and is machine-checking real
-proofs, not just documented contracts. Per-obligation status (see
-[`TRUSTED.md`](TRUSTED.md) for the full table and caveats):
+[Verus](https://github.com/verus-lang/verus) **is wired into CI** two ways:
+the `verus` job checks standalone proof files under `verus/*.rs`, and the
+`verus-real-code` job runs Verus directly against `src/lib.rs` -- `vstd` is
+a real (non-optional) dependency, and `canonicalize_i128`/`gcd_u128` in
+`src/rounding.rs` are verified as the literal shipped code, not a mirror.
+Per-obligation status (see [`TRUSTED.md`](TRUSTED.md) for the full table and
+caveats):
 
 - ✅ **Proved**: V1 (canonical-form invariant), V2 (overflow safety), V3
   (value correctness vs. the ghost model), V5 (GCD correctness +
-  termination), V6 (algebraic laws), and R1 of V4 (identity on
-  representables).
+  termination), V6 (algebraic laws), V7/V8 (Lipschitz lemmas and n-ary
+  fold error bounds, spec-marked SHOULD), and R1 of V4 (identity on
+  representables). V1, V3 (partially), and V5 are proved against the real
+  shipped `src/rounding.rs` code (`canonicalize_i128`/`gcd_u128`); the rest
+  are proved via standalone mirrors under `verus/`.
 - 🟡🔴 **Not proved**: R2-R4 of V4 (the directed-rounding algorithm's
-  directedness, error bound, and monotonicity -- the hardest single piece),
-  and V7/V8 (spec-marked SHOULD).
+  directedness, error bound, and monotonicity -- the hardest single piece,
+  not attempted against real code or a mirror).
 
-Two important caveats on the proved items, detailed in `TRUSTED.md`: the
-proofs live in standalone `verus/*.rs` files that mirror the shipped `src/`
-code rather than verifying the literal compiled crate (wiring up `vstd` as
-a real cargo dependency so both are the same code is unfinished work), and
-every proof was authored and iterated on **entirely via CI feedback** --
-the environment writing this crate has no local Verus toolchain access
-(GitHub release-binary distribution; this session's GitHub access was
-scoped to a single repository).
+Two important caveats, detailed in `TRUSTED.md`: most proved items
+(everything except `canonicalize_i128`/`gcd_u128`) still live in standalone
+`verus/*.rs` files that mirror the shipped `src/` code rather than verifying
+the literal compiled crate, and every proof was authored and iterated on via
+a mix of CI feedback and (for the real-code work) local Verus toolchain
+access.
 
 What backs the unproved obligations in the meantime: `overflow-checks =
 true` in every build profile (any place a "provably in range" claim is
@@ -173,9 +177,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ./scripts/check-no-lgpl3-release-deps.sh
 
-# Verus proofs (verus/*.rs, standalone -- see TRUSTED.md). Requires the
-# verus binary on PATH; CI downloads it fresh each run (see ci.yml).
+# Verus proofs, standalone mirrors (verus/*.rs -- see TRUSTED.md). Requires
+# the verus binary on PATH; CI downloads it fresh each run (see ci.yml).
 for f in verus/*.rs; do verus --rlimit 60 "$f"; done
+
+# Verus proofs against the real shipped code (src/rounding.rs's
+# canonicalize_i128/gcd_u128, via vstd as a genuine cargo dependency).
+verus --rlimit 60 src/lib.rs --crate-type=lib
 ```
 
 ## Design provenance
@@ -184,7 +192,8 @@ This crate implements milestones M1-M5 of a design spec for a "verified
 rational arithmetic core" numeric backbone: the canonical `Q` type,
 i128-safe arithmetic, directed dyadic rounding, the f64 boundary, n-ary
 folds, serde (M1-M4), and the malachite-oracle/property-test/CI harness
-(M5). M6 (stretch: Lipschitz lemmas, an interval type) is partially done --
-`QI` is implemented and tested, the Lipschitz lemmas (V7) are not attempted.
-See `TRUSTED.md` for exactly which of the spec's V1-V8 Verus obligations
-are machine-proved vs. still open at any given commit.
+(M5). M6 (stretch: Lipschitz lemmas, an interval type) is done -- `QI` is
+implemented and tested, and the Lipschitz lemmas (V7) and n-ary fold error
+bounds (V8) are both Verus-proved. See `TRUSTED.md` for exactly which of the
+spec's V1-V8 Verus obligations are machine-proved (and against real code vs.
+a mirror) vs. still open at any given commit.

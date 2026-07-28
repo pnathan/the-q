@@ -13,8 +13,26 @@ categories = ["mathematics", "no-std"]
 name = "the_q"
 path = "src/lib.rs"
 
+[lints.rust]
+# Set by the real `verus` tool (not plain cargo/rustc) when it compiles this
+# crate for verification; src/rounding.rs gates vstd ghost-only imports on
+# it so plain `cargo build` (which never sets it) still resolves cleanly.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
+
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
+
+# Verus checks the *shipped* code directly: verus!{} blocks live inline in
+# src/ (canonicalize_i128, gcd_u128, ...), not as separate mirrors under
+# verus/ (see TRUSTED.md). vstd/builtin_macros also compile under plain
+# rustc -- confirmed locally (stable 1.94.1, no special toolchain needed for
+# `cargo build`; the pinned 1.96.0 toolchain is only required to run the
+# verus binary itself for verification, in CI's `verus` job) -- but ghost-
+# only vstd items (proof fns like `lemma_fundamental_div_mod`) only exist
+# under the `verus_keep_ghost` cfg the verus tool sets, so src/rounding.rs
+# gates its import of those on `#[cfg(verus_keep_ghost)]`. Pinned to the
+# same release tag CI's `verus` job downloads.
+vstd = { git = "https://github.com/verus-lang/verus", tag = "release/0.2026.07.18.3a4d30b" }
 
 [dev-dependencies]
 # Oracle for differential testing ONLY. malachite-q is LGPL-3.0-only, which is
