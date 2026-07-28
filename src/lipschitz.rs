@@ -4,23 +4,11 @@
 //! and for the n-ary accumulation bound (V8). They say how far apart two
 //! results can be when their inputs are known to be close:
 //!
-//! * `add`/`sub`: Lipschitz constant `1` in each argument — errors add
-//!   (`lemma_add_lipschitz`).
-//! * `mul`: on a domain bounded by `m`, `|ab - a'b'| <= m·(|a - a'| + |b -
-//!   b'|)`. Since every engine value lives in `[0, 1]`, `m == 1` there and the
-//!   errors simply add (`lemma_mul_lipschitz`).
-//! * `div`: with the denominator bounded away from zero by `m > 0` and the
-//!   numerator bounded by `m2`, the constant is `1/m` in the numerator
-//!   perturbation and `m2/m^2` in the denominator perturbation
-//!   (`lemma_div_lipschitz`).
-//!
-//! Each of `mul` and `div` is proved in two steps: a difference-decomposition
-//! *identity* (`lemma_mul_lipschitz_identity`, `lemma_div_lipschitz_identity`
-//! — pure algebra, no bound) and the actual perturbation *bound* built on top
-//! of it (`lemma_mul_lipschitz`, `lemma_div_lipschitz`). Only the bounds
-//! discharge V7; the identities are private-in-spirit steps kept as named
-//! lemmas because splitting the nonlinear goal is what keeps each step inside
-//! the solver's budget.
+//! * `add`/`sub`: Lipschitz constant `1` in each argument — errors add.
+//! * `mul`: on a bounded domain, `|ab - a'b'| <= |a|·|b - b'| + |b'|·|a - a'|`.
+//!   Since every engine value lives in `[0, 1]`, the constant is `1` there too.
+//! * `div`: with the denominator bounded away from zero by `m > 0`, the
+//!   constant is `1/m` in the numerator and `|a|/m^2` in the denominator.
 //!
 //! Everything is stated division-free through `frac_diff_le`.
 
@@ -184,16 +172,13 @@ pub proof fn lemma_triangle(
     a2d * b2d))) by (nonlinear_arith);
 }
 
-/// **The multiplication difference-decomposition identity.**
+/// **Multiplication on a bounded domain.**
 ///
-/// `a·b - a'·b' == a·(b - b') + b'·(a - a')`, cross-multiplied and division-
-/// free. This is *not itself* a perturbation bound — it is the algebraic
-/// identity [`lemma_mul_lipschitz`] is built on. Kept as a separate, named
-/// step because the two nonlinear goals it produces (below) are each small
-/// enough for the solver to discharge directly, where the combined identity
-/// is not.
+/// `|a·b - a'·b'| <= |a|·|b - b'| + |b'|·|a - a'|`. On `[0, 1]` — where every
+/// opinion component lives — both coefficients are at most `1`, so the errors
+/// simply add there too.
 #[verifier::rlimit(20)]
-pub proof fn lemma_mul_lipschitz_identity(
+pub proof fn lemma_mul_lipschitz(
     an: int,
     ad: int,
     bn: int,
@@ -223,129 +208,14 @@ pub proof fn lemma_mul_lipschitz_identity(
     assert((a2n * b2n) * (ad * bd) == (b2n * bd) * (a2n * ad)) by (nonlinear_arith);
 }
 
-/// **Multiplication is Lipschitz on a magnitude-bounded domain.** The actual
-/// perturbation bound V7 asks for, not merely the identity it rests on.
+/// **Division with the denominator bounded away from zero.**
 ///
-/// If `|a| <= m`, `|b'| <= m`, `|a - a'| <= e1/ed` and `|b - b'| <= e2/ed`,
-/// then `|a·b - a'·b'| <= m·(e1 + e2)/ed`. On `[0, 1]` — where every opinion
-/// component lives — `m == 1`, so the bound is exactly `e1 + e2`: the errors
-/// simply add, the same as they do for addition.
-///
-/// Built on [`lemma_mul_lipschitz_identity`]: `a·b - a'·b' == a·(b - b') +
-/// b'·(a - a')`, so `|a·b - a'·b'| <= |a|·|b - b'| + |b'|·|a - a'| <=
-/// m·|b - b'| + m·|a - a'|`.
+/// With `|b| >= m > 0` and `|b'| >= m`, `|a/b - a'/b'|` is controlled by
+/// `(|b'|·|a - a'| + |a|·|b - b'|) / (|b|·|b'|)`, hence by `1/m^2` times the
+/// numerator perturbations on a bounded domain. The identity below is the
+/// algebraic core; the bound follows by dividing through.
 #[verifier::rlimit(20)]
-pub proof fn lemma_mul_lipschitz(
-    an: int,
-    ad: int,
-    bn: int,
-    bd: int,
-    a2n: int,
-    a2d: int,
-    b2n: int,
-    b2d: int,
-    e1: int,
-    e2: int,
-    ed: int,
-    m: int,
-)
-    requires
-        ad > 0,
-        bd > 0,
-        a2d > 0,
-        b2d > 0,
-        ed > 0,
-        e1 >= 0,
-        e2 >= 0,
-        m >= 0,
-        abs_int(an) <= m * ad,
-        abs_int(b2n) <= m * b2d,
-        frac_diff_le(an, ad, a2n, a2d, e1, ed),
-        frac_diff_le(bn, bd, b2n, b2d, e2, ed),
-    ensures
-        frac_diff_le(an * bn, ad * bd, a2n * b2n, a2d * b2d, m * (e1 + e2), ed),
-{
-    lemma_mul_lipschitz_identity(an, ad, bn, bd, a2n, a2d, b2n, b2d);
-    let d1 = bn * b2d - b2n * bd;
-    let d2 = an * a2d - a2n * ad;
-    let lhs = (an * bn) * (a2d * b2d) - (a2n * b2n) * (ad * bd);
-    // The two coefficient magnitudes: |a·a2d| == |a|·a2d <= m·(ad·a2d), and
-    // |b2n·bd| == |b2n|·bd <= m·(bd·b2d) — scaling the magnitude hypotheses by
-    // the positive denominator each is missing.
-    assert(abs_int(an * a2d) == abs_int(an) * a2d) by (nonlinear_arith)
-        requires
-            a2d > 0,
-    ;
-    assert(abs_int(an * a2d) <= m * (ad * a2d)) by (nonlinear_arith)
-        requires
-            abs_int(an * a2d) == abs_int(an) * a2d,
-            abs_int(an) <= m * ad,
-            a2d > 0,
-    ;
-    assert(abs_int(b2n * bd) == abs_int(b2n) * bd) by (nonlinear_arith)
-        requires
-            bd > 0,
-    ;
-    assert(abs_int(b2n * bd) <= m * (bd * b2d)) by (nonlinear_arith)
-        requires
-            abs_int(b2n * bd) == abs_int(b2n) * bd,
-            abs_int(b2n) <= m * b2d,
-            bd > 0,
-    ;
-    // Each weighted term, scaled by `ed`: |a·a2d|·|d1|·ed <= m·(ad·a2d)·e2·(bd·b2d).
-    assert(abs_int((an * a2d) * d1) == abs_int(an * a2d) * abs_int(d1)) by (nonlinear_arith);
-    assert(abs_int(d1) * ed <= e2 * (bd * b2d)) by (nonlinear_arith)
-        requires
-            frac_diff_le(bn, bd, b2n, b2d, e2, ed),
-    ;
-    assert(abs_int((an * a2d) * d1) * ed <= m * (e2 * ((ad * a2d) * (bd * b2d)))) by (nonlinear_arith)
-        requires
-            abs_int((an * a2d) * d1) == abs_int(an * a2d) * abs_int(d1),
-            abs_int(an * a2d) <= m * (ad * a2d),
-            abs_int(d1) * ed <= e2 * (bd * b2d),
-            m >= 0,
-    ;
-    assert(abs_int((b2n * bd) * d2) == abs_int(b2n * bd) * abs_int(d2)) by (nonlinear_arith);
-    assert(abs_int(d2) * ed <= e1 * (ad * a2d)) by (nonlinear_arith)
-        requires
-            frac_diff_le(an, ad, a2n, a2d, e1, ed),
-    ;
-    assert(abs_int((b2n * bd) * d2) * ed <= m * (e1 * ((ad * a2d) * (bd * b2d)))) by (nonlinear_arith)
-        requires
-            abs_int((b2n * bd) * d2) == abs_int(b2n * bd) * abs_int(d2),
-            abs_int(b2n * bd) <= m * (bd * b2d),
-            abs_int(d2) * ed <= e1 * (ad * a2d),
-            m >= 0,
-    ;
-    // Triangle inequality on the sum, then add the two weighted bounds.
-    assert(lhs == (an * a2d) * d1 + (b2n * bd) * d2);
-    assert(abs_int(lhs) <= abs_int((an * a2d) * d1) + abs_int((b2n * bd) * d2)) by (nonlinear_arith)
-        requires
-            lhs == (an * a2d) * d1 + (b2n * bd) * d2,
-    ;
-    assert(abs_int(lhs) * ed <= abs_int((an * a2d) * d1) * ed + abs_int((b2n * bd) * d2) * ed)
-        by (nonlinear_arith)
-        requires
-            abs_int(lhs) <= abs_int((an * a2d) * d1) + abs_int((b2n * bd) * d2),
-            ed > 0,
-    ;
-    assert(abs_int(lhs) * ed <= m * (e1 + e2) * ((ad * bd) * (a2d * b2d))) by (nonlinear_arith)
-        requires
-            abs_int(lhs) * ed <= abs_int((an * a2d) * d1) * ed + abs_int((b2n * bd) * d2) * ed,
-            abs_int((an * a2d) * d1) * ed <= m * (e2 * ((ad * a2d) * (bd * b2d))),
-            abs_int((b2n * bd) * d2) * ed <= m * (e1 * ((ad * a2d) * (bd * b2d))),
-    ;
-}
-
-/// **The division difference-decomposition identity.**
-///
-/// Cross-multiplied and division-free — the algebraic core [`lemma_div_lipschitz`]
-/// is built on, not itself a perturbation bound: its own doc used to say "the
-/// bound follows by dividing through", and nothing in this module ever did
-/// that division. Kept as a separate step for the same solver-budget reason as
-/// [`lemma_mul_lipschitz_identity`].
-#[verifier::rlimit(20)]
-pub proof fn lemma_div_lipschitz_identity(
+pub proof fn lemma_div_lipschitz(
     an: int,
     ad: int,
     bn: int,
@@ -380,182 +250,6 @@ pub proof fn lemma_div_lipschitz_identity(
     assert((an * bd) * (a2d * b2n) == (bd * b2n) * (an * a2d)) by (nonlinear_arith);
     assert((a2n * b2d) * (ad * bn) == (a2n * ad) * (bn * b2d)) by (nonlinear_arith);
 }
-
-/// **Division is Lipschitz when the denominator is bounded away from zero.**
-/// The actual perturbation bound V7 asks for, not merely the identity it rests
-/// on.
-///
-/// With `A == an/ad`, `B == bn/bd`, `A' == a2n/a2d`, `B' == b2n/b2d`, and both
-/// `B` and `B'` given in positive-denominator form (`bn > 0`, `b2n > 0` — the
-/// canonical-`Q` convention used throughout this crate): if `|A| <= m2`,
-/// `B >= m > 0`, `B' >= m`, `|A - A'| <= e1/ed` and `|B - B'| <= e2/ed`, then
-/// `|A/B - A'/B'| <= (m·e1 + m2·e2) / (m²·ed)`.
-///
-/// Built on [`lemma_div_lipschitz_identity`]: `A/B - A'/B' == (B'·(A - A') -
-/// A'·(B - B')) / (B·B')`, so `|A/B - A'/B'| <= (B'·|A - A'| + |A'|·|B - B'|)
-/// / (B·B')`. `B' >= m` and `B >= m` together give `B·B' >= m²·bd·b2d`, which
-/// is what turns the two coefficients into `1/m` and `m2/m²`.
-#[verifier::rlimit(40)]
-pub proof fn lemma_div_lipschitz(
-    an: int,
-    ad: int,
-    bn: int,
-    bd: int,
-    a2n: int,
-    a2d: int,
-    b2n: int,
-    b2d: int,
-    e1: int,
-    e2: int,
-    ed: int,
-    m: int,
-    m2: int,
-)
-    requires
-        ad > 0,
-        bd > 0,
-        a2d > 0,
-        b2d > 0,
-        ed > 0,
-        e1 >= 0,
-        e2 >= 0,
-        m > 0,
-        m2 >= 0,
-        bn > 0,
-        b2n > 0,
-        bn >= m * bd,
-        b2n >= m * b2d,
-        abs_int(a2n) <= m2 * a2d,
-        frac_diff_le(an, ad, a2n, a2d, e1, ed),
-        frac_diff_le(bn, bd, b2n, b2d, e2, ed),
-    ensures
-        frac_diff_le(
-            an * bd,
-            ad * bn,
-            a2n * b2d,
-            a2d * b2n,
-            m * e1 + m2 * e2,
-            (m * m) * ed,
-        ),
-{
-    lemma_div_lipschitz_identity(an, ad, bn, bd, a2n, a2d, b2n, b2d);
-    let d1 = an * a2d - a2n * ad;
-    let d2 = bn * b2d - b2n * bd;
-    let lhs = (an * bd) * (a2d * b2n) - (a2n * b2d) * (ad * bn);
-    // The two coefficient magnitudes. `bd·b2n` needs no upper bound at all —
-    // it is `B'` scaled by `bd`, and it is bounded below (via `b2n >= m·b2d`)
-    // together with `bn` in the final assembly step instead.
-    assert(abs_int(a2n * ad) == abs_int(a2n) * ad) by (nonlinear_arith)
-        requires
-            ad > 0,
-    ;
-    assert(abs_int(a2n * ad) <= m2 * (a2d * ad)) by (nonlinear_arith)
-        requires
-            abs_int(a2n * ad) == abs_int(a2n) * ad,
-            abs_int(a2n) <= m2 * a2d,
-            ad > 0,
-    ;
-    // First weighted term: |(bd·b2n)·d1|·ed <= (bd·b2n)·e1·(ad·a2d).
-    assert(abs_int((bd * b2n) * d1) == (bd * b2n) * abs_int(d1)) by (nonlinear_arith)
-        requires
-            bd > 0,
-            b2n > 0,
-    ;
-    assert(abs_int(d1) * ed <= e1 * (ad * a2d)) by (nonlinear_arith)
-        requires
-            frac_diff_le(an, ad, a2n, a2d, e1, ed),
-    ;
-    assert(abs_int((bd * b2n) * d1) * ed <= (bd * b2n) * (e1 * (ad * a2d))) by (nonlinear_arith)
-        requires
-            abs_int((bd * b2n) * d1) == (bd * b2n) * abs_int(d1),
-            abs_int(d1) * ed <= e1 * (ad * a2d),
-            bd > 0,
-            b2n > 0,
-    ;
-    // Second weighted term: |(a2n·ad)·d2|·ed <= m2·(a2d·ad)·e2·(bd·b2d).
-    assert(abs_int((a2n * ad) * d2) == abs_int(a2n * ad) * abs_int(d2)) by (nonlinear_arith);
-    assert(abs_int(d2) * ed <= e2 * (bd * b2d)) by (nonlinear_arith)
-        requires
-            frac_diff_le(bn, bd, b2n, b2d, e2, ed),
-    ;
-    assert(abs_int((a2n * ad) * d2) * ed <= m2 * ((a2d * ad) * (e2 * (bd * b2d))))
-        by (nonlinear_arith)
-        requires
-            abs_int((a2n * ad) * d2) == abs_int(a2n * ad) * abs_int(d2),
-            abs_int(a2n * ad) <= m2 * (a2d * ad),
-            abs_int(d2) * ed <= e2 * (bd * b2d),
-            m2 >= 0,
-    ;
-    // Triangle inequality on the sum, then add the two weighted bounds.
-    assert(lhs == (bd * b2n) * d1 - (a2n * ad) * d2);
-    assert(abs_int(lhs) <= abs_int((bd * b2n) * d1) + abs_int((a2n * ad) * d2)) by (nonlinear_arith)
-        requires
-            lhs == (bd * b2n) * d1 - (a2n * ad) * d2,
-    ;
-    assert(abs_int(lhs) * ed <= abs_int((bd * b2n) * d1) * ed + abs_int((a2n * ad) * d2) * ed)
-        by (nonlinear_arith)
-        requires
-            abs_int(lhs) <= abs_int((bd * b2n) * d1) + abs_int((a2n * ad) * d2),
-            ed > 0,
-    ;
-    assert(abs_int(lhs) * ed <= (bd * b2n) * (e1 * (ad * a2d)) + m2 * (
-    (a2d * ad) * (e2 * (bd * b2d)))) by (nonlinear_arith)
-        requires
-            abs_int(lhs) * ed <= abs_int((bd * b2n) * d1) * ed + abs_int((a2n * ad) * d2) * ed,
-            abs_int((bd * b2n) * d1) * ed <= (bd * b2n) * (e1 * (ad * a2d)),
-            abs_int((a2n * ad) * d2) * ed <= m2 * ((a2d * ad) * (e2 * (bd * b2d))),
-    ;
-    // Scale the whole inequality by `m²`, then plant the `m²` factor into each
-    // term separately: `m²·bd·b2n <= bn·b2n` (from `bn >= m·bd`, scaled by the
-    // positive `b2n`) for the first, and `m²·bd·b2d <= bn·b2n` (from `bn >=
-    // m·bd` and `b2n >= m·b2d`, multiplied together) for the second.
-    assert(abs_int(lhs) * ed * (m * m) <= ((bd * b2n) * (e1 * (ad * a2d)) + m2 * (
-    (a2d * ad) * (e2 * (bd * b2d)))) * (m * m)) by (nonlinear_arith)
-        requires
-            abs_int(lhs) * ed <= (bd * b2n) * (e1 * (ad * a2d)) + m2 * (
-                (a2d * ad) * (e2 * (bd * b2d))),
-            m * m >= 0,
-    ;
-    assert((m * m) * (bd * b2n) <= bn * b2n) by (nonlinear_arith)
-        requires
-            bn >= m * bd,
-            b2n > 0,
-            m > 0,
-    ;
-    assert(((m * m) * (bd * b2n)) * (e1 * (ad * a2d)) <= (bn * b2n) * (e1 * (ad * a2d)))
-        by (nonlinear_arith)
-        requires
-            (m * m) * (bd * b2n) <= bn * b2n,
-            e1 * (ad * a2d) >= 0,
-    ;
-    assert((m * m) * (bd * b2d) <= bn * b2n) by (nonlinear_arith)
-        requires
-            bn >= m * bd,
-            b2n >= m * b2d,
-            m > 0,
-            bd > 0,
-            b2d > 0,
-    ;
-    assert(m2 * (((m * m) * (bd * b2d)) * ((a2d * ad) * e2)) <= m2 * ((bn * b2n) * ((a2d * ad)
-        * e2))) by (nonlinear_arith)
-        requires
-            (m * m) * (bd * b2d) <= bn * b2n,
-            m2 >= 0,
-            (a2d * ad) * e2 >= 0,
-    ;
-    assert(abs_int(lhs) * ed * (m * m) <= (bn * b2n) * (e1 * (ad * a2d)) + m2 * ((bn * b2n) * (
-    (a2d * ad) * e2))) by (nonlinear_arith)
-        requires
-            abs_int(lhs) * ed * (m * m) <= ((bd * b2n) * (e1 * (ad * a2d)) + m2 * (
-                (a2d * ad) * (e2 * (bd * b2d)))) * (m * m),
-            ((m * m) * (bd * b2n)) * (e1 * (ad * a2d)) <= (bn * b2n) * (e1 * (ad * a2d)),
-            m2 * (((m * m) * (bd * b2d)) * ((a2d * ad) * e2)) <= m2 * ((bn * b2n) * (
-                (a2d * ad) * e2)),
-    ;
-    assert((bn * b2n) * (e1 * (ad * a2d)) + m2 * ((bn * b2n) * ((a2d * ad) * e2)) == (
-    m * e1 + m2 * e2) * ((ad * bn) * (a2d * b2n))) by (nonlinear_arith);
-}
-
 
 /// **The triangle inequality on fractions**, division-free.
 ///
