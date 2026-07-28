@@ -371,6 +371,19 @@ pub proof fn lemma_divides_trans(a: int, b: int, c: int)
 // once here and reused rather than being re-derived at every use site.
 // ---------------------------------------------------------------------------
 
+/// `2^0` and `2^1`.
+///
+/// Not as trivial as they look: `pow2` is recursive with default fuel 1, so
+/// `pow2(1)` unfolds to `2 · pow2(0)` and then stops — the solver never reaches
+/// the base case on its own.
+pub proof fn lemma_pow2_small()
+    ensures
+        pow2(0) == 1,
+        pow2(1) == 2,
+{
+    reveal_with_fuel(pow2, 3);
+}
+
 /// `2^60`.
 pub proof fn lemma_pow2_60()
     ensures

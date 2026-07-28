@@ -504,6 +504,10 @@ impl Q {
             r.is_some() ==> r.unwrap() == round_frac(add_n(a, b), prod_d(a, b), Dir::Nearest),
             r.is_some() ==> r.unwrap().wf(),
     {
+        proof {
+            lemma_op_widths(a, b);
+            crate::model::lemma_pow2_126();
+        }
         if magnitude_fits_exec(add_n_exec(a, b), prod_d_exec(a, b)) {
             Some(Q::add(a, b))
         } else {
@@ -521,6 +525,10 @@ impl Q {
             r.is_some() ==> r.unwrap() == round_frac(mul_n(a, b), prod_d(a, b), Dir::Nearest),
             r.is_some() ==> r.unwrap().wf(),
     {
+        proof {
+            lemma_op_widths(a, b);
+            crate::model::lemma_pow2_126();
+        }
         if magnitude_fits_exec(mul_n_exec(a, b), prod_d_exec(a, b)) {
             Some(Q::mul(a, b))
         } else {
@@ -538,6 +546,10 @@ impl Q {
             r.is_some() ==> r.unwrap() == round_frac(sub_n(a, b), prod_d(a, b), Dir::Nearest),
             r.is_some() ==> r.unwrap().wf(),
     {
+        proof {
+            lemma_op_widths(a, b);
+            crate::model::lemma_pow2_126();
+        }
         if magnitude_fits_exec(sub_n_exec(a, b), prod_d_exec(a, b)) {
             Some(Q::sub(a, b))
         } else {
@@ -613,6 +625,7 @@ impl Q {
                         self.d() > 0,
                         self.n() < 0,
                 ;
+                assert((-self.d()) * self.n() == self.d() * (-self.n())) by (nonlinear_arith);
             }
             Q { num: 0 - self.den, den: 0 - self.num }
         }
@@ -955,6 +968,19 @@ impl Q {
         ensures
             r <==> self.n() == self.d(),
     {
+        proof {
+            // `n == d` makes `n` a common divisor of `|n|` and `d`, so it
+            // divides their gcd, which `wf` pins at 1 — forcing `n == 1`.
+            if self.n() == self.d() {
+                crate::model::lemma_divides_basic(self.n());
+                crate::gcd::lemma_gcd_greatest(
+                    abs_int(self.n()) as nat,
+                    self.d() as nat,
+                    self.n(),
+                );
+                crate::model::lemma_divides_le(self.n(), 1);
+            }
+        }
         self.num == 1 && self.den == 1
     }
 

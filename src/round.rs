@@ -897,7 +897,7 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
         crate::model::lemma_pow2_62();
         crate::model::lemma_pow2_124();
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, d as int);
-        assert(pow2(0) == 1);
+        crate::model::lemma_pow2_small();
         assert(pow2(i as nat) <= pow2(s as nat)) by {
             lemma_pow2_mono(i as nat, s as nat);
         }
@@ -905,6 +905,7 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
             requires
                 pow2(0nat) == 1,
         ;
+        assert((n as int) == (d as int) * (q as int) + (rem as int));
         assert(q * d + rem == n * pow2(0nat));
         lemma_quotient_bound(q as int, rem as int, d as int, n as int, 0nat, s as nat);
     }
@@ -940,7 +941,7 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
         i = i + 1;
         proof {
             crate::model::lemma_pow2_add(1nat, (i - 1) as nat);
-            assert(pow2(1nat) == 2);
+            crate::model::lemma_pow2_small();
             assert(pow2(i as nat) == 2 * pow2((i - 1) as nat));
             // Doubling both sides of the carried identity is nonlinear in `n`.
             assert(2 * ((n as int) * pow2((i - 1) as nat)) == (n as int) * (2 * pow2(
