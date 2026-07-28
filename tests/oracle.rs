@@ -315,6 +315,30 @@ fn long_mul_chain_oracle() {
     );
 }
 
+// from_f64_dir edge cases
+
+#[test]
+fn from_f64_subnormal_no_panic() {
+    let q = Q::from_f64_dir(5e-324, Dir::Nearest).unwrap();
+    check_invariants(q);
+    assert_eq!(q, Q::zero());
+
+    let q = Q::from_f64_dir(-5e-324, Dir::Nearest).unwrap();
+    check_invariants(q);
+    assert_eq!(q, Q::zero());
+
+    let q = Q::from_f64_dir(f64::MIN_POSITIVE, Dir::Nearest).unwrap();
+    check_invariants(q);
+}
+
+#[test]
+fn from_f64_rejects_out_of_range() {
+    assert!(Q::from_f64_dir(1e30, Dir::Nearest).is_none());
+    assert!(Q::from_f64_dir(-1e30, Dir::Nearest).is_none());
+    assert!(Q::from_f64_dir(f64::MAX, Dir::Nearest).is_none());
+    assert!(Q::from_f64_dir(f64::MIN, Dir::Nearest).is_none());
+}
+
 // from_f64_dir tests
 
 #[test]

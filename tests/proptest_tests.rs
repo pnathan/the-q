@@ -504,6 +504,36 @@ proptest! {
 }
 
 // ============================================================
+// from_f64_dir edge cases
+// ============================================================
+
+proptest! {
+    #[test]
+    fn from_f64_subnormal_no_panic(
+        bits in 1u64..=(((1u64 << 52) - 1)),
+    ) {
+        // Subnormals: exponent bits = 0, fraction bits != 0
+        let v = f64::from_bits(bits);
+        if let Some(q) = Q::from_f64_dir(v, Dir::Nearest) {
+            check_invariants(q);
+        }
+        // Negative subnormal
+        let v_neg = f64::from_bits(bits | (1u64 << 63));
+        if let Some(q) = Q::from_f64_dir(v_neg, Dir::Nearest) {
+            check_invariants(q);
+        }
+    }
+
+    #[test]
+    fn from_f64_large_returns_none(exp_offset in 62u32..=1000) {
+        // Values with magnitude >= 2^62 should return None
+        let v = 2.0f64.powi(exp_offset as i32);
+        prop_assert!(Q::from_f64_dir(v, Dir::Nearest).is_none());
+        prop_assert!(Q::from_f64_dir(-v, Dir::Nearest).is_none());
+    }
+}
+
+// ============================================================
 // Serde round-trip
 // ============================================================
 

@@ -320,24 +320,27 @@ impl Q {
         // Express as a fraction: num / den.
         let (num_abs, den): (u128, u128) = if exponent >= 0 {
             let shift = exponent as u32;
-            if shift <= 62 {
-                (mantissa << shift, 1u128)
-            } else {
-                // Magnitude exceeds budget; will be rounded.
-                // Represent as mantissa * 2^shift / 1 and let reduce_and_fit handle it.
-                // But mantissa << shift might overflow u128. Cap at a reasonable value.
-                // For |v| ≤ 2^61 this doesn't happen (shift ≤ 61 - 52 + 52 = 61).
-                // For larger values, approximate.
-                let safe_shift = shift.min(126 - (128 - mantissa.leading_zeros()));
-                (mantissa << safe_shift, 1u128)
+            if shift > 62 {
+                return None;
             }
+            let result = mantissa << shift;
+            if result > BOUND as u128 {
+                return None;
+            }
+            (result, 1u128)
         } else {
             let neg_exp = (-exponent) as u32;
             // num = mantissa, den = 2^neg_exp
             // GCD-reduce by removing common trailing zeros
             let tz_m = mantissa.trailing_zeros();
             let common = tz_m.min(neg_exp);
-            (mantissa >> common, 1u128 << (neg_exp - common))
+            let remaining = neg_exp - common;
+            if remaining > 127 {
+                // Denominator overflows u128. Value is astronomically small
+                // (subnormal or tiny normal), rounds to zero within R3.
+                return Some(Q::zero());
+            }
+            (mantissa >> common, 1u128 << remaining)
         };
 
         let num_i128 = sign * num_abs as i128;
@@ -1025,6 +1028,27 @@ mod tests {
         assert!(Q::from_f64_dir(f64::NAN, Dir::Nearest).is_none());
         assert!(Q::from_f64_dir(f64::INFINITY, Dir::Nearest).is_none());
         assert!(Q::from_f64_dir(f64::NEG_INFINITY, Dir::Nearest).is_none());
+    }
+
+    #[test]
+    fn from_f64_subnormal() {
+        // Smallest positive subnormal — must not panic
+        let q = Q::from_f64_dir(5e-324, Dir::Nearest).unwrap();
+        assert_eq!(q, Q::zero());
+        // Negative subnormal
+        let q = Q::from_f64_dir(-5e-324, Dir::Nearest).unwrap();
+        assert_eq!(q, Q::zero());
+        // f64::MIN_POSITIVE (smallest normal, still tiny)
+        let q = Q::from_f64_dir(f64::MIN_POSITIVE, Dir::Nearest).unwrap();
+        check_invariants_internal(q);
+    }
+
+    #[test]
+    fn from_f64_rejects_large() {
+        assert!(Q::from_f64_dir(1e30, Dir::Nearest).is_none());
+        assert!(Q::from_f64_dir(-1e30, Dir::Nearest).is_none());
+        assert!(Q::from_f64_dir(f64::MAX, Dir::Nearest).is_none());
+        assert!(Q::from_f64_dir(f64::MIN, Dir::Nearest).is_none());
     }
 
     #[test]
