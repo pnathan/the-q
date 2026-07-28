@@ -159,7 +159,7 @@ fn scaled_floor(num: u128, den: u128, s: u32) -> (u128, u128) {
     (q, r)
 }
 
-const BUDGET_U128: u128 = (1u128 << 62) - 1;
+const BUDGET_U128: u128 = 4611686018427387903;
 
 /// The rounding step (obligation V4). Returns a well-formed `Q`. (Contract R1–R4
 /// proven at the algorithm level in `verus/src/verified_round*.rs`; body trusted
