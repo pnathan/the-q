@@ -7,7 +7,8 @@
 //! attractive enough that it was written into this crate three separate times by
 //! two different authors, and corrected twice before it stopped coming back.
 //!
-//! Prose rots. A proof obligation does not. [`lemma_saturation_is_a_choice`]
+//! Prose rots. A proof obligation does not. `lemma_saturation_is_a_choice`
+//! (no intra-doc link: items inside `verus!` are not resolvable targets)
 //! exhibits a value outside the ceiling that a well-formed `Q` satisfies R3 for,
 //! so the strong claim now contradicts a machine-checked theorem rather than a
 //! comment somebody has to remember.
