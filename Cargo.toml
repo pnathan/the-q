@@ -1,0 +1,52 @@
+[package]
+name = "the-q"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "LGPL-2.1-or-later"
+description = "Verified bounded rational (Q) arithmetic with machine-checked directed rounding"
+repository = "https://github.com/pnathan/the-q"
+readme = "README.md"
+keywords = ["rational", "verification", "verus", "arithmetic", "exact"]
+categories = ["mathematics"]
+
+# Opt this crate into `cargo verus verify`. Without it the driver reports
+# "cargo did not find any crates that opted into verification" and does nothing.
+[package.metadata.verus]
+verify = true
+
+[lib]
+name = "the_q"
+path = "src/lib.rs"
+
+[dependencies]
+# Verus support libraries. These compile as ordinary Rust crates under plain
+# rustc (all ghost code is erased), so `cargo build` works without Verus
+# installed. `verus verify` consumes the same sources with --cfg verus_keep_ghost.
+verus_builtin = "=0.0.0-2026-07-27-0206"
+verus_builtin_macros = "=0.0.0-2026-07-27-0206"
+vstd = "=0.0.0-2026-07-27-0206"
+
+serde = { version = "1", optional = true, default-features = false }
+
+[dev-dependencies]
+# ORACLE ONLY. malachite-q is LGPL-3.0-only; it must never appear in the
+# non-dev dependency tree. Enforced by scripts/check-no-lgpl.sh in CI.
+malachite-q = "0.10"
+malachite-base = "0.10"
+malachite-nz = "0.10"
+serde_json = "1"
+# Shrinking property tests over the trusted f64 boundary and the trait glue.
+proptest = "1"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[lints.rust]
+# `verus_keep_ghost` is set by the Verus driver, not by cargo.
+unexpected_cfgs = { level = "allow" }
+
+[profile.release]
+overflow-checks = true
+debug-assertions = false

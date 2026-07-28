@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  # `push` is restricted to the default branch on purpose. A PR from an in-repo
+  # branch already gets a `pull_request` run, and the concurrency group is keyed
+  # on `github.ref` — which differs between `refs/heads/…` and
+  # `refs/pull/N/merge`, so the two do not deduplicate each other. Listening to
+  # both ran the whole pipeline, verification included, twice per commit.
+  push:
+    branches: ["main"]
+  pull_request:
+
+# Verification is slow and a superseded commit's run is worthless. Without this
+# a stuck proof search on an old SHA sits on a runner until the 6-hour cap.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-and-test:
+    name: cargo build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Plain rustc must build the annotated sources: the `verus!` macro erases
+      # all ghost code, so a Verus-annotated crate is still an ordinary crate.
+      - name: Build (plain rustc)
+        run: cargo build --all-features --verbose
+
+      - name: Build (release, overflow checks on)
+        run: cargo build --release --all-features --verbose
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rustfmt
+        run: cargo fmt --check
+
+      # Debug and release both matter: overflow-checks are on in both profiles
+      # (see [profile.release] in Cargo.toml), so the release run is a second
+      # independent execution of the V2 no-overflow claim.
+      - name: Test (debug)
+        run: cargo test --all-features --verbose
+
+      - name: Test (release)
+        run: cargo test --release --all-features --verbose
+
+      - name: Documentation builds
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  licences:
+    name: no copyleft in the shipped tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # malachite-q is the test oracle and is LGPL-3.0-only. It must never
+      # appear outside [dev-dependencies].
+      - name: Check dependency licences
+        run: ./scripts/check-no-lgpl.sh
+
+  verify:
+    name: verus verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Verus
+        env:
+          # Pinned deliberately, and pinned *together with* the `vstd`,
+          # `verus_builtin` and `verus_builtin_macros` versions in Cargo.toml —
+          # the verifier binary and those libraries are one unit, and a mismatch
+          # is not guaranteed to fail loudly. Tracking `releases/latest`, as this
+          # job used to, would let an upstream release change the outcome of a
+          # *required* check with no commit to this repository. Bump both ends
+          # in the same commit.
+          VERUS_VERSION: 0.2026.07.27.31579f0
+        run: |
+          set -euo pipefail
+          # Derived from the pinned version rather than resolved through the
+          # releases API: no token, no rate limit, and the URL either matches the
+          # pin exactly or 404s. `-f` makes that a hard failure.
+          url="https://github.com/verus-lang/verus/releases/download/release/${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          echo "Downloading $url"
+          curl -sSfL "$url" -o /tmp/verus.zip
+          mkdir -p "$HOME/verus"
+          unzip -q /tmp/verus.zip -d "$HOME/verus"
+          # The archive contains a single top-level directory holding the
+          # `verus`, `cargo-verus`, `rust_verify` and `z3` binaries.
+          dir=$(find "$HOME/verus" -maxdepth 2 -name 'cargo-verus' -printf '%h\n' | head -1)
+          test -n "$dir" || { echo "cargo-verus not found in the archive"; exit 1; }
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # Verus is a rustc driver, so it links against one exact compiler version
+      # and refuses to run against any other. Read that version out of the
+      # archive's rust-toolchain.toml, and fall back to parsing the verifier's
+      # own error message if that file ever moves.
+      - name: Install the rustc version Verus is built against
+        run: |
+          set -euo pipefail
+          dir=$(find "$HOME/verus" -maxdepth 2 -name 'cargo-verus' -printf '%h\n' | head -1)
+          tc=""
+          tcfile=$(find "$HOME/verus" -maxdepth 3 -name 'rust-toolchain.toml' | head -1)
+          if [ -n "$tcfile" ]; then
+            tc=$(grep -oP 'channel\s*=\s*"\K[^"]+' "$tcfile" | head -1 || true)
+          fi
+          if [ -z "$tc" ]; then
+            tc=$("$dir/verus" --version 2>&1 \
+              | grep -oP 'required rust toolchain \K[0-9][0-9.]*' | head -1 || true)
+          fi
+          test -n "$tc" || { echo "could not determine the rustc version Verus needs"; exit 1; }
+          echo "Verus is built against rustc $tc"
+          rustup toolchain install "$tc" --profile minimal
+          rustup default "$tc"
+          rustc --version
+
+      - name: Verus version
+        run: verus --version
+
+      # `--multiple-errors` matters a lot here: by default Verus reports one
+      # error per function body, which makes a module with a single early
+      # failure look clean. Ask for more so each run is a full picture.
+      - name: Verify
+        run: cargo verus verify --all-features -- --multiple-errors 8
