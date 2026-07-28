@@ -76,6 +76,7 @@ pub proof fn lemma_add_lipschitz(
 
 /// The triangle inequality, in the cross-multiplied form the addition lemma
 /// needs.
+#[verifier::rlimit(60)]
 pub proof fn lemma_triangle(
     an: int,
     ad: int,
@@ -107,8 +108,20 @@ pub proof fn lemma_triangle(
     //   (a - a')·(bd·b2d) + (b - b')·(ad·a2d)
     // with the obvious positive weights; apply |x+y| <= |x|+|y| and multiply
     // the two hypotheses by those weights.
+    //
+    // The factorisation is given to the solver in four small ring steps. Handed
+    // over whole it exhausts the resource limit — eight variables and degree
+    // four is past what the nonlinear tactic will chew through in one bite.
+    assert((an * bd + bn * ad) * (a2d * b2d) == (an * a2d) * (bd * b2d) + (bn * b2d) * (ad * a2d))
+        by (nonlinear_arith);
+    assert((a2n * b2d + b2n * a2d) * (ad * bd) == (a2n * ad) * (bd * b2d) + (b2n * bd) * (ad
+        * a2d)) by (nonlinear_arith);
+    assert((an * a2d - a2n * ad) * (bd * b2d) == (an * a2d) * (bd * b2d) - (a2n * ad) * (bd * b2d))
+        by (nonlinear_arith);
+    assert((bn * b2d - b2n * bd) * (ad * a2d) == (bn * b2d) * (ad * a2d) - (b2n * bd) * (ad * a2d))
+        by (nonlinear_arith);
     assert((an * bd + bn * ad) * (a2d * b2d) - (a2n * b2d + b2n * a2d) * (ad * bd) == (an * a2d
-        - a2n * ad) * (bd * b2d) + (bn * b2d - b2n * bd) * (ad * a2d)) by (nonlinear_arith);
+        - a2n * ad) * (bd * b2d) + (bn * b2d - b2n * bd) * (ad * a2d));
     assert(abs_int(
         (an * a2d - a2n * ad) * (bd * b2d) + (bn * b2d - b2n * bd) * (ad * a2d),
     ) <= abs_int(an * a2d - a2n * ad) * (bd * b2d) + abs_int(bn * b2d - b2n * bd) * (ad * a2d))
@@ -140,6 +153,7 @@ pub proof fn lemma_triangle(
 /// `|a·b - a'·b'| <= |a|·|b - b'| + |b'|·|a - a'|`. On `[0, 1]` — where every
 /// opinion component lives — both coefficients are at most `1`, so the errors
 /// simply add there too.
+#[verifier::rlimit(60)]
 pub proof fn lemma_mul_lipschitz(
     an: int,
     ad: int,
@@ -169,6 +183,7 @@ pub proof fn lemma_mul_lipschitz(
 /// `(|b'|·|a - a'| + |a|·|b - b'|) / (|b|·|b'|)`, hence by `1/m^2` times the
 /// numerator perturbations on a bounded domain. The identity below is the
 /// algebraic core; the bound follows by dividing through.
+#[verifier::rlimit(60)]
 pub proof fn lemma_div_lipschitz(
     an: int,
     ad: int,

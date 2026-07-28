@@ -114,6 +114,8 @@ impl QI {
         let lo = Q::add_dir(a.lo, b.lo, Dir::Down);
         let hi = Q::add_dir(a.hi, b.hi, Dir::Up);
         proof {
+            crate::q::lemma_op_widths(a.lo, b.lo);
+            crate::q::lemma_op_widths(a.hi, b.hi);
             if !crate::round::saturated(add_n(a.lo, b.lo), prod_d(a.lo, b.lo)) {
                 crate::round::lemma_r2_directed(add_n(a.lo, b.lo), prod_d(a.lo, b.lo));
             }
@@ -147,6 +149,8 @@ impl QI {
         let lo = Q::sub_dir(a.lo, b.hi, Dir::Down);
         let hi = Q::sub_dir(a.hi, b.lo, Dir::Up);
         proof {
+            crate::q::lemma_op_widths(a.lo, b.hi);
+            crate::q::lemma_op_widths(a.hi, b.lo);
             if !crate::round::saturated(sub_n(a.lo, b.hi), prod_d(a.lo, b.hi)) {
                 crate::round::lemma_r2_directed(sub_n(a.lo, b.hi), prod_d(a.lo, b.hi));
             }
@@ -245,26 +249,61 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Q, y: Q)
         add_n(a.lo, b.lo) * prod_d(x, y) <= add_n(x, y) * prod_d(a.lo, b.lo),
         add_n(x, y) * prod_d(a.hi, b.hi) <= add_n(a.hi, b.hi) * prod_d(x, y),
 {
-    assert(add_n(a.lo, b.lo) * prod_d(x, y) <= add_n(x, y) * prod_d(a.lo, b.lo))
-        by (nonlinear_arith)
+    lemma_add_endpoint_order(
+        a.lo.n(),
+        a.lo.d(),
+        b.lo.n(),
+        b.lo.d(),
+        x.n(),
+        x.d(),
+        y.n(),
+        y.d(),
+    );
+    lemma_add_endpoint_order(x.n(), x.d(), y.n(), y.d(), a.hi.n(), a.hi.d(), b.hi.n(), b.hi.d());
+}
+
+/// Adding two ordered pairs of fractions preserves the order.
+///
+/// Broken into four small steps rather than handed to `nonlinear_arith` whole:
+/// scale each hypothesis by the other pair's positive denominators, then two
+/// ring identities line the sums up with the goal. The solver does badly on the
+/// combined form and fine on these.
+pub proof fn lemma_add_endpoint_order(
+    an: int,
+    ad: int,
+    bn: int,
+    bd: int,
+    xn: int,
+    xd: int,
+    yn: int,
+    yd: int,
+)
+    requires
+        ad > 0,
+        bd > 0,
+        xd > 0,
+        yd > 0,
+        an * xd <= xn * ad,
+        bn * yd <= yn * bd,
+    ensures
+        (an * bd + bn * ad) * (xd * yd) <= (xn * yd + yn * xd) * (ad * bd),
+{
+    assert((an * xd) * (bd * yd) <= (xn * ad) * (bd * yd)) by (nonlinear_arith)
         requires
-            a.lo.d() > 0,
-            b.lo.d() > 0,
-            x.d() > 0,
-            y.d() > 0,
-            a.lo.n() * x.d() <= x.n() * a.lo.d(),
-            b.lo.n() * y.d() <= y.n() * b.lo.d(),
+            an * xd <= xn * ad,
+            bd > 0,
+            yd > 0,
     ;
-    assert(add_n(x, y) * prod_d(a.hi, b.hi) <= add_n(a.hi, b.hi) * prod_d(x, y))
-        by (nonlinear_arith)
+    assert((bn * yd) * (ad * xd) <= (yn * bd) * (ad * xd)) by (nonlinear_arith)
         requires
-            a.hi.d() > 0,
-            b.hi.d() > 0,
-            x.d() > 0,
-            y.d() > 0,
-            x.n() * a.hi.d() <= a.hi.n() * x.d(),
-            y.n() * b.hi.d() <= b.hi.n() * y.d(),
+            bn * yd <= yn * bd,
+            ad > 0,
+            xd > 0,
     ;
+    assert((an * bd + bn * ad) * (xd * yd) == (an * xd) * (bd * yd) + (bn * yd) * (ad * xd))
+        by (nonlinear_arith);
+    assert((xn * yd + yn * xd) * (ad * bd) == (xn * ad) * (bd * yd) + (yn * bd) * (ad * xd))
+        by (nonlinear_arith);
 }
 
 } // verus!

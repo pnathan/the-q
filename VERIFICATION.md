@@ -48,17 +48,50 @@ Two things the first CI run established about the *harness*, both now fixed:
 * `cargo verus` verifies nothing unless the crate opts in. `Cargo.toml` now
   carries `[package.metadata.verus] verify = true`.
 
-So the *plumbing* is exercised and working — the verifier now loads, checks
-`vstd` (2058 verified, 0 errors), and reaches this crate. What it reaches it
-with is the next problem: **ghost-code type errors that plain rustc cannot
-catch**, because rustc erases exactly the code they are in. Unsuffixed integer
-literals in `spec` position, `int`-vs-`i64` in a spec-constructed `Q`,
-`i128`-vs-`int` at a `proof fn` call site. Three were found and fixed; expect
-more, and expect them *before* any genuine proof failure.
+The plumbing is exercised and working — the verifier loads, checks `vstd`
+(2058 verified, 0 errors), and reaches this crate. Three layers of problem have
+surfaced so far, in order:
 
-This is the practical lesson of authoring Verus without the verifier: `cargo
-build` passing means the *executable* code is well-typed, and says nothing at
-all about the specifications.
+1. **Ghost-code type errors** that plain rustc cannot catch, because rustc
+   erases exactly the code they live in: unsuffixed integer literals in `spec`
+   position, `int`-vs-`i64` in a spec-constructed `Q`, `i128`-vs-`int` at a
+   `proof fn` call site. Fixed.
+2. **Datatype opaqueness.** Verus treats a type as opaque wherever any field is
+   invisible, and a public specification must be well-formed everywhere it is
+   visible. `Q`'s `pub(crate)` fields made `Q::wf` unable to mention `self.num`
+   at all. Fixed by making the fields public; see the note on `Q` and the
+   README for what that costs and why it costs less than it looks.
+3. **Actual proof obligations.** This is where it now is.
+
+The practical lesson of authoring Verus without the verifier: `cargo build`
+passing means the *executable* code is well-typed and says nothing whatsoever
+about the specifications.
+
+### Where the proofs stand
+
+Round three reported 20 errors. Fixed since:
+
+* the missing `#[trigger]` on `divides` — the only candidate term is a
+  multiplication and Verus will not pick an arithmetic operator on its own;
+* an unproven `i128` bound in `from_f64_dir`, and its `round_frac_exec`
+  denominator precondition;
+* four `d > 0` preconditions in `interval::add`/`sub`;
+* `theorem_interval_add_contains`, rewritten as four small steps through a new
+  `lemma_add_endpoint_order` instead of one large `nonlinear_arith` goal;
+* three `rlimit` exhaustions in `lipschitz`, split into smaller ring steps with
+  the limit raised.
+
+**Known still-failing, both SHOULD tier:**
+`lipschitz::lemma_error_accumulates_additively` and the V8 theorems in `nary`
+(`theorem_sum_error_accumulation`, `theorem_exact_fold_is_exact`). These are
+stated correctly but their proof bodies are sketches, not discharged arguments —
+see V8 below. They are not claimed as proven anywhere in this crate.
+
+And a standing caveat on reading any of this: Verus reports **one error per
+function body** by default. A module with no reported error has not necessarily
+verified — it may simply not have been reached, or have further errors behind
+the first. Do not read silence as success until a clean run says
+`0 errors`.
 
 No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 `external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.

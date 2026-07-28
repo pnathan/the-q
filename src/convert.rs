@@ -105,6 +105,18 @@ pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
                     return None;
                 }
                 let p: i128 = pow2_i128(e as u32);
+                proof {
+                    // mant <= 2^53 and p == 2^e <= 2^64, so the product is at
+                    // most 2^117 — far inside i128.
+                    lemma_pow2_mono(e as nat, 64nat);
+                    lemma_pow2_64();
+                    assert((mant as int) * (p as int) <= 9007199254740992int
+                        * 18446744073709551616int) by (nonlinear_arith)
+                        requires
+                            0 <= mant <= 9007199254740992int,
+                            0 < p <= 18446744073709551616int,
+                    ;
+                }
                 let mag: i128 = (mant as i128) * p;
                 if mag > 2305843009213693952i128 {
                     // > 2^61
@@ -115,6 +127,9 @@ pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
                 } else {
                     mag
                 };
+                proof {
+                    assert(pow2(0) == 1);
+                }
                 Some(round_frac_exec(n, 1, dir))
             } else if e >= -124 {
                 let s: u32 = (0 - e) as u32;
@@ -124,6 +139,14 @@ pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
                 } else {
                     mant as i128
                 };
+                proof {
+                    // d == 2^s with s <= 124, which is exactly the denominator
+                    // bound `round_frac_exec` asks for; and |n| <= 2^53 is far
+                    // below the numerator bound.
+                    lemma_pow2_mono(s as nat, 124nat);
+                    lemma_pow2_124();
+                    lemma_pow2_126();
+                }
                 Some(round_frac_exec(n, d, dir))
             } else {
                 // |v| <= 2^53 · 2^-125 == 2^-72, strictly inside the first grid

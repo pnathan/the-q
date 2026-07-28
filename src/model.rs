@@ -53,8 +53,11 @@ pub open spec fn max_int(a: int, b: int) -> int {
 }
 
 /// `d` divides `n`.
+///
+/// The `#[trigger]` is mandatory: the only candidate term is a multiplication,
+/// and Verus will not pick an arithmetic operator as a trigger on its own.
 pub open spec fn divides(d: int, n: int) -> bool {
-    exists|k: int| n == d * k
+    exists|k: int| n == #[trigger] (d * k)
 }
 
 /// Euclid's greatest common divisor, defined by structural recursion on the
@@ -367,6 +370,14 @@ pub proof fn lemma_pow2_62()
         pow2(62) == 4611686018427387904,
 {
     reveal_with_fuel(pow2, 63);
+}
+
+/// `2^64`.
+pub proof fn lemma_pow2_64()
+    ensures
+        pow2(64) == 18446744073709551616,
+{
+    reveal_with_fuel(pow2, 65);
 }
 
 /// `2^124`.
