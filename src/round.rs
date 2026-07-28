@@ -348,16 +348,21 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // I2 is bounded on `sn` and `sd`; the returned pair is those
             // divided by their gcd, which can only be smaller.
             lemma_reduce_shrinks(sn, sd);
-            // I1's zero clause. A zero snapped numerator makes the gcd the
-            // whole denominator, so the reduced denominator is exactly one.
-            if sn == 0 {
-                crate::gcd::lemma_gcd_zero(sd as nat);
-                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
-            }
             // Spell out the five clauses of `wf` against the returned pair, so
             // a future failure names the clause instead of the conjunction.
+            let g2 = gcd_int(sn, sd);
             let on = red_num(sn, sd);
             let od = red_den(sn, sd);
+            // I1's zero clause, guarded on the *reduced* numerator — which is
+            // what `wf` looks at. `sn == on·g2`, so a zero `on` means a zero
+            // `sn`, which makes the gcd the whole denominator.
+            if on == 0 {
+                assert(sn == 0);
+                crate::gcd::lemma_gcd_zero(sd as nat);
+                assert(g2 == sd);
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
+                assert(od == 1);
+            }
             assert(round_frac(n, d, dir) == Q { num: on as i64, den: od as i64 });
             assert(od > 0);
             assert(abs_int(on) <= max_mag());
