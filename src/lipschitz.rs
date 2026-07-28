@@ -76,7 +76,7 @@ pub proof fn lemma_add_lipschitz(
 
 /// The triangle inequality, in the cross-multiplied form the addition lemma
 /// needs.
-#[verifier::rlimit(60)]
+#[verifier::rlimit(20)]
 pub proof fn lemma_triangle(
     an: int,
     ad: int,
@@ -153,7 +153,7 @@ pub proof fn lemma_triangle(
 /// `|a·b - a'·b'| <= |a|·|b - b'| + |b'|·|a - a'|`. On `[0, 1]` — where every
 /// opinion component lives — both coefficients are at most `1`, so the errors
 /// simply add there too.
-#[verifier::rlimit(60)]
+#[verifier::rlimit(20)]
 pub proof fn lemma_mul_lipschitz(
     an: int,
     ad: int,
@@ -173,8 +173,15 @@ pub proof fn lemma_mul_lipschitz(
         (an * bn) * (a2d * b2d) - (a2n * b2n) * (ad * bd) == (an * a2d) * (bn * b2d - b2n * bd) + (
         b2n * bd) * (an * a2d - a2n * ad),
 {
-    assert((an * bn) * (a2d * b2d) - (a2n * b2n) * (ad * bd) == (an * a2d) * (bn * b2d - b2n * bd)
-        + (b2n * bd) * (an * a2d - a2n * ad)) by (nonlinear_arith);
+    // Distribute both products, then match term by term. The two middle terms
+    // are the same monomial and cancel.
+    assert((an * a2d) * (bn * b2d - b2n * bd) == (an * a2d) * (bn * b2d) - (an * a2d) * (b2n * bd))
+        by (nonlinear_arith);
+    assert((b2n * bd) * (an * a2d - a2n * ad) == (b2n * bd) * (an * a2d) - (b2n * bd) * (a2n * ad))
+        by (nonlinear_arith);
+    assert((an * a2d) * (b2n * bd) == (b2n * bd) * (an * a2d)) by (nonlinear_arith);
+    assert((an * bn) * (a2d * b2d) == (an * a2d) * (bn * b2d)) by (nonlinear_arith);
+    assert((a2n * b2n) * (ad * bd) == (b2n * bd) * (a2n * ad)) by (nonlinear_arith);
 }
 
 /// **Division with the denominator bounded away from zero.**
@@ -183,7 +190,7 @@ pub proof fn lemma_mul_lipschitz(
 /// `(|b'|·|a - a'| + |a|·|b - b'|) / (|b|·|b'|)`, hence by `1/m^2` times the
 /// numerator perturbations on a bounded domain. The identity below is the
 /// algebraic core; the bound follows by dividing through.
-#[verifier::rlimit(60)]
+#[verifier::rlimit(20)]
 pub proof fn lemma_div_lipschitz(
     an: int,
     ad: int,
@@ -209,67 +216,173 @@ pub proof fn lemma_div_lipschitz(
         (an * bd) * (a2d * b2n) - (a2n * b2d) * (ad * bn) == (bd * b2n) * (an * a2d - a2n * ad) - (
         a2n * ad) * (bn * b2d - b2n * bd),
 {
-    assert((an * bd) * (a2d * b2n) - (a2n * b2d) * (ad * bn) == (bd * b2n) * (an * a2d - a2n * ad)
-        - (a2n * ad) * (bn * b2d - b2n * bd)) by (nonlinear_arith);
+    // Same shape as the multiplication case: distribute, and the two
+    // `a2n·ad·b2n·bd` terms cancel.
+    assert((bd * b2n) * (an * a2d - a2n * ad) == (bd * b2n) * (an * a2d) - (bd * b2n) * (a2n * ad))
+        by (nonlinear_arith);
+    assert((a2n * ad) * (bn * b2d - b2n * bd) == (a2n * ad) * (bn * b2d) - (a2n * ad) * (b2n * bd))
+        by (nonlinear_arith);
+    assert((bd * b2n) * (a2n * ad) == (a2n * ad) * (b2n * bd)) by (nonlinear_arith);
+    assert((an * bd) * (a2d * b2n) == (bd * b2n) * (an * a2d)) by (nonlinear_arith);
+    assert((a2n * b2d) * (ad * bn) == (a2n * ad) * (bn * b2d)) by (nonlinear_arith);
 }
 
-/// The step used by `crate::nary::theorem_sum_error_accumulation`: one more
-/// rounded `add` on top of a result already within `k` units takes the total to
-/// `k + 1` units.
-pub proof fn lemma_error_accumulates_additively(
-    prev: Q,
-    prev_n: int,
-    prev_d: int,
-    next: Q,
-    r: Q,
-    k: nat,
+/// **The triangle inequality on fractions**, division-free.
+///
+/// If `|x - y| <= e1/E` and `|y - z| <= e2/E` then `|x - z| <= (e1+e2)/E`.
+///
+/// The whole proof is one algebraic identity —
+/// `(xn·zd - zn·xd)·yd == (xn·yd - yn·xd)·zd + (yn·zd - zn·yd)·xd` — followed by
+/// the ordinary integer triangle inequality and cancelling the positive `yd`.
+/// Every step below is degree three or less, which is what keeps it inside the
+/// solver's budget.
+pub proof fn lemma_frac_triangle(
+    xn: int,
+    xd: int,
+    yn: int,
+    yd: int,
+    zn: int,
+    zd: int,
+    e1: int,
+    e2: int,
+    ee: int,
 )
+    requires
+        xd > 0,
+        yd > 0,
+        zd > 0,
+        ee > 0,
+        abs_int(xn * yd - yn * xd) * ee <= e1 * (xd * yd),
+        abs_int(yn * zd - zn * yd) * ee <= e2 * (yd * zd),
+    ensures
+        abs_int(xn * zd - zn * xd) * ee <= (e1 + e2) * (xd * zd),
+{
+    assert((xn * zd - zn * xd) * yd == (xn * yd - yn * xd) * zd + (yn * zd - zn * yd) * xd)
+        by (nonlinear_arith);
+    assert(abs_int((xn * zd - zn * xd) * yd) == abs_int(xn * zd - zn * xd) * yd)
+        by (nonlinear_arith)
+        requires
+            yd > 0,
+    ;
+    assert(abs_int((xn * yd - yn * xd) * zd + (yn * zd - zn * yd) * xd) <= abs_int(
+        xn * yd - yn * xd,
+    ) * zd + abs_int(yn * zd - zn * yd) * xd) by (nonlinear_arith)
+        requires
+            zd > 0,
+            xd > 0,
+    ;
+    // Scale each hypothesis by the third denominator.
+    assert((abs_int(xn * yd - yn * xd) * ee) * zd <= (e1 * (xd * yd)) * zd) by (nonlinear_arith)
+        requires
+            zd > 0,
+            abs_int(xn * yd - yn * xd) * ee <= e1 * (xd * yd),
+    ;
+    assert((abs_int(yn * zd - zn * yd) * ee) * xd <= (e2 * (yd * zd)) * xd) by (nonlinear_arith)
+        requires
+            xd > 0,
+            abs_int(yn * zd - zn * yd) * ee <= e2 * (yd * zd),
+    ;
+    assert((e1 * (xd * yd)) * zd + (e2 * (yd * zd)) * xd == ((e1 + e2) * (xd * zd)) * yd)
+        by (nonlinear_arith);
+    assert((abs_int(xn * zd - zn * xd) * ee) * yd <= ((e1 + e2) * (xd * zd)) * yd);
+    assert(abs_int(xn * zd - zn * xd) * ee <= (e1 + e2) * (xd * zd)) by (nonlinear_arith)
+        requires
+            yd > 0,
+            (abs_int(xn * zd - zn * xd) * ee) * yd <= ((e1 + e2) * (xd * zd)) * yd,
+    ;
+}
+
+/// **The V8 induction step.** One more rounded `add` on top of an accumulator
+/// already within `k` units takes the total to `k + 1` units.
+///
+/// Two contributions, and they add:
+///
+/// * this step's own rounding error, at most one unit by R3 — that is the
+///   `within_error_bound` hypothesis, converted to an absolute bound by the
+///   magnitude hypothesis `max(1, |step value|) <= m`;
+/// * the error already carried in the accumulator, which passes through the
+///   addition untouched because addition is exactly 1-Lipschitz. That step is
+///   the `bd^2` scaling below: adding the same `next` to both the accumulator
+///   and the exact partial sum cancels out of the difference entirely.
+pub proof fn lemma_abs_error_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: nat, m: int)
     requires
         prev.wf(),
         next.wf(),
         r.wf(),
-        prev_d > 0,
-        // The accumulator so far is within `k` units of the exact partial sum.
-        within_error_bound_k(prev, prev_n, prev_d, k),
-        // `r` is one more rounded addition on top of it.
-        r == crate::round::round_frac(
-            crate::q::add_n(prev, next),
+        pd > 0,
+        m >= 1,
+        within_abs_error(prev, pn, pd, k, m),
+        within_error_bound(r, crate::q::add_n(prev, next), crate::q::prod_d(prev, next)),
+        max_int(
             crate::q::prod_d(prev, next),
-            crate::types::Dir::Nearest,
-        ),
-        !crate::round::saturated(crate::q::add_n(prev, next), crate::q::prod_d(prev, next)),
+            abs_int(crate::q::add_n(prev, next)),
+        ) <= m * crate::q::prod_d(prev, next),
     ensures
-        within_error_bound_k(
+        within_abs_error(
             r,
-            prev_n * next.d() + next.n() * prev_d,
-            prev_d * next.d(),
+            pn * next.d() + next.n() * pd,
+            pd * next.d(),
             (k + 1) as nat,
+            m,
         ),
 {
-    // Two contributions, and they add:
-    //
-    //   * the carried error, transported through `add`. Addition is 1-Lipschitz
-    //     in each argument (lemma_add_lipschitz), so `k` units in gives at most
-    //     `k` units out.
-    //   * the fresh rounding error of this very step, at most one unit by R3.
-    crate::round::lemma_r3_error(
-        crate::q::add_n(prev, next),
-        crate::q::prod_d(prev, next),
-        crate::types::Dir::Nearest,
-    );
-    lemma_add_lipschitz(
-        prev.n(),
-        prev.d(),
-        next.n(),
-        next.d(),
-        prev_n,
-        prev_d,
-        next.n(),
-        next.d(),
-        k as int,
-        0,
-        pow2(precision_b()),
-    );
+    let ad = prev.d();
+    let an = prev.n();
+    let bd = next.d();
+    let bn = next.n();
+    let en = crate::q::add_n(prev, next);
+    let ed = crate::q::prod_d(prev, next);
+    let tn = pn * bd + bn * pd;
+    let td = pd * bd;
+    let e = pow2(precision_b());
+    lemma_pow2_pos(precision_b());
+    assert(ad > 0 && bd > 0 && ed == ad * bd && ed > 0) by (nonlinear_arith)
+        requires
+            ad > 0,
+            bd > 0,
+            ed == ad * bd,
+    ;
+    assert(td > 0) by (nonlinear_arith)
+        requires
+            pd > 0,
+            bd > 0,
+    ;
+    // (a) this step's rounding error, in absolute form.
+    assert(abs_int(r.n() * ed - en * r.d()) * e <= m * (r.d() * ed)) by (nonlinear_arith)
+        requires
+            abs_int(r.n() * ed - en * r.d()) * e <= r.d() * max_int(ed, abs_int(en)),
+            max_int(ed, abs_int(en)) <= m * ed,
+            r.d() > 0,
+    ;
+    // (b) the carried error. The `next` term cancels: the difference between the
+    // step's exact value and the target is exactly bd^2 times the accumulator's
+    // own error.
+    assert(en * td - tn * ed == (bd * bd) * (an * pd - pn * ad)) by (nonlinear_arith)
+        requires
+            en == an * bd + bn * ad,
+            ed == ad * bd,
+            tn == pn * bd + bn * pd,
+            td == pd * bd,
+    ;
+    assert(ed * td == (bd * bd) * (ad * pd)) by (nonlinear_arith)
+        requires
+            ed == ad * bd,
+            td == pd * bd,
+    ;
+    assert(abs_int((bd * bd) * (an * pd - pn * ad)) == (bd * bd) * abs_int(an * pd - pn * ad))
+        by (nonlinear_arith)
+        requires
+            bd > 0,
+    ;
+    assert(abs_int(en * td - tn * ed) * e <= ((k as int) * m) * (ed * td)) by (nonlinear_arith)
+        requires
+            bd > 0,
+            abs_int(an * pd - pn * ad) * e <= (k as int) * m * (ad * pd),
+            abs_int(en * td - tn * ed) == (bd * bd) * abs_int(an * pd - pn * ad),
+            ed * td == (bd * bd) * (ad * pd),
+    ;
+    lemma_frac_triangle(r.n(), r.d(), en, ed, tn, td, m, (k as int) * m, e);
+    assert(m + (k as int) * m == ((k + 1) as int) * m) by (nonlinear_arith);
 }
 
 /// The relative-error unit used throughout: `2^-60`.

@@ -24,7 +24,8 @@ use vstd::prelude::*;
 
 #[allow(unused_imports)]
 use crate::model::*;
-use crate::types::Q;
+#[allow(unused_imports)]
+use crate::types::{Dir, Q};
 
 verus! {
 
@@ -97,20 +98,51 @@ pub fn sum(xs: &[Q]) -> (r: Q)
         all_wf(xs@),
     ensures
         r.wf(),
+        // The fold is a *function* of the input, in a fixed order. This equality
+        // is what makes the result reproducible, and it is what carries the V8
+        // bound (`theorem_sum_error_accumulation`) over to the real code.
+        r == fold_val(xs@),
 {
     let mut acc = Q::zero();
     let mut i: usize = 0;
+    proof {
+        assert(xs@.subrange(0, 0) =~= Seq::<Q>::empty());
+    }
     while i < xs.len()
         invariant
             acc.wf(),
             all_wf(xs@),
             i <= xs.len(),
+            acc == fold_val(xs@.subrange(0, i as int)),
         decreases xs.len() - i,
     {
+        proof {
+            lemma_fold_snoc(xs@, i as int);
+        }
         acc = Q::add(acc, xs[i]);
         i = i + 1;
     }
+    proof {
+        assert(xs@.subrange(0, xs.len() as int) =~= xs@);
+    }
     acc
+}
+
+/// Extending a prefix by one element extends the fold by one step.
+pub proof fn lemma_fold_snoc(s: Seq<Q>, i: int)
+    requires
+        0 <= i < s.len(),
+    ensures
+        fold_val(s.subrange(0, i + 1)) == crate::round::round_frac(
+            crate::q::add_n(fold_val(s.subrange(0, i)), s[i]),
+            crate::q::prod_d(fold_val(s.subrange(0, i)), s[i]),
+            Dir::Nearest,
+        ),
+{
+    let pre = s.subrange(0, i + 1);
+    assert(pre.len() == i + 1);
+    assert(pre[pre.len() as int - 1] == s[i]);
+    assert(pre.subrange(0, pre.len() as int - 1) =~= s.subrange(0, i));
 }
 
 /// `xs[0] * xs[1] * ... `, left to right. Empty slice gives `1`.
@@ -178,93 +210,238 @@ pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
 // V8 — accumulated error
 // ---------------------------------------------------------------------------
 
-/// **V8.** After `k` folded elements the accumulated error against the exact
-/// fold is at most `k · 2^-60 · max(1, |exact|)`.
+/// The value the left fold of `s` produces, as a *function*.
 ///
-/// The induction is: each `add` contributes at most one fresh `2^-60` relative
-/// error (R3) and the previously accumulated error is carried through addition
-/// with Lipschitz constant `1` ([`crate::lipschitz::lemma_add_lipschitz`]), so
-/// the bound is additive in the number of operations. Nothing here is
-/// asymptotic hand-waving: for the consuming engine's worst case of ~2·10^4
-/// sequential operations this is `2·10^4 · 2^-60 ≈ 2^-45.7 ≈ 2·10^-14`
-/// relative — the same precision class as `f64` accumulation, but
-/// deterministic and proven rather than assumed.
-pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, r: Q, k: nat)
-    requires
-        all_wf(s),
-        r.wf(),
-        s.len() == k,
-        sum_den(s) > 0,
-        // `r` is what the left fold produced.
-        fold_result_of(s, r),
-    ensures
-        within_error_bound_k(r, sum_num(s), sum_den(s), k),
+/// Deliberately not an `exists`-shaped predicate: the induction below has to
+/// unfold this at every step, and an existential would force the solver to
+/// guess a witness each time. Being a function also makes the exec `sum`'s
+/// postcondition an equality, which is what pins determinism.
+pub open spec fn fold_val(s: Seq<Q>) -> Q
     decreases s.len(),
 {
+    if s.len() == 0 {
+        Q { num: 0, den: 1 }
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        crate::round::round_frac(
+            crate::q::add_n(fold_val(init), last),
+            crate::q::prod_d(fold_val(init), last),
+            Dir::Nearest,
+        )
+    }
+}
+
+/// Every prefix of the fold has step values bounded by `m`, and stays on a
+/// non-saturating path. This is the hypothesis V8 needs and cannot invent:
+/// without a magnitude bound on the intermediates there is nothing for the
+/// accumulated error to be measured against.
+///
+/// For this crate's actual domain it is trivially satisfiable — opinions live
+/// in `[0, 1]`, so `m == 1`.
+pub open spec fn fold_bounded(s: Seq<Q>, m: int) -> bool
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        true
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        &&& fold_bounded(init, m)
+        &&& max_int(
+            crate::q::prod_d(fold_val(init), last),
+            abs_int(crate::q::add_n(fold_val(init), last)),
+        ) <= m * crate::q::prod_d(fold_val(init), last)
+        &&& !crate::round::saturated(
+            crate::q::add_n(fold_val(init), last),
+            crate::q::prod_d(fold_val(init), last),
+        )
+    }
+}
+
+/// The exact fold denominator is positive, and the fold result is well-formed.
+pub proof fn lemma_fold_wf(s: Seq<Q>)
+    requires
+        all_wf(s),
+    ensures
+        fold_val(s).wf(),
+        sum_den(s) > 0,
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        assert(crate::model::gcd_int(0, 1) == 1);
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf(init));
+        assert(last.wf());
+        lemma_fold_wf(init);
+        let prev = fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        assert(sum_den(s) == sum_den(init) * last.d());
+        assert(sum_den(s) > 0) by (nonlinear_arith)
+            requires
+                sum_den(init) > 0,
+                last.d() > 0,
+                sum_den(s) == sum_den(init) * last.d(),
+        ;
+    }
+}
+
+/// **V8.** After `k` folded elements the accumulated error against the exact
+/// fold is at most `k · m · 2^-60`.
+///
+/// The induction is exactly the two-line argument: each `add` contributes one
+/// fresh `2^-60` unit (R3), and the error already accumulated passes through
+/// the addition untouched, because addition is exactly 1-Lipschitz. Both halves
+/// live in `crate::lipschitz::lemma_abs_error_step`.
+///
+/// For the consuming engine's worst case of ~2·10⁴ sequential operations with
+/// `m == 1` this is `2·10⁴ · 2^-60 ≈ 2^-45.7 ≈ 2·10^-14` — the same precision
+/// class as `f64` accumulation, but deterministic and proven rather than
+/// assumed.
+pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)
+    requires
+        all_wf(s),
+        m >= 1,
+        fold_bounded(s, m),
+    ensures
+        within_abs_error(fold_val(s), sum_num(s), sum_den(s), s.len(), m),
+    decreases s.len(),
+{
+    lemma_fold_wf(s);
+    if s.len() == 0 {
+        assert(sum_num(s) == 0 && sum_den(s) == 1);
+        assert(fold_val(s).n() == 0 && fold_val(s).d() == 1);
+        crate::model::lemma_pow2_pos(crate::model::precision_b());
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf(init));
+        assert(fold_bounded(init, m));
+        theorem_sum_error_accumulation(init, m);
+        lemma_fold_wf(init);
+        let prev = fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_r3_error(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        crate::lipschitz::lemma_abs_error_step(
+            prev,
+            sum_num(init),
+            sum_den(init),
+            last,
+            fold_val(s),
+            init.len(),
+            m,
+        );
+        assert(sum_num(s) == sum_num(init) * last.d() + last.n() * sum_den(init));
+        assert(sum_den(s) == sum_den(init) * last.d());
+        assert(s.len() == init.len() + 1);
+    }
+}
+
+/// **The exact-path corollary.** If no step of the fold ever leaves the budget,
+/// the whole fold is exact — the k-element lift of R1.
+pub proof fn theorem_exact_fold_is_exact(s: Seq<Q>)
+    requires
+        all_wf(s),
+        fold_exact(s),
+    ensures
+        q_is(fold_val(s), sum_num(s), sum_den(s)),
+    decreases s.len(),
+{
+    lemma_fold_wf(s);
     if s.len() == 0 {
         assert(sum_num(s) == 0 && sum_den(s) == 1);
     } else {
         let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
         assert(all_wf(init));
-        // The inductive step: the fold over `init` is within (k-1) units, the
-        // final `add` contributes at most one more (R3), and addition carries
-        // the earlier error with constant 1 (V7).
-        let prev = choose|p: Q| fold_result_of(init, p);
-        crate::lipschitz::lemma_error_accumulates_additively(
-            prev,
-            sum_num(init),
-            sum_den(init),
-            s[s.len() as int - 1],
-            r,
-            (k - 1) as nat,
+        theorem_exact_fold_is_exact(init);
+        lemma_fold_wf(init);
+        let prev = fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_r1_identity(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
         );
+        let r = fold_val(s);
+        // r is exactly prev + last, prev is exactly the partial sum, so r is
+        // exactly the whole sum.
+        assert(sum_num(s) == sum_num(init) * last.d() + last.n() * sum_den(init));
+        assert(sum_den(s) == sum_den(init) * last.d());
+        lemma_exact_step(prev, last, r, sum_num(init), sum_den(init), sum_num(s), sum_den(s));
     }
 }
 
-/// `r` is the value the left fold of `s` produces. Defined by recursion so the
-/// accumulation theorem has something to induct on.
-pub open spec fn fold_result_of(s: Seq<Q>, r: Q) -> bool
+/// Every step of the fold stays on the exact path.
+pub open spec fn fold_exact(s: Seq<Q>) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
-        r.n() == 0 && r.d() == 1
-    } else {
-        exists|prev: Q|
-            #[trigger] fold_result_of(s.subrange(0, s.len() as int - 1), prev) && r
-                == crate::round::round_frac(
-                crate::q::add_n(prev, s[s.len() as int - 1]),
-                crate::q::prod_d(prev, s[s.len() as int - 1]),
-                crate::types::Dir::Nearest,
-            )
-    }
-}
-
-/// The exact-path corollary for folds: if no element of the fold ever leaves
-/// the budget, the whole fold is exact.
-pub proof fn theorem_exact_fold_is_exact(s: Seq<Q>, r: Q)
-    requires
-        all_wf(s),
-        r.wf(),
-        fold_result_of(s, r),
-        sum_den(s) > 0,
-        forall|i: int| 0 <= i <= s.len() ==> #[trigger] fold_prefix_exact(s, i),
-    ensures
-        q_is(r, sum_num(s), sum_den(s)),
-    decreases s.len(),
-{
-    if s.len() == 0 {
+        true
     } else {
         let init = s.subrange(0, s.len() as int - 1);
-        theorem_exact_fold_is_exact(init, choose|prev: Q| fold_result_of(init, prev));
+        let last = s[s.len() as int - 1];
+        &&& fold_exact(init)
+        &&& crate::round::exact_path(
+            crate::q::add_n(fold_val(init), last),
+            crate::q::prod_d(fold_val(init), last),
+        )
     }
 }
 
-/// The `i`-th prefix of the fold stays on the exact path.
-pub open spec fn fold_prefix_exact(s: Seq<Q>, i: int) -> bool {
-    0 <= i <= s.len() ==> crate::round::exact_path(
-        sum_num(s.subrange(0, i)),
-        sum_den(s.subrange(0, i)),
-    )
+/// Composing two exact steps stays exact.
+pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int, td: int)
+    requires
+        prev.wf(),
+        last.wf(),
+        r.wf(),
+        pd > 0,
+        q_is(prev, pn, pd),
+        q_is(r, crate::q::add_n(prev, last), crate::q::prod_d(prev, last)),
+        tn == pn * last.d() + last.n() * pd,
+        td == pd * last.d(),
+    ensures
+        q_is(r, tn, td),
+{
+    let ad = prev.d();
+    let an = prev.n();
+    let bd = last.d();
+    let bn = last.n();
+    // r == (an·bd + bn·ad)/(ad·bd) and an/ad == pn/pd, so r == tn/td.
+    assert(r.n() * (ad * bd) == (an * bd + bn * ad) * r.d());
+    assert(an * pd == pn * ad);
+    assert(r.n() * td * (ad * bd) == (tn * r.d()) * (ad * bd)) by (nonlinear_arith)
+        requires
+            ad > 0,
+            bd > 0,
+            pd > 0,
+            an * pd == pn * ad,
+            r.n() * (ad * bd) == (an * bd + bn * ad) * r.d(),
+            tn == pn * bd + bn * pd,
+            td == pd * bd,
+    ;
+    assert(r.n() * td == tn * r.d()) by (nonlinear_arith)
+        requires
+            ad > 0,
+            bd > 0,
+            r.n() * td * (ad * bd) == (tn * r.d()) * (ad * bd),
+    ;
 }
 
 } // verus!

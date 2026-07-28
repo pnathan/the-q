@@ -230,6 +230,82 @@ pub proof fn lemma_reduce_exact(n: int, d: int)
     }
 }
 
+/// `round_frac` always produces a well-formed `Q` — the V1 obligation stated at
+/// the specification level, so proof code can use it without going through the
+/// executable function.
+///
+/// Four cases, matching the four branches: zero, saturation, the exact path, and
+/// the dyadic snap. Canonicality comes from `lemma_gcd_reduce_coprime` in the
+/// two reducing branches; the bounds come from `fits_budget` and
+/// `lemma_snap_in_budget` respectively.
+pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
+    requires
+        d > 0,
+    ensures
+        round_frac(n, d, dir).wf(),
+{
+    lemma_gcd_one();
+    crate::model::lemma_max_mag_pow2();
+    if n == 0 {
+    } else if !magnitude_fits(n, d) {
+    } else {
+        lemma_reduce_exact(n, d);
+        let rn = red_num(n, d);
+        let rd = red_den(n, d);
+        lemma_gcd_reduce_coprime(abs_int(n) as nat, d as nat);
+        if fits_budget(rn, rd) {
+        } else {
+            let s = snap_shift(rn, rd);
+            let sn = grid_num(rn, rd, s, dir);
+            let sd = pow2(s);
+            lemma_pow2_pos(s);
+            lemma_grid_error_step(rn, rd, s, dir);
+            lemma_snap_magnitude(rn, rd, s, dir);
+            lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
+            lemma_reduce_exact(sn, sd);
+            lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
+        }
+    }
+}
+
+/// `gcd(x, 1) == 1` for every `x` — needed for the zero and saturating branches,
+/// whose denominators are `1`.
+pub proof fn lemma_gcd_one()
+    ensures
+        forall|x: int| #[trigger] gcd_int(x, 1) == 1,
+{
+    assert forall|x: int| #[trigger] gcd_int(x, 1) == 1 by {
+        assert(crate::model::gcd_nat(abs_int(x) as nat, 1nat) == crate::model::gcd_nat(
+            1nat,
+            (abs_int(x) % 1) as nat,
+        ));
+        assert(abs_int(x) % 1 == 0);
+        assert(crate::model::gcd_nat(1nat, 0nat) == 1);
+    }
+}
+
+/// The snapped numerator is within one of the exact scaled value, which is the
+/// form `lemma_snap_in_budget` consumes.
+pub proof fn lemma_snap_magnitude(rn: int, rd: int, s: nat, dir: Dir)
+    requires
+        rd > 0,
+    ensures
+        abs_int(grid_num(rn, rd, s, dir)) <= abs_int(rn) * pow2(s) / rd + 1,
+{
+    lemma_pow2_pos(s);
+    lemma_grid_error_step(rn, rd, s, dir);
+    let sn = grid_num(rn, rd, s, dir);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_int(rn) * pow2(s), rd);
+    assert(abs_int(sn * rd - rn * pow2(s)) <= rd);
+    assert(abs_int(sn) * rd <= abs_int(rn) * pow2(s) + rd) by (nonlinear_arith)
+        requires
+            rd > 0,
+            abs_int(sn * rd - rn * pow2(s)) <= rd,
+            abs_int(sn * rd) == abs_int(sn) * rd,
+            abs_int(rn * pow2(s)) == abs_int(rn) * pow2(s),
+    ;
+}
+
 // ---------------------------------------------------------------------------
 // R2 — directedness
 // ---------------------------------------------------------------------------
@@ -850,6 +926,9 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         r.wf(),
         r == round_frac(n as int, d as int, dir),
 {
+    proof {
+        lemma_round_frac_wf(n as int, d as int, dir);
+    }
     if n == 0 {
         proof {
             assert(gcd_int(0, 1) == 1);

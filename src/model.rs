@@ -212,6 +212,23 @@ pub open spec fn within_error_bound_k(r: Q, n: int, d: int, k: nat) -> bool {
     )
 }
 
+/// `|r - n/d| <= k · m / 2^B`, division-free.
+///
+/// The *absolute* form of the accumulated bound, carrying an explicit magnitude
+/// bound `m` on the intermediates. This — not a relative bound — is the right
+/// statement for a fold, and it is the one V8 proves.
+///
+/// Relative error does not accumulate cleanly across a sum: each step's R3 bound
+/// is measured against *that step's* value, and those values move around, so
+/// `k` relative units against the final value is simply not what the induction
+/// gives you. Absolute error does accumulate cleanly, because addition is
+/// exactly 1-Lipschitz. And for this crate's actual domain the two coincide:
+/// every engine value lives in `[0, 1]`, so `max(1, |exact|) == 1` throughout
+/// and `m == 1`, making the bound `k · 2^-60` outright.
+pub open spec fn within_abs_error(r: Q, n: int, d: int, k: nat, m: int) -> bool {
+    abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= (k as int) * m * (r.d() * d)
+}
+
 // ---------------------------------------------------------------------------
 // Basic lemmas about the above
 // ---------------------------------------------------------------------------
