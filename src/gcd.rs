@@ -114,7 +114,7 @@ pub proof fn lemma_gcd_zero(a: nat)
 {
     if a == 0 {
     } else {
-        assert(gcd_nat(0, a) == gcd_nat(a, (0 % a) as nat));
+        assert(gcd_nat(0, a) == gcd_nat(a, (0nat % a) as nat));
         assert(0nat % a == 0nat);
     }
 }

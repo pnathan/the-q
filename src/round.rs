@@ -121,7 +121,7 @@ pub open spec fn round_frac(n: int, d: int, dir: Dir) -> Q {
         if n > 0 {
             Q { num: MAX_MAG, den: 1 }
         } else {
-            Q { num: -MAX_MAG, den: 1 }
+            Q { num: (-(MAX_MAG as int)) as i64, den: 1 }
         }
     } else {
         let rn = red_num(n, d);
@@ -744,7 +744,7 @@ pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
             lemma_pow2_mono(i as nat, s as nat);
         }
         assert(q * d + rem == n * pow2(0nat));
-        lemma_quotient_bound(q, rem, d, n, 0nat, s as nat);
+        lemma_quotient_bound(q as int, rem as int, d as int, n as int, 0nat, s as nat);
     }
     while i < s
         invariant

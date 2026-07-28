@@ -48,8 +48,17 @@ Two things the first CI run established about the *harness*, both now fixed:
 * `cargo verus` verifies nothing unless the crate opts in. `Cargo.toml` now
   carries `[package.metadata.verus] verify = true`.
 
-So the *plumbing* is exercised and working. What has still never run is the
-solver against these proofs.
+So the *plumbing* is exercised and working — the verifier now loads, checks
+`vstd` (2058 verified, 0 errors), and reaches this crate. What it reaches it
+with is the next problem: **ghost-code type errors that plain rustc cannot
+catch**, because rustc erases exactly the code they are in. Unsuffixed integer
+literals in `spec` position, `int`-vs-`i64` in a spec-constructed `Q`,
+`i128`-vs-`int` at a `proof fn` call site. Three were found and fixed; expect
+more, and expect them *before* any genuine proof failure.
+
+This is the practical lesson of authoring Verus without the verifier: `cargo
+build` passing means the *executable* code is well-typed, and says nothing at
+all about the specifications.
 
 No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 `external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.
