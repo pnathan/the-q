@@ -162,24 +162,29 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
         q_is(round_frac(n, d, dir), n, d),
         round_frac(n, d, dir).wf(),
 {
+    crate::model::lemma_max_mag_pow2();
     if n == 0 {
         assert(round_frac(n, d, dir) == Q { num: 0, den: 1 });
-        crate::model::lemma_gcd_unit(0);
+        lemma_gcd_one();
     } else {
         let g = gcd_int(n, d);
         lemma_gcd_pos(abs_int(n) as nat, d as nat);
         lemma_gcd_divides(abs_int(n) as nat, d as nat);
         lemma_reduce_exact(n, d);
+        lemma_reduce_abs(n, d);
         let rn = red_num(n, d);
         let rd = red_den(n, d);
         assert(n == rn * g && d == rd * g);
-        // magnitude_fits follows from |rn| <= max_mag <= max_mag * rd.
-        assert(magnitude_fits(n, d)) by (nonlinear_arith)
+        // magnitude_fits unfolded: |n| == |rn|·g <= M·g <= M·(rd·g) == M·d.
+        // Stated as `magnitude_fits(n, d)` the block cannot unfold the
+        // definition, so spell the inequality out.
+        assert(abs_int(n) <= max_mag() * d) by (nonlinear_arith)
             requires
+                abs_int(n) == abs_int(rn) * g,
                 abs_int(rn) <= max_mag(),
+                max_mag() > 0,
                 rd >= 1,
                 g >= 1,
-                n == rn * g,
                 d == rd * g,
         ;
         let r = round_frac(n, d, dir);
@@ -711,7 +716,61 @@ pub proof fn lemma_round_int_monotone(a1: int, d1: int, a2: int, d2: int, dir: D
     // real value; since a1/d1 <= a2/d2, the rounded integers are ordered.
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a1, d1);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a2, d2);
-    lemma_floor_div_monotone(a1, d1, a2, d2);
+    let q1 = round_int(a1, d1, dir);
+    let q2 = round_int(a2, d2, dir);
+    match dir {
+        Dir::Down => {
+            lemma_floor_div_monotone(a1, d1, a2, d2);
+        },
+        Dir::Up => {
+            // Ceiling is floor of the negation, negated, and negating flips
+            // the hypothesis.
+            assert((-a2) * d1 <= (-a1) * d2) by (nonlinear_arith)
+                requires
+                    a1 * d2 <= a2 * d1,
+            ;
+            lemma_floor_div_monotone(-a2, d2, -a1, d1);
+        },
+        Dir::Nearest => {
+            lemma_floor_div_monotone(a1, d1, a2, d2);
+            let f1 = a1 / d1;
+            let f2 = a2 / d2;
+            let r1 = a1 % d1;
+            let r2 = a2 % d2;
+            // When the floors differ the result is immediate, because each
+            // rounded value lies in {floor, floor + 1}. When they agree, the
+            // fractional parts are ordered, and the tie rule is monotone in
+            // them: `2r > d` and `2r == d` both propagate upwards.
+            if f1 == f2 {
+                assert(r1 * d2 <= r2 * d1) by (nonlinear_arith)
+                    requires
+                        a1 == d1 * f1 + r1,
+                        a2 == d2 * f2 + r2,
+                        f1 == f2,
+                        a1 * d2 <= a2 * d1,
+                ;
+                assert(2 * r1 > d1 ==> 2 * r2 > d2) by (nonlinear_arith)
+                    requires
+                        d1 > 0,
+                        d2 > 0,
+                        r1 * d2 <= r2 * d1,
+                ;
+                assert(2 * r1 == d1 ==> 2 * r2 >= d2) by (nonlinear_arith)
+                    requires
+                        d1 > 0,
+                        d2 > 0,
+                        r1 * d2 <= r2 * d1,
+                ;
+            }
+        },
+    }
+    assert(q1 <= q2);
+    assert(q1 * d2 * d1 <= q2 * d1 * d2) by (nonlinear_arith)
+        requires
+            d1 > 0,
+            d2 > 0,
+            q1 <= q2,
+    ;
 }
 
 /// The direction-independent kernel used by [`grid_num`], factored out so
@@ -1419,6 +1478,26 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
                 -(qf + 1),
                 rd - rf,
             );
+            // `Nearest`'s tie rule is stated on the parity of the *floor*,
+            // which for a negative value is `-(qf + 1)` — the opposite parity
+            // to `qf`. That flip is exactly why the specification's tie test
+            // reads `qf % 2 != 0` rather than `== 0`.
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(qf, 2);
+            if qf % 2 == 0 {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                    -(qf + 1),
+                    2,
+                    -(qf / 2) - 1,
+                    1,
+                );
+            } else {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                    -(qf + 1),
+                    2,
+                    -(qf / 2) - 1,
+                    0,
+                );
+            }
         }
     }
 }
