@@ -117,20 +117,51 @@ proof fn lemma_mul_distributes_over_add(na: int, da: int, nb: int, db: int, nc: 
         ),
 {
     // Both sides of the cross-multiplication equal the same expanded
-    // polynomial (na*nb*da*da*db*dc*dc + na*nc*da*da*db*db*dc) -- proved
-    // as two separate, smaller nonlinear_arith goals rather than one
-    // combined identity (which hit the SMT resource limit even at a
-    // raised budget), and written out directly rather than via
-    // intermediate `let`-bound locals (which nonlinear_arith did not
-    // unfold transparently in an earlier attempt here).
+    // polynomial (na*nb*da*da*db*dc*dc + na*nc*da*da*db*db*dc). Proving
+    // that as one combined nonlinear_arith goal (or even as two goals,
+    // each a single degree-6/6-variable identity) hit the SMT resource
+    // limit -- one attempt burned ~28 minutes of CI time before timing
+    // out even at a raised --rlimit. Broken down here into small,
+    // low-degree steps chained by transitivity instead, each one a
+    // two-or-three-variable reassociation/distribution nonlinear_arith
+    // solves quickly.
+
+    // --- n1*d2 side: na*(nb*dc+nc*db) * (da*db*da*dc) ---
+    assert(mul_num(na, add_num(nb, db, nc, dc)) == na * nb * dc + na * nc * db) by (nonlinear_arith)
+    {}
+    assert(add_den(mul_den(da, db), mul_den(da, dc)) == da * da * db * dc) by (nonlinear_arith)
+    {}
+    assert((na * nb * dc + na * nc * db) * (da * da * db * dc) == na * nb * dc * (da * da * db
+        * dc) + na * nc * db * (da * da * db * dc)) by (nonlinear_arith)
+    {}
+    assert(na * nb * dc * (da * da * db * dc) == na * nb * da * da * db * dc * dc) by (
+    nonlinear_arith)
+    {}
+    assert(na * nc * db * (da * da * db * dc) == na * nc * da * da * db * db * dc) by (
+    nonlinear_arith)
+    {}
     assert(mul_num(na, add_num(nb, db, nc, dc)) * add_den(mul_den(da, db), mul_den(da, dc))
-        == na * nb * da * da * db * dc * dc + na * nc * da * da * db * db * dc) by (nonlinear_arith)
+        == na * nb * da * da * db * dc * dc + na * nc * da * da * db * db * dc);
+
+    // --- n2*d1 side: ((na*nb)*(da*dc) + (na*nc)*(da*db)) * (da*db*dc) ---
+    assert(add_num(mul_num(na, nb), mul_den(da, db), mul_num(na, nc), mul_den(da, dc)) == na * nb
+        * (da * dc) + na * nc * (da * db)) by (nonlinear_arith)
+    {}
+    assert(mul_den(da, add_den(db, dc)) == da * db * dc) by (nonlinear_arith)
+    {}
+    assert((na * nb * (da * dc) + na * nc * (da * db)) * (da * db * dc) == na * nb * (da * dc)
+        * (da * db * dc) + na * nc * (da * db) * (da * db * dc)) by (nonlinear_arith)
+    {}
+    assert(na * nb * (da * dc) * (da * db * dc) == na * nb * da * da * db * dc * dc) by (
+    nonlinear_arith)
+    {}
+    assert(na * nc * (da * db) * (da * db * dc) == na * nc * da * da * db * db * dc) by (
+    nonlinear_arith)
     {}
     assert(add_num(mul_num(na, nb), mul_den(da, db), mul_num(na, nc), mul_den(da, dc)) * mul_den(
         da,
         add_den(db, dc),
-    ) == na * nb * da * da * db * dc * dc + na * nc * da * da * db * db * dc) by (nonlinear_arith)
-    {}
+    ) == na * nb * da * da * db * dc * dc + na * nc * da * da * db * db * dc);
 }
 
 // --- Involutions / idempotence ---
