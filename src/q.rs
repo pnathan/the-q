@@ -167,6 +167,7 @@ impl Q {
         }
         let mut n: i128 = num as i128;
         let mut d: i128 = den as i128;
+        let neg: bool = d < 0;
         if d < 0 {
             n = 0 - n;
             d = 0 - d;
@@ -183,6 +184,18 @@ impl Q {
             proof {
                 crate::round::lemma_reduce_exact(n as int, d as int);
                 crate::gcd::lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
+                // n == rn·g and d == rd·g, and (n, d) is (num, den) up to a
+                // shared sign flip, so rn/rd is num/den as a value either way.
+                lemma_new_value(
+                    num as int,
+                    den as int,
+                    n as int,
+                    d as int,
+                    rn as int,
+                    rd as int,
+                    g as int,
+                    neg,
+                );
             }
             Some(Q { num: rn as i64, den: rd as i64 })
         } else {
@@ -673,6 +686,51 @@ pub proof fn lemma_op_widths(a: Q, b: Q)
             a.d() > 0,
             b.d() > 0,
     ;
+}
+
+/// The reduced pair denotes the original fraction, whichever way the sign was
+/// normalised.
+pub proof fn lemma_new_value(
+    num: int,
+    den: int,
+    n: int,
+    d: int,
+    rn: int,
+    rd: int,
+    g: int,
+    neg: bool,
+)
+    requires
+        den != 0,
+        g > 0,
+        n == rn * g,
+        d == rd * g,
+        neg ==> (n == -num && d == -den),
+        !neg ==> (n == num && d == den),
+    ensures
+        rn * den == num * rd,
+{
+    if neg {
+        assert(den == -(rd * g) && num == -(rn * g));
+        assert(rn * den == -((rn * rd) * g)) by (nonlinear_arith)
+            requires
+                den == -(rd * g),
+        ;
+        assert(num * rd == -((rn * rd) * g)) by (nonlinear_arith)
+            requires
+                num == -(rn * g),
+        ;
+    } else {
+        assert(den == rd * g && num == rn * g);
+        assert(rn * den == (rn * rd) * g) by (nonlinear_arith)
+            requires
+                den == rd * g,
+        ;
+        assert(num * rd == (rn * rd) * g) by (nonlinear_arith)
+            requires
+                num == rn * g,
+        ;
+    }
 }
 
 /// Exec mirrors of the ghost numerators, used by the `checked_*` variants.

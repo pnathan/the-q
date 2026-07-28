@@ -436,7 +436,11 @@ pub proof fn lemma_mul_in_i128(x: int, y: int)
     lemma_max_mag_pow2();
     lemma_pow2_62();
     lemma_pow2_124();
-    assert(abs_int(x * y) == abs_int(x) * abs_int(y)) by (nonlinear_arith);
+    assert(abs_int(x * y) == abs_int(x) * abs_int(y)) by (nonlinear_arith)
+        requires
+            abs_int(x) == (if x >= 0 { x } else { -x }),
+            abs_int(y) == (if y >= 0 { y } else { -y }),
+    ;
     assert(abs_int(x) * abs_int(y) <= max_mag() * max_mag()) by (nonlinear_arith)
         requires
             0 <= abs_int(x) <= max_mag(),
@@ -447,6 +451,45 @@ pub proof fn lemma_mul_in_i128(x: int, y: int)
             max_mag() == 4611686018427387903,
             pow2(124) == 21267647932558653966460912964485513216,
     ;
+}
+
+/// `|x · c| == |x| · c` for positive `c`.
+///
+/// Used constantly when a bound is scaled by a denominator; stating it once
+/// stops every call site from having to re-derive it inside a nonlinear goal.
+pub proof fn lemma_abs_mul_pos(x: int, c: int)
+    requires
+        c > 0,
+    ensures
+        abs_int(x * c) == abs_int(x) * c,
+{
+    if x >= 0 {
+        assert(x * c >= 0) by (nonlinear_arith)
+            requires
+                x >= 0,
+                c > 0,
+        ;
+    } else {
+        assert(x * c < 0) by (nonlinear_arith)
+            requires
+                x < 0,
+                c > 0,
+        ;
+        assert(-(x * c) == (-x) * c) by (nonlinear_arith);
+    }
+}
+
+/// `gcd(x, 1) == 1`.
+///
+/// Needs two unfoldings — `gcd(x, 1)` goes to `gcd(1, x % 1)`, which is
+/// `gcd(1, 0)`, which is `1` — and Verus's default fuel for a recursive spec
+/// function is one. Hence the explicit `reveal_with_fuel`.
+pub proof fn lemma_gcd_unit(x: int)
+    ensures
+        gcd_int(x, 1) == 1,
+{
+    reveal_with_fuel(gcd_nat, 3);
+    assert(abs_int(x) % 1 == 0);
 }
 
 /// A positive divisor of a positive number is at most that number.

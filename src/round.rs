@@ -164,7 +164,7 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
 {
     if n == 0 {
         assert(round_frac(n, d, dir) == Q { num: 0, den: 1 });
-        assert(gcd_int(0, 1) == 1);
+        crate::model::lemma_gcd_unit(0);
     } else {
         let g = gcd_int(n, d);
         lemma_gcd_pos(abs_int(n) as nat, d as nat);
@@ -275,12 +275,7 @@ pub proof fn lemma_gcd_one()
         forall|x: int| #[trigger] gcd_int(x, 1) == 1,
 {
     assert forall|x: int| #[trigger] gcd_int(x, 1) == 1 by {
-        assert(crate::model::gcd_nat(abs_int(x) as nat, 1nat) == crate::model::gcd_nat(
-            1nat,
-            (abs_int(x) % 1) as nat,
-        ));
-        assert(abs_int(x) % 1 == 0);
-        assert(crate::model::gcd_nat(1nat, 0nat) == 1);
+        crate::model::lemma_gcd_unit(x);
     }
 }
 
@@ -297,6 +292,8 @@ pub proof fn lemma_snap_magnitude(rn: int, rd: int, s: nat, dir: Dir)
     let sn = grid_num(rn, rd, s, dir);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_int(rn) * pow2(s), rd);
     assert(abs_int(sn * rd - rn * pow2(s)) <= rd);
+    crate::model::lemma_abs_mul_pos(sn, rd);
+    crate::model::lemma_abs_mul_pos(rn, pow2(s));
     assert(abs_int(sn) * rd <= abs_int(rn) * pow2(s) + rd) by (nonlinear_arith)
         requires
             rd > 0,
