@@ -293,3 +293,43 @@ must both pass in CI on every commit.
 
 Acceptance = M1–M5 verified and green. The consuming engine rewrite starts
 against the M2 API surface and is a separate project.
+
+---
+
+## 9. Corrections found during implementation
+
+*Not part of the original specification. Appended by the implementation so the
+spec text and the shipped crate do not disagree silently. The sections above are
+unchanged; each entry below says what §N claims, why it does not hold, and what
+the crate does instead. All four are documented in `README.md` and
+`VERIFICATION.md` as well, and each has a test.*
+
+**§2.1 — `Q::new` cannot be total over `i64` pairs.** The inventory implies that
+every `(num, den)` pair fits I2 once reduced. It does not: `Q::new(i64::MAX, 1)`
+is already in lowest terms and exceeds the `2^62 − 1` budget. `Q::new` is
+therefore partial in two ways — `None` on `den == 0` *and* on an over-budget
+reduced form — and `Q::new_rounded` is the total variant, returning `None`
+**iff** `den == 0`.
+
+**§3 R3 — the error bound is unsatisfiable above the magnitude ceiling.** For an
+exact value with `|n/d| > 2^62 − 1`, no representable `Q` lies within
+`2^-60 · |exact|` of it, because no representable `Q` is that large. R3 is
+therefore stated under `!saturated(n, d)`; such results saturate to `±MAX_MAG`,
+and `checked_add`/`checked_sub`/`checked_mul` report them as `None` exactly
+there (`ensures r.is_none() <==> saturated(...)`).
+
+**§2.5 / V8 — the accumulated bound is absolute, not relative.** The phrasing
+`k·2^-B` reads naturally as `k · 2^-B · max(1, |exact|)`, matching R3's shape.
+Relative error does not accumulate by induction: the magnitude in the bound is
+the magnitude of the *running* sum, which moves at every step, so the induction
+hypothesis and the goal quantify over different quantities. The theorem is
+stated absolutely instead, carrying an explicit magnitude bound `m` on the
+intermediates (`nary::fold_bounded(s, m)` and
+`nary::theorem_sum_error_accumulation(s, m)`). For the consuming engine — every
+opinion component in `[0, 1]`, so `m == 1` — the two statements coincide. This
+is a correction, not a weakening: the relative form is not true as stated.
+
+**§6 V5 — the verified workhorse is `gcd_u128`, not `gcd_u64`.** V5 names "u64
+Euclid", but canonicalisation reduces the `i128` intermediates produced by the
+arithmetic, not `i64` operands. `gcd_u128` carries the proofs; `gcd_u64` is a
+thin verified wrapper kept for the narrow case.
