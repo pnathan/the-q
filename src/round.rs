@@ -1496,6 +1496,29 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
     proof {
         lemma_reduce_exact(sn as int, sd as int);
         lemma_gcd_reduce_coprime(abs_int(sn as int) as nat, sd as nat);
+        lemma_reduce_abs(sn as int, sd as int);
+        // I2 holds of `sn` and `sd`; the returned pair is those divided by
+        // their gcd, which can only be smaller.
+        lemma_reduce_shrinks(sn as int, sd as int);
+        // I1's zero clause, guarded on the reduced numerator — the field `wf`
+        // actually reads. Even `0 · g2` is an uninterpreted product out here.
+        if on == 0 {
+            assert(sn as int == 0) by (nonlinear_arith)
+                requires
+                    sn as int == (on as int) * (g2 as int),
+                    on as int == 0,
+            ;
+            crate::gcd::lemma_gcd_zero(sd as nat);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                sd as int,
+                sd as int,
+                1,
+                0,
+            );
+        }
+        crate::model::lemma_max_mag_pow2();
+        assert(((on as i64) as int) == on as int);
+        assert(((od as i64) as int) == od as int);
     }
     Q { num: on as i64, den: od as i64 }
 }
