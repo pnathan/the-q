@@ -66,7 +66,10 @@ deterministic and bit-exact reproducible for a fixed evaluation order.
 - Comparison: exact `eq/lt/le/cmp` via `i128` cross-multiplication; `Ord`
   is a total order agreeing with the ghost order.
 - Predicates: `is_zero`, `is_one`, `signum`, `in_unit_interval`.
-- n-ary: `sum`, `product`, `weighted_mean` (fixed-order folds).
+- n-ary: `sum`, `product`, `weighted_mean`, `int_pow` (fixed-order folds).
+- Intervals: `QI = [lo, hi]` on the directed modes (`add`/`sub`/`neg`,
+  `mul_nonneg`), with proven enclosure of exact results
+  (`lemma_qi_add_encloses`, `lemma_qi_mul_encloses`).
 - Out: `to_f64` (trusted, display only — see `TRUSTED.md`), `Display`
   (`"num/den"`), `serde` (feature `serde`; exact `(num, den)` round-trip).
 
@@ -80,8 +83,18 @@ accepted iff the reduced form is in budget.
 ## Verification
 
 ```
-verification results:: 247 verified, 0 errors
+verification results:: 389 verified, 0 errors
 ```
+
+Beyond the MUST-tier obligations (V1-V6), the SHOULD tier is delivered
+too: **V7** error-propagation (Lipschitz) lemmas for add/sub/mul/recip/div
+(`src/lipschitz.rs`, the enabling layer for the interval type), and **V8**
+accumulated-error theorems for the n-ary folds (`src/accumulate.rs`):
+`sum` is within `k*w*2^-59` of the exact sum whenever the exact partial
+sums are bounded by `w`, and `product` over unit-interval elements is
+within `k*2^-59` of the exact product — both wired into the exec fns'
+`ensures`. The M6 stretch interval type `QI` ships as well
+(`src/interval.rs`).
 
 - Zero `assume`/`admit`. Trusted surface: exactly one meaningfully trusted
   function (`to_f64`) plus a one-line `to_bits` model bridge — enumerated

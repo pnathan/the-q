@@ -19,6 +19,9 @@ pub mod arith;
 pub mod algebra;
 pub mod float;
 pub mod convert;
+pub mod lipschitz;
+pub mod accumulate;
+pub mod interval;
 pub mod traits;
 
 pub use q::Q;

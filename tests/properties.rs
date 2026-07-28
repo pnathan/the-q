@@ -188,3 +188,65 @@ fn serde_round_trip_exact() {
     let q: Q = serde_json::from_str("[2, 4]").unwrap();
     assert_eq!(q, Q::new(1, 2).unwrap());
 }
+
+#[test]
+fn int_pow_behavior() {
+    let half = Q::new(1, 2).unwrap();
+    assert_eq!(half.int_pow(0), Q::one());
+    assert_eq!(half.int_pow(10), Q::new(1, 1024).unwrap());
+    let x = Q::new(3, 7).unwrap();
+    // matches the product fold of e copies
+    let xs = vec![x; 13];
+    assert_eq!(x.int_pow(13), Q::product(&xs));
+}
+
+#[test]
+fn interval_ops_enclose() {
+    use the_q::interval::QI;
+    let a = QI::new_qi(Q::new(1, 3).unwrap(), Q::new(1, 2).unwrap()).unwrap();
+    let b = QI::new_qi(Q::new(1, 7).unwrap(), Q::new(2, 7).unwrap()).unwrap();
+    // add: [1/3+1/7, 1/2+2/7] = [10/21, 11/14], small values so exact
+    let s = a.add(b);
+    assert_eq!(rat(s.lo), rat_of(10, 21));
+    assert_eq!(rat(s.hi), rat_of(11, 14));
+    // sub: [1/3-2/7, 1/2-1/7] = [1/21, 5/14]
+    let d = a.sub(b);
+    assert_eq!(rat(d.lo), rat_of(1, 21));
+    assert_eq!(rat(d.hi), rat_of(5, 14));
+    // mul (nonneg): [1/21, 1/7]
+    let p = a.mul_nonneg(b);
+    assert_eq!(rat(p.lo), rat_of(1, 21));
+    assert_eq!(rat(p.hi), rat_of(1, 7));
+    // neg: [-1/2, -1/3]
+    let n = a.neg();
+    assert_eq!(rat(n.lo), rat_of(-1, 2));
+    assert_eq!(rat(n.hi), rat_of(-1, 3));
+    // endpoints stay ordered even when rounding kicks in
+    let mut rng = Rng::new(0x1E7);
+    for _ in 0..500 {
+        let x = QI::point(rand_unit_q(&mut rng));
+        let y = QI::point(rand_unit_q(&mut rng));
+        let z = x.add(y).mul_nonneg(QI::point(rand_unit_q(&mut rng)));
+        assert!(z.lo.le(z.hi));
+        assert_canonical(z.lo);
+        assert_canonical(z.hi);
+    }
+}
+
+#[test]
+fn fold_error_within_v8_bound() {
+    // 1000 unit-interval multiplications: |result - exact| <= k * 2^-59.
+    let mut rng = Rng::new(0xF01D);
+    let xs: Vec<Q> = (0..1000)
+        .map(|_| {
+            let q = rand_unit_q(&mut rng);
+            if q.is_zero() { Q::new(1, 2).unwrap() } else { q }
+        })
+        .collect();
+    let r = Q::product(&xs);
+    let exact = xs.iter().fold(rat_of(1, 1), |acc, q| acc * rat(*q));
+    use malachite_base::num::arithmetic::traits::Abs;
+    let err = (rat(r) - &exact).abs();
+    let bound = rat_of(2 * 1000, 1) / rat_of(1, 1) * rat_of(1, 1i64 << 60);
+    assert!(err <= bound, "V8 product bound violated: {err}");
+}
