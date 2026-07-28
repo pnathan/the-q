@@ -5,6 +5,12 @@ on:
     branches: ["**"]
   pull_request:
 
+# Verification is slow and a superseded commit's run is worthless. Without this
+# a stuck proof search on an old SHA sits on a runner until the 6-hour cap.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -121,5 +127,8 @@ jobs:
       - name: Verus version
         run: verus --version
 
+      # `--multiple-errors` matters a lot here: by default Verus reports one
+      # error per function body, which makes a module with a single early
+      # failure look clean. Ask for more so each run is a full picture.
       - name: Verify
-        run: cargo verus verify --all-features
+        run: cargo verus verify --all-features -- --multiple-errors 8

@@ -187,12 +187,21 @@ pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
     assert(a / g == ka as nat);
     assert(b / g == kb as nat);
     lemma_gcd_scale(g, ka as nat, kb as nat);
-    // gcd(g*ka, g*kb) == g * gcd(ka, kb), and the left side is gcd(a,b) == g.
-    assert((g * gcd_nat(ka as nat, kb as nat)) as nat == g);
-    assert(gcd_nat(ka as nat, kb as nat) == 1) by (nonlinear_arith)
+    // gcd(g·ka, g·kb) == g · gcd(ka, kb), and the left side is gcd(a,b) == g.
+    // Naming the cofactor keeps the cancellation a plain `g·q == g·1`.
+    let q = gcd_nat(ka as nat, kb as nat);
+    assert(g * ka == a && g * kb == b) by (nonlinear_arith)
+        requires
+            a as int == (g as int) * ka,
+            b as int == (g as int) * kb,
+            ka >= 0,
+            kb >= 0,
+    ;
+    assert(g * q == g * 1);
+    assert(q == 1) by (nonlinear_arith)
         requires
             g > 0,
-            (g * gcd_nat(ka as nat, kb as nat)) as nat == g,
+            g * q == g * 1,
     ;
 }
 
