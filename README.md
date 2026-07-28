@@ -205,10 +205,10 @@ Specifications and proofs live in the source, inside `verus!` blocks.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
   and the differential tests backing it. There are two.
 
-**Current status: the proofs are written but have not been machine-checked.**
-The Verus verifier binary is distributed through GitHub releases, which was not
-reachable from the environment this crate was written in. `VERIFICATION.md` says
-exactly what this means and what to do about it. The executable behaviour is
+**Current status: every proof obligation discharges — `442 verified, 0 errors`,
+as a required CI check.** No `assume`, no `admit`, two `external_body` functions
+at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
+and the six Verus lessons the work turned up. The executable behaviour is
 independently validated by the test suite below.
 
 ## Testing

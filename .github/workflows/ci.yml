@@ -73,11 +73,6 @@ jobs:
   verify:
     name: verus verify
     runs-on: ubuntu-latest
-    # TODO: remove `continue-on-error` once the proofs discharge. See
-    # VERIFICATION.md — the proofs are written but have not been machine-checked
-    # yet, and an advisory check is more honest than a permanently red required
-    # one. This is the single line to flip.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

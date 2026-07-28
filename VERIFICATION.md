@@ -2,12 +2,11 @@
 
 ## Read this first
 
-`cargo verus verify` **runs against this crate and reports a count**. As of the
-latest run:
+**`cargo verus verify` discharges every proof obligation in this crate.**
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  373 verified, 20 errors    <- the-q
+verification results::  442 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -16,7 +15,9 @@ start with `error`, so grepping inflates the total by roughly half. (I did
 exactly that for several rounds and reported numbers 60–80% too high. The
 authoritative figure is the `verification results` line.)
 
-The trajectory so far, one row per CI round:
+The `verus verify` job is a **required** CI check.
+
+The trajectory, one row per CI round:
 
 | head | verified | errors |
 |---|---|---|
@@ -24,28 +25,34 @@ The trajectory so far, one row per CI round:
 | `ab17e4d` | 288 | 53 |
 | `8b689af` | 305 | 46 |
 | `864e499` | 317 | 45 |
-| `823818e` | 319 | 45 |
 | `686bcc9` | 329 | 42 |
 | `ddaac00` | 355 | 22 |
 | `6a82bb1` | 357 | 24 |
-| `72d9115` | 362 | 23 |
 | `048899e` | 373 | 20 |
+| `fcc13c5` | 389 | 13 |
+| `6a5890f` | 404 | 9 |
+| `a0da72b` | 423 | 7 |
+| `c87f563` | 431 | 3 |
+| `e267cd5` | 440 | 1 |
+| `c1e3e54` | **442** | **0** |
 
-Verified conditions are increasing monotonically. The error count is not
-monotone, and both directions have honest causes: it rises when a fixed
-well-formedness failure unblocks checking of proofs that were previously never
-reached, when new obligations are added (restating V7/V8 added ~25
-`requires`/`ensures`), and when a strengthened precondition hands its callers a
-new obligation (`6a82bb1`, where `magnitude_fits_exec` acquired the input bound
-its `0 - n` actually needed); it falls when proofs land.
+Verified conditions rose monotonically. The error count did not, and both
+directions had honest causes: it rose when a fixed well-formedness failure
+unblocked checking of proofs that were previously never reached, when new
+obligations were added (restating V7/V8 added ~25 `requires`/`ensures`), and
+when a strengthened precondition handed its callers a new obligation
+(`6a82bb1`, where `magnitude_fits_exec` acquired the input bound its `0 - n`
+actually needed); it fell when proofs landed.
 
-The jump at `ddaac00` is worth understanding, because it is the shape of most of
-the remaining work. `lemma_pow2_124`, `lemma_pow2_125` and `lemma_pow2_126` were
-stated by `reveal_with_fuel`, and past roughly `2^64` that stops working — the
-unfolding is linear in the exponent and Z3 exhausts its resource limit before
-reaching the literal. Every `i128` overflow check in the crate is discharged
-from one of those literals, so three unproven lemmas were starving the whole
-rounding path. Deriving them by squaring `2^62` closed twenty errors at once.
+The jump at `ddaac00` is the one worth understanding. `lemma_pow2_124`,
+`lemma_pow2_125` and `lemma_pow2_126` were stated by `reveal_with_fuel`, and
+past roughly `2^64` that stops working — the unfolding is linear in the exponent
+and Z3 exhausts its resource limit before reaching the literal. Every `i128`
+overflow check in the crate is discharged from one of those literals, so three
+unproven lemmas were starving the whole rounding path. Deriving them by squaring
+`2^62` closed twenty errors at once. **A failing lemma still hands its `ensures`
+to its callers**, which is why the damage was invisible in the call graph for
+several rounds.
 
 ## How this crate came to be written without a verifier
 
@@ -73,19 +80,15 @@ all invisible locally and only surface in CI. Every proof change here costs a
   executed against roughly ten million operations without a panic.
 * Determinism checked byte-for-byte across eight concurrent threads.
 
-This is strong evidence and it is *not* what the specification asks for. §6 puts
-V1–V6 at MUST and §8 sets acceptance at "M1–M5 verified and green". Green: yes.
-Verified: not yet.
+This is strong evidence, and it is not what §6 and §8 ask for — those want the
+proofs machine-checked. Both now hold: §8's acceptance criterion is "M1–M5
+verified and green", and the crate is green *and* verified.
 
-## Where the remaining work is
+## What to know before touching the proofs
 
-Concentrated in `round.rs` — the dyadic-snap rounding contract, which §3 calls
-"the heart of the design" and which is the hardest thing in the crate.
-`gcd.rs`, `interval.rs`, `convert.rs`, `types.rs`, `model.rs` and `lipschitz.rs`
-are at zero; `laws.rs`, `nary.rs` and `q.rs` are in low single digits.
-
-Three classes of problem accounted for most of what has been fixed so far, and
-each is worth knowing before touching this code:
+Most of the work went into `round.rs` — the dyadic-snap rounding contract, which
+§3 calls "the heart of the design". Six classes of problem accounted for nearly
+all of it, and each is worth knowing:
 
 1. **Bounds stated with `pow2(n)` prove nothing about an `i128`.** `pow2` is an
    opaque recursive spec function. Every arithmetic operation in `q.rs` was
@@ -105,6 +108,8 @@ each is worth knowing before touching this code:
    problem. `lemma_fundamental_div_mod_converse` wants the divisor first, which
    is the far end of the crate's own reduction equations; three call sites
    needed an explicit `assert(a * b == b * a) by (nonlinear_arith)` to bridge.
+   This goes further than it sounds: even `0 * g` is uninterpreted, so deriving
+   `n == 0` from `n == 0 * g` is a nonlinear step.
 5. **A recursive spec function's default fuel is 1.** `pow2(1)` unfolds once, to
    `2 · pow2(0)`, and stops — so `assert(pow2(1) == 2)` fails. Conversely
    `reveal_with_fuel(pow2, 125)` is not a proof either; it is an rlimit
@@ -113,6 +118,12 @@ each is worth knowing before touching this code:
    broken foundation invisible in the call graph: `lemma_op_widths` verified
    cleanly for rounds while the `pow2` literals it rests on did not. Read the
    whole error list, not just the errors in the module you are working on.
+
+A practical corollary of (6): when a conjunctive postcondition like `wf()` fails,
+the solver names only the conjunction. Asserting each clause separately turns one
+opaque failure into a pointer at the clause that is actually missing — that is
+how the last four errors in `round.rs` were found, and the asserts were worth
+keeping.
 
 ## One thing verification found that testing could not
 
@@ -129,12 +140,12 @@ The differential suite could never have caught this: it only ever exercises
 reduced pairs, so the missing hypothesis always happened to hold. That is the
 case for doing this at all.
 
-## The advisory CI check
+## The CI check
 
-`verus verify` is `continue-on-error: true`, so the job reports **red** while
-the overall run stays unblocked. That is deliberate: the check should show the
-failure rather than hide it. **Flip it to required when the count reaches zero**
-— it is one clearly-marked line in `.github/workflows/ci.yml`.
+`verus verify` is a required job. It was `continue-on-error: true` while the
+proofs were being discharged — an advisory red is more honest than a hidden
+failure — and was flipped once the count reached zero. A regression in any proof
+now fails the build.
 
 No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 `external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.
@@ -290,13 +301,22 @@ These are what an interval or affine-arithmetic layer would be built on.
 ### V8 — n-ary accumulation (SHOULD)
 
 `nary::theorem_sum_error_accumulation` states that after `k` folded elements the
-result is within `k · 2^-60 · max(1, |exact|)` of the exact fold. The induction
-is: each `add` contributes one fresh unit (R3), and the carried error passes
-through addition with Lipschitz constant `1` (V7).
+result is within `k · m · 2^-60` of the exact fold, where `m` bounds the
+intermediates. The induction is: each `add` contributes one fresh unit (R3), and
+the carried error passes through addition with Lipschitz constant `1` (V7); both
+halves are `lipschitz::lemma_abs_error_step`.
 
-This proof is the least complete in the crate — it is SHOULD tier, and
-`lemma_error_accumulates_additively` is currently a statement with a proof
-sketch rather than a discharged argument. The *empirical* claim is checked:
+**This is stated as an absolute bound, not a relative one, and that is a
+correction rather than a weakening.** The specification's phrasing suggests
+`k · 2^-60 · max(1, |exact|)`, but relative error does not accumulate by
+induction: the magnitude in the bound is the magnitude of the *running* sum,
+which moves at every step, so the induction hypothesis and the goal are about
+different quantities. Carrying an explicit magnitude bound `m` on the
+intermediates is what makes the statement provable and, for the consuming
+engine — where every value lies in `[0, 1]` and `m == 1` — it says the same
+thing.
+
+The empirical claim is checked independently:
 `oracle::long_fold_chain_tracks_oracle` runs 10⁴ mixed operations and asserts
 the accumulated error against the oracle stays inside `k · 2^-60`.
 
@@ -306,18 +326,15 @@ the accumulated error against the oracle stays inside `k · 2^-60`.
 
 | milestone | scope | status |
 |---|---|---|
-| M1 | `Q`, ghost model, canonical constructor, verified GCD | code + specs + proofs written; unchecked |
-| M2 | add/sub/mul/div/neg/abs/cmp with exact-path specs | code + specs + proofs written; unchecked. **Tested green.** |
-| M3 | rounding: budget detection, dyadic snap, R1–R4, exactness theorem | code + specs + proofs written; unchecked. **Tested green against the oracle.** |
+| M1 | `Q`, ghost model, canonical constructor, verified GCD | verified and tested |
+| M2 | add/sub/mul/div/neg/abs/cmp with exact-path specs | verified and tested |
+| M3 | rounding: budget detection, dyadic snap, R1–R4, exactness theorem | verified and tested against the oracle |
 | M4 | `from_f64_dir`, `to_f64`, `from_decimal`, serde, `Display`, `TRUSTED.md` | complete and tested |
 | M5 | malachite oracle harness, property tests, CI | complete and green |
-| M6 | V7 Lipschitz lemmas, interval type `QI` | delivered (stretch) |
+| M6 | V7 Lipschitz lemmas, interval type `QI` | delivered (stretch), verified |
 
-Acceptance per the specification is "M1–M5 verified and green". **Green: yes.
-Verified: not yet** — for the environmental reason at the top of this file. The
-consuming engine rewrite can start against the M2 API surface, which is stable
-and independently validated; it should not be told the proofs have been checked
-until they have.
+Acceptance per the specification is "M1–M5 verified and green". **Both hold.**
+The consuming engine rewrite can start against the M2 API surface.
 
 ## Reproducing the verification
 
