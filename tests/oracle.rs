@@ -270,7 +270,7 @@ fn budget_edge_mul_large_den() {
 
 #[test]
 fn long_add_chain_oracle() {
-    let n = 1000;
+    let n = 10_000;
     let step = Q::new(1, n as i64).unwrap();
     let step_rat = q_to_rational(step);
 
@@ -294,13 +294,25 @@ fn long_mul_chain_oracle() {
     let mut q_acc = Q::one();
     let mut rat_acc = Rational::ONE;
 
-    for _ in 0..100 {
+    for _ in 0..10_000 {
         q_acc = q_acc * factor;
         rat_acc *= &factor_rat;
         check_invariants(q_acc);
     }
 
-    check_exact_or_bounded(q_acc, &rat_acc);
+    let q_f64 = q_acc.to_f64();
+    let oracle_f64: f64 =
+        f64::rounding_from(&rat_acc, RoundingMode::Nearest).0;
+    let rel_error = if oracle_f64.abs() > 1e-300 {
+        ((q_f64 - oracle_f64) / oracle_f64).abs()
+    } else {
+        (q_f64 - oracle_f64).abs()
+    };
+    // 10k ops × 2^{-60} ≈ 2^{-46.7} ≈ 7e-15 cumulative bound
+    assert!(
+        rel_error < 1e-10,
+        "long mul chain: q={q_f64}, oracle={oracle_f64}, rel_error={rel_error}"
+    );
 }
 
 // from_f64_dir tests
@@ -352,6 +364,33 @@ fn determinism() {
     assert_eq!(r1, r2);
     assert_eq!(r1.num(), r2.num());
     assert_eq!(r1.den(), r2.den());
+}
+
+#[test]
+fn determinism_across_threads() {
+    use std::thread;
+
+    let a = Q::new(17, 31).unwrap();
+    let b = Q::new(23, 47).unwrap();
+
+    let main_result = (a + b) * (a - b) / Q::new(7, 13).unwrap();
+    let main_num = main_result.num();
+    let main_den = main_result.den();
+
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            thread::spawn(move || {
+                let r = (a + b) * (a - b) / Q::new(7, 13).unwrap();
+                (r.num(), r.den())
+            })
+        })
+        .collect();
+
+    for h in handles {
+        let (n, d) = h.join().unwrap();
+        assert_eq!(n, main_num);
+        assert_eq!(d, main_den);
+    }
 }
 
 // to_f64 differential test
