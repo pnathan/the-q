@@ -1285,12 +1285,12 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         crate::model::lemma_pow2_124();
         crate::model::lemma_pow2_126();
         crate::model::lemma_max_mag_pow2();
+        // Every branch that returns a denominator of one — zero and both
+        // saturating cases — needs this.
+        lemma_gcd_one();
         lemma_round_frac_wf(n as int, d as int, dir);
     }
     if n == 0 {
-        proof {
-            lemma_gcd_one();
-        }
         return Q { num: 0, den: 1 };
     }
     let m0: i128 = if n < 0 {
@@ -1331,6 +1331,13 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         assert((g as int) * abs_int(red_num(n as int, d as int)) == abs_int(
             red_num(n as int, d as int),
         ) * (g as int)) by (nonlinear_arith);
+        // I1's zero clause on the exact-path return below: `n != 0` and
+        // `n == rn·g` force `rn != 0`, so the clause is vacuous.
+        assert(red_num(n as int, d as int) != 0) by (nonlinear_arith)
+            requires
+                n != 0,
+                (n as int) == red_num(n as int, d as int) * (g as int),
+        ;
     }
     let rn: i128 = n / g;
     let rd: i128 = d / g;
