@@ -242,6 +242,35 @@ pub proof fn lemma_reduce_exact(n: int, d: int)
     }
 }
 
+/// Reduction never makes either component larger.
+///
+/// `lemma_snap_in_budget` bounds the *snapped* pair, but `round_frac` returns
+/// that pair divided through by its gcd; this is what carries the I2 bound the
+/// last step.
+pub proof fn lemma_reduce_shrinks(n: int, d: int)
+    requires
+        d > 0,
+    ensures
+        abs_int(red_num(n, d)) <= abs_int(n),
+        0 < red_den(n, d) <= d,
+{
+    let g = gcd_int(n, d);
+    lemma_reduce_exact(n, d);
+    lemma_reduce_abs(n, d);
+    assert(abs_int(red_num(n, d)) <= abs_int(n)) by (nonlinear_arith)
+        requires
+            g >= 1,
+            abs_int(n) == abs_int(red_num(n, d)) * g,
+            abs_int(red_num(n, d)) >= 0,
+    ;
+    assert(red_den(n, d) <= d) by (nonlinear_arith)
+        requires
+            g >= 1,
+            d == red_den(n, d) * g,
+            red_den(n, d) > 0,
+    ;
+}
+
 /// The magnitude of the reduced numerator is the reduction of the magnitude:
 /// `|n| / g == |n / g|`.
 ///
@@ -307,10 +336,18 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // bound true at the clamped shift; `lemma_gcd_reduce_coprime`
             // above established it.
             assert(gcd_int(rn, rd) == 1);
+            assert(rn != 0) by (nonlinear_arith)
+                requires
+                    n != 0,
+                    n == rn * gcd_int(n, d),
+            ;
             lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
             lemma_reduce_abs(sn, sd);
+            // I2 is bounded on `sn` and `sd`; the returned pair is those
+            // divided by their gcd, which can only be smaller.
+            lemma_reduce_shrinks(sn, sd);
             // I1's zero clause. A zero snapped numerator makes the gcd the
             // whole denominator, so the reduced denominator is exactly one.
             if sn == 0 {
@@ -361,8 +398,20 @@ pub proof fn lemma_snap_result_fields(n: int, d: int, dir: Dir)
     lemma_pow2_pos(s);
     lemma_grid_error_step(rn, rd, s, dir);
     lemma_snap_magnitude(rn, rd, s, dir);
+    assert(rn != 0) by (nonlinear_arith)
+        requires
+            n != 0,
+            n == rn * gcd_int(n, d),
+    ;
     lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
     lemma_reduce_exact(sn, sd);
+    lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
+    lemma_reduce_abs(sn, sd);
+    lemma_reduce_shrinks(sn, sd);
+    if sn == 0 {
+        crate::gcd::lemma_gcd_zero(sd as nat);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
+    }
 }
 
 /// Re-reducing the snapped pair by its gcd preserves the grid error bound.
