@@ -150,6 +150,26 @@ pub proof fn lemma_triangle(
             a2d > 0,
             abs_int(bn * b2d - b2n * bd) * ed <= e2 * (bd * b2d),
     ;
+    // Assemble: scale the triangle inequality by `ed`, then chain the two
+    // weighted hypotheses. Each step names its operands so the blocks stay
+    // small enough to discharge.
+    let dd = (an * bd + bn * ad) * (a2d * b2d) - (a2n * b2d + b2n * a2d) * (ad * bd);
+    let t = abs_int(an * a2d - a2n * ad) * (bd * b2d) + abs_int(bn * b2d - b2n * bd) * (ad * a2d);
+    assert(abs_int(dd) <= t);
+    assert(abs_int(dd) * ed <= t * ed) by (nonlinear_arith)
+        requires
+            ed > 0,
+            abs_int(dd) <= t,
+    ;
+    assert(t * ed == abs_int(an * a2d - a2n * ad) * (bd * b2d) * ed + abs_int(
+        bn * b2d - b2n * bd,
+    ) * (ad * a2d) * ed) by (nonlinear_arith)
+        requires
+            t == abs_int(an * a2d - a2n * ad) * (bd * b2d) + abs_int(bn * b2d - b2n * bd) * (ad
+                * a2d),
+    ;
+    assert(e1 * (ad * a2d) * (bd * b2d) + e2 * (bd * b2d) * (ad * a2d) == (e1 + e2) * ((ad * bd) * (
+    a2d * b2d))) by (nonlinear_arith);
 }
 
 /// **Multiplication on a bounded domain.**
@@ -290,6 +310,26 @@ pub proof fn lemma_frac_triangle(
         by (nonlinear_arith);
     assert((e1 * (xd * yd)) * zd == (e1 * (xd * zd)) * yd) by (nonlinear_arith);
     assert((e2 * (yd * zd)) * xd == (e2 * (xd * zd)) * yd) by (nonlinear_arith);
+    // The triangle inequality is on `|X|·yd`; the hypotheses are on `|A|·ee`
+    // and `|B|·ee`. Scaling by `ee` is the step that joins them, and it is
+    // nonlinear.
+    assert(abs_int(xn * zd - zn * xd) * yd <= abs_int(xn * yd - yn * xd) * zd + abs_int(
+        yn * zd - zn * yd,
+    ) * xd);
+    assert((abs_int(xn * zd - zn * xd) * yd) * ee <= (abs_int(xn * yd - yn * xd) * zd + abs_int(
+        yn * zd - zn * yd,
+    ) * xd) * ee) by (nonlinear_arith)
+        requires
+            ee > 0,
+            abs_int(xn * zd - zn * xd) * yd <= abs_int(xn * yd - yn * xd) * zd + abs_int(
+                yn * zd - zn * yd,
+            ) * xd,
+    ;
+    assert((abs_int(xn * zd - zn * xd) * yd) * ee == (abs_int(xn * zd - zn * xd) * ee) * yd)
+        by (nonlinear_arith);
+    assert((abs_int(xn * yd - yn * xd) * zd + abs_int(yn * zd - zn * yd) * xd) * ee == (abs_int(
+        xn * yd - yn * xd,
+    ) * ee) * zd + (abs_int(yn * zd - zn * yd) * ee) * xd) by (nonlinear_arith);
     assert((abs_int(xn * zd - zn * xd) * ee) * yd <= ((e1 + e2) * (xd * zd)) * yd);
     assert(abs_int(xn * zd - zn * xd) * ee <= (e1 + e2) * (xd * zd)) by (nonlinear_arith)
         requires

@@ -98,11 +98,34 @@ pub proof fn lemma_canonical_eq(a: Q, b: Q)
             assert(b.n() * a.d() == a.d() * b.n()) by (nonlinear_arith);
             assert(b.n() * a.d() == a.d() * b.n());
         }
+        // `lemma_euclid` takes `nat`s, so the divisibility has to be carried
+        // across the sign: `d | n·b.d` gives `d | |n|·b.d` because divisibility
+        // is closed under negation.
+        assert(divides(a.d(), abs_int(a.n()) * b.d())) by {
+            let ka = choose|k: int| a.n() * b.d() == #[trigger] (a.d() * k);
+            if a.n() < 0 {
+                assert(abs_int(a.n()) * b.d() == a.d() * (-ka)) by (nonlinear_arith)
+                    requires
+                        a.n() * b.d() == a.d() * ka,
+                        abs_int(a.n()) == -a.n(),
+                ;
+            }
+        }
         lemma_euclid(a.d() as nat, abs_int(a.n()) as nat, b.d() as nat);
         assert(divides(b.d(), b.n() * a.d())) by {
             assert(b.n() * a.d() == a.n() * b.d());
             assert(a.n() * b.d() == b.d() * a.n()) by (nonlinear_arith);
             assert(a.n() * b.d() == b.d() * a.n());
+        }
+        assert(divides(b.d(), abs_int(b.n()) * a.d())) by {
+            let kb = choose|k: int| b.n() * a.d() == #[trigger] (b.d() * k);
+            if b.n() < 0 {
+                assert(abs_int(b.n()) * a.d() == b.d() * (-kb)) by (nonlinear_arith)
+                    requires
+                        b.n() * a.d() == b.d() * kb,
+                        abs_int(b.n()) == -b.n(),
+                ;
+            }
         }
         lemma_euclid(b.d() as nat, abs_int(b.n()) as nat, a.d() as nat);
         lemma_divides_le(a.d(), b.d());
