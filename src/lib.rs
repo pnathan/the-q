@@ -335,6 +335,7 @@ impl Q {
         let mut den: i128 = 1;
         let mut i = 0u8;
         while i < dec_places {
+            #[allow(clippy::question_mark)]
             match den.checked_mul(10) {
                 Some(v) => den = v,
                 None => return None,
