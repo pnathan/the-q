@@ -1,9 +1,10 @@
 //! The `Q` value type, the rounding-direction enum, and the width budget.
 //!
-//! Fields are `pub(crate)`: the type invariant (canonical + bounded) is
-//! maintained by every constructor and operation, and external code must not be
-//! able to forge a non-canonical `Q`. Read access is via [`Q::numerator`] and
-//! [`Q::denominator`].
+//! The fields are public — Verus cannot state a public invariant about a
+//! datatype whose fields it cannot see (see the note on [`Q`]). The invariant
+//! is established by every constructor and preserved by every operation, and
+//! under Verus it is a precondition of all of them, so a hand-built value is
+//! inert. [`Q::numerator`] and [`Q::denominator`] are the intended accessors.
 
 use verus_builtin_macros::verus;
 
@@ -60,10 +61,27 @@ pub enum Dir {
 /// bit pattern. `Ord` is *not* derived — the derived lexicographic order on
 /// `(num, den)` is not the order on rationals — it is implemented by
 /// cross-multiplication and proven to agree with the ghost order (V6).
+///
+/// # Why the fields are public
+///
+/// Verus treats a datatype as *opaque* wherever any of its fields is invisible,
+/// and a public specification must be well-formed everywhere it is visible. With
+/// `pub(crate)` fields, `Q::wf` could not so much as mention `self.num` — the
+/// type invariant would be unstatable in the crate's public API.
+///
+/// The practical consequence is that `Q { num: 3, den: 0 }` compiles. It is
+/// still not usable: **every** operation in this crate `requires` `Q::wf`, so
+/// under Verus a hand-built value cannot be passed to anything until the caller
+/// discharges the invariant — which a malformed one cannot do. In unverified
+/// Rust it is an ordinary footgun. Build values with [`Q::new`],
+/// [`Q::from_decimal`] or [`Q::from_int`], which canonicalise and establish the
+/// invariant for you.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Q {
-    pub(crate) num: i64,
-    pub(crate) den: i64,
+    /// The numerator. Coprime to `den`; `|num| <= MAX_MAG`.
+    pub num: i64,
+    /// The denominator. Strictly positive; `den <= MAX_MAG`.
+    pub den: i64,
 }
 
 impl Q {

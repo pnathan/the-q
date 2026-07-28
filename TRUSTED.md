@@ -111,7 +111,7 @@ ergonomics at the crate boundary.
 | `impl Ord for Q`, `impl PartialOrd for Q` | `i128` cross-multiplication, identical to the verified `Q::compare` |
 | `impl Add/Sub/Mul/Neg for Q` | delegate to `Q::add`/`Q::sub`/`Q::mul`/`Q::neg` |
 | `impl Display for Q` | `write!(f, "{}/{}", num, den)` |
-| `impl Serialize/Deserialize for Q` (feature `serde`) | encode the `(num, den)` pair; decode through the verified `Q::new`, which rejects anything that would violate the type invariant |
+| `impl Serialize/Deserialize for Q` (feature `serde`) | encode the `(num, den)` pair; decode through the verified `Q::new`, so a hand-written or corrupted payload yields an error rather than a value violating the type invariant |
 
 `Div` is deliberately **not** implemented: division carries a precondition
 (`!b.is_zero()`) that an operator cannot express. Callers use `Q::div`, and

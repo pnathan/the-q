@@ -14,8 +14,15 @@ assert_eq!(combined.to_string(), "51/200");
 
 `Q` is a rational `num / den` in two `i64` fields, always canonical
 (`den > 0`, `gcd(|num|, den) == 1`) and always bounded
-(`|num| <= 2^62 - 1`, `den <= 2^62 - 1`). It is `Copy`, 128 bits, no heap, no
-allocation, trivially `Send + Sync`.
+(`|num| <= 2^62 - 1`, `den <= 2^62 - 1`) — provided you build it with the
+constructors. It is `Copy`, 128 bits, no heap, no allocation, trivially
+`Send + Sync`.
+
+The fields are public because Verus cannot state a public invariant about a
+datatype whose fields it cannot see. Under Verus that costs nothing: every
+operation `requires` the invariant, so a hand-built `Q { num: 3, den: 0 }`
+cannot be passed to anything. In unverified Rust it is a footgun — use
+`Q::new`, `Q::from_decimal` or `Q::from_int`.
 
 ## Why
 
