@@ -7,7 +7,6 @@
 
 use vstd::prelude::*;
 use crate::q::{Q, Dir, BOUND};
-use crate::gcd::gcd_exec;
 
 /// Error bound exponent: B = 60.
 pub const B: u32 = 60;
@@ -43,85 +42,98 @@ pub open spec fn wf(q: Q) -> bool {
 
 /// Build a Q from i128 (n, d) with d > 0 by dyadic snap if over budget.
 /// Called by q_from_i128 after GCD reduction.
+///
+/// Algorithm: choose s = clamp(62 + bitlen(d) - bitlen(|n|), 0, 62) so the
+/// dyadic approximation k/2^s has |k| ≤ BOUND and 2^s ≤ BOUND.
+/// Compute k via binary long division — never computing n*2^s directly — so
+/// no intermediate value exceeds 2*d in magnitude (fits i128).
 pub fn round_to_budget(n: i128, d: i128, dir: Dir) -> Q {
     debug_assert!(d > 0);
-    if n == 0 {
-        return Q { num: 0, den: 1 };
-    }
-    // R1: if already within budget, return exact.
+    if n == 0 { return Q { num: 0, den: 1 }; }
+    // R1: exact passthrough.
     if n >= -(BOUND as i128) && n <= BOUND as i128 && d <= BOUND as i128 {
         return Q { num: n as i64, den: d as i64 };
     }
-    // Dyadic snap: shift both n and d right by s bits so that |n>>s| ≤ BOUND and d>>s ≤ BOUND.
-    // s is chosen from the larger of |n| and d.
-    let abs_n = if n < 0 { -n } else { n };
-    let s = bits_to_shift(abs_n.max(d));
-    let nd = shift_num(n, s, dir);
-    let dd = shift_den(d, s);
 
-    // GCD-reduce the shifted result.
-    if nd == 0 {
-        return Q { num: 0, den: 1 };
+    let negative = n < 0;
+    let abs_n = if negative { -n } else { n } as u128;
+    let abs_d = d as u128;
+
+    // Bit-lengths: bitlen(x) = 128 - leading_zeros(x), 0 for x=0.
+    let bn = 128u32.saturating_sub(abs_n.leading_zeros());
+    let bd = 128u32.saturating_sub(abs_d.leading_zeros());
+
+    // If the value clearly exceeds BOUND (integer part alone > BOUND): saturate.
+    if bn > bd + 62 {
+        return if negative { Q { num: -BOUND, den: 1 } } else { Q { num: BOUND, den: 1 } };
     }
-    let abs_nd = if nd < 0 { -nd } else { nd } as u64;
-    let g = gcd_exec(abs_nd, dd as u64) as i128;
-    let num_r = nd / g;
-    let den_r = dd / g;
 
-    // Shifting by s bits guarantees |nd| ≤ BOUND and dd ≤ BOUND before GCD reduction.
-    // After GCD reduction they can only shrink. But clamp defensively for safety.
-    let num_out = num_r.clamp(-(BOUND as i128), BOUND as i128) as i64;
-    let den_out = den_r.clamp(1, BOUND as i128) as i64;
-    Q { num: num_out, den: den_out }
+    // s: number of binary fractional digits in the approximation k/2^s.
+    // s = 61 - max(0, bn - bd), so that q_int * 2^s ≤ 2^62 - 1 = BOUND and
+    // 2^(s-tz) ≤ 2^61 ≤ BOUND (satisfying I2 on the denominator without clamping).
+    let s: u32 = {
+        let diff = if bn > bd { bn - bd } else { 0 };
+        if diff >= 61 { 0 } else { 61 - diff }
+    };
+
+    // Compute q = floor(abs_n / abs_d) and rem = abs_n % abs_d via Euclidean division.
+    let q_int = abs_n / abs_d;
+    let rem_int = abs_n % abs_d;
+
+    // Saturate if the integer part alone exceeds BOUND (can happen when bn == bd + 62).
+    if q_int > BOUND as u128 {
+        return if negative { Q { num: -BOUND, den: 1 } } else { Q { num: BOUND, den: 1 } };
+    }
+
+    // k_scaled = q_int * 2^s + floor(rem_int * 2^s / abs_d), the floor of abs_n * 2^s / abs_d.
+    // We compute the fractional part via binary long division to avoid overflow.
+    let q_scaled = q_int << s;
+    let (frac_q, frac_rem) = long_div_scaled(rem_int, abs_d, s);
+    let k_floor = q_scaled + frac_q;
+
+    // Apply directed rounding: "round up magnitude" depends on sign and dir.
+    let round_up_magnitude = match (dir, negative) {
+        (Dir::Down, false) | (Dir::Up, true)  => false,           // toward −∞: floor magnitude
+        (Dir::Up,   false) | (Dir::Down, true) => frac_rem > 0,   // toward +∞: ceil magnitude
+        (Dir::Nearest, _)                       => frac_rem * 2 >= abs_d, // round-half-up
+    };
+    let k = if round_up_magnitude { k_floor + 1 } else { k_floor };
+
+    // Saturate if rounding pushed us over BOUND.
+    let k = k.min(BOUND as u128);
+
+    if k == 0 { return Q { num: 0, den: 1 }; }
+
+    // GCD-reduce k/2^s. gcd(k, 2^s) = 2^min(trailing_zeros(k), s).
+    let tz = k.trailing_zeros().min(s);
+    let num_abs = (k >> tz) as i64;
+    let den_val = (1u128 << (s - tz)) as i64;
+
+    // Clamp to BOUND defensively (should already hold by construction).
+    let num_abs = num_abs.min(BOUND);
+    let den_val = den_val.min(BOUND);
+
+    let num = if negative { -num_abs } else { num_abs };
+    Q { num, den: den_val }
 }
 
-/// Find the number of right-shift bits to bring `max_val` within BOUND.
-/// `max_val` is max(|n|, d) — the larger of numerator magnitude and denominator.
-fn bits_to_shift(max_val: i128) -> u32 {
-    debug_assert!(max_val > 0);
-    if max_val <= BOUND as i128 {
-        return 0;
-    }
-    let v_bits = 128 - max_val.leading_zeros();
-    let b_bits = 64 - (BOUND as u64).leading_zeros(); // BOUND ≈ 2^62
-    if v_bits <= b_bits { 0 } else { v_bits - b_bits }
-}
-
-/// Shift numerator right by s, rounding in the specified direction.
-fn shift_num(n: i128, s: u32, dir: Dir) -> i128 {
-    if s == 0 {
-        return n;
-    }
-    if s >= 127 {
-        return if n > 0 { 1 } else if n < 0 { -1 } else { 0 };
-    }
-    let mask = (1i128 << s) - 1;
-    let floor = n >> s; // arithmetic shift, rounds toward -inf
-    let frac_bits = n & mask;
-    match dir {
-        Dir::Down => floor,
-        Dir::Up => {
-            if frac_bits != 0 { floor + 1 } else { floor }
+/// Binary long division: compute (floor(a * 2^k / b), (a * 2^k) % b).
+///
+/// Invariant: remainder < b throughout, so no intermediate value exceeds 2*b,
+/// and since b ≤ 2^124 < 2^127, no u128 overflow occurs.
+fn long_div_scaled(a: u128, b: u128, k: u32) -> (u128, u128) {
+    debug_assert!(b > 0);
+    let mut q: u128 = 0;
+    let mut rem: u128 = a;
+    for _ in 0..k {
+        rem <<= 1;
+        q <<= 1;
+        if rem >= b {
+            q += 1;
+            rem -= b;
         }
-        Dir::Nearest => {
-            let half = 1i128 << (s - 1);
-            if frac_bits > half || (frac_bits == half && (floor & 1) != 0) {
-                floor + 1 // round up
-            } else {
-                floor
-            }
-        }
     }
-}
-
-/// Shift denominator right (floor division) by s bits.
-fn shift_den(d: i128, s: u32) -> i128 {
-    if s == 0 { d }
-    else if s >= 127 { 1 }
-    else {
-        let r = d >> s;
-        if r < 1 { 1 } else { r }
-    }
+    (q, rem)
 }
 
 #[cfg(test)]

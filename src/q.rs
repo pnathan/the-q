@@ -119,11 +119,13 @@ impl Q {
         crate::convert::to_f64(self)
     }
 
-    /// Canonicalize (num, den): sign to den>0, GCD-reduce. None if den==0.
+    /// Canonicalize (num, den): sign to den>0, GCD-reduce.
+    /// Returns None if den==0, if either argument is i64::MIN (negation would overflow),
+    /// or if the reduced value violates I2 (|num| > BOUND or den > BOUND).
     pub fn new(num: i64, den: i64) -> Option<Q> {
-        if den == 0 {
-            return None;
-        }
+        if den == 0 { return None; }
+        // i64::MIN cannot be negated safely.
+        if num == i64::MIN || den == i64::MIN { return None; }
         let (n, d) = if den < 0 { (-num, -den) } else { (num, den) };
         let g = gcd_exec(
             (if n < 0 { -n } else { n }) as u64,
@@ -131,11 +133,10 @@ impl Q {
         ) as i64;
         let num_r = n / g;
         let den_r = d / g;
-        if num_r == 0 {
-            Some(Q { num: 0, den: 1 })
-        } else {
-            Some(Q { num: num_r, den: den_r })
-        }
+        if num_r == 0 { return Some(Q { num: 0, den: 1 }); }
+        // Enforce I2: |num| ≤ BOUND, den ≤ BOUND.
+        if num_r > BOUND || num_r < -BOUND || den_r > BOUND { return None; }
+        Some(Q { num: num_r, den: den_r })
     }
 
     // ─── Predicates ─────────────────────────────────────────────────────────
@@ -425,5 +426,47 @@ mod tests {
         assert!(Q::from_int(-BOUND).is_some());
         assert!(Q::from_int(i64::MIN).is_none());
         assert!(Q::from_int(i64::MAX).is_none());
+    }
+
+    // Regression tests for review-identified bugs.
+
+    #[test]
+    fn new_enforces_i2() {
+        // i64::MAX > BOUND = 2^62 - 1, violates I2.
+        assert!(Q::new(i64::MAX, 1).is_none());
+        assert!(Q::new(1, i64::MAX).is_none());
+        // BOUND itself is fine.
+        assert!(Q::new(BOUND, 1).is_some());
+        assert!(Q::new(-BOUND, 1).is_some());
+    }
+
+    #[test]
+    fn new_rejects_i64_min() {
+        // Negation of i64::MIN overflows; constructor must return None, not panic.
+        assert!(Q::new(i64::MIN, 1).is_none());
+        assert!(Q::new(i64::MIN, 2).is_none());
+        assert!(Q::new(1, i64::MIN).is_none());
+    }
+
+    #[test]
+    fn checked_div_zero_returns_none() {
+        let a = Q::new(1, 2).unwrap();
+        assert!(a.checked_div(Q::zero()).is_none());
+        assert!(a.checked_div(Q::one()).is_some());
+    }
+
+    #[test]
+    fn rounding_large_ratio_error_bound() {
+        // add(7/1099511627791, 1099511627743/5): exact ≈ 2.199e11.
+        // The old algorithm produced ~2.2e14 (off by factor 1000). Verify within R3.
+        let a = Q::new(7, 1099511627791).unwrap();
+        let b = Q::new(1099511627743, 5).unwrap();
+        let r = a.add(b);
+        let exact: f64 = 7.0 / 1099511627791.0 + 1099511627743.0 / 5.0;
+        let got: f64 = r.num as f64 / r.den as f64;
+        let rel_err = (got - exact).abs() / exact.abs().max(1.0);
+        // R3: relative error ≤ 2^-60.
+        assert!(rel_err <= 2f64.powi(-60) * 4.0,
+            "relative error {rel_err} exceeds R3 (got {got}, exact {exact})");
     }
 }
