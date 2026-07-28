@@ -261,6 +261,10 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             lemma_pow2_pos(s);
             lemma_grid_error_step(rn, rd, s, dir);
             lemma_snap_magnitude(rn, rd, s, dir);
+            // Coprimality of the reduced pair is what makes the numerator
+            // bound true at the clamped shift; `lemma_gcd_reduce_coprime`
+            // above established it.
+            assert(gcd_int(rn, rd) == 1);
             lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
@@ -281,6 +285,10 @@ pub proof fn lemma_gcd_one()
 
 /// The snapped numerator is within one of the exact scaled value, which is the
 /// form `lemma_snap_in_budget` consumes.
+///
+/// From `|sn·rd - rn·2^s| <= rd` (one grid step) and
+/// `|rn|·2^s == q·rd + r` with `0 <= r < rd`, we get
+/// `|sn|·rd <= q·rd + r + rd < (q + 2)·rd`, hence `|sn| <= q + 1`.
 pub proof fn lemma_snap_magnitude(rn: int, rd: int, s: nat, dir: Dir)
     requires
         rd > 0,
@@ -290,16 +298,33 @@ pub proof fn lemma_snap_magnitude(rn: int, rd: int, s: nat, dir: Dir)
     lemma_pow2_pos(s);
     lemma_grid_error_step(rn, rd, s, dir);
     let sn = grid_num(rn, rd, s, dir);
-    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_int(rn) * pow2(s), rd);
-    assert(abs_int(sn * rd - rn * pow2(s)) <= rd);
+    let m = abs_int(rn) * pow2(s);
+    let q = m / rd;
+    let r = m % rd;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m, rd);
+    assert(0 <= r < rd);
+    assert(m == rd * q + r);
     crate::model::lemma_abs_mul_pos(sn, rd);
     crate::model::lemma_abs_mul_pos(rn, pow2(s));
-    assert(abs_int(sn) * rd <= abs_int(rn) * pow2(s) + rd) by (nonlinear_arith)
+    assert(abs_int(rn * pow2(s)) == m);
+    // |sn·rd| <= |rn·2^s| + |sn·rd - rn·2^s| <= m + rd.
+    assert(abs_int(sn) * rd <= m + rd) by (nonlinear_arith)
         requires
-            rd > 0,
             abs_int(sn * rd - rn * pow2(s)) <= rd,
             abs_int(sn * rd) == abs_int(sn) * rd,
-            abs_int(rn * pow2(s)) == abs_int(rn) * pow2(s),
+            abs_int(rn * pow2(s)) == m,
+    ;
+    assert(abs_int(sn) * rd < (q + 2) * rd) by (nonlinear_arith)
+        requires
+            rd > 0,
+            abs_int(sn) * rd <= m + rd,
+            m == rd * q + r,
+            r < rd,
+    ;
+    assert(abs_int(sn) < q + 2) by (nonlinear_arith)
+        requires
+            rd > 0,
+            abs_int(sn) * rd < (q + 2) * rd,
     ;
 }
 
@@ -1179,15 +1204,22 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
 
 /// The snapped numerator and denominator both fit the budget.
 ///
-/// Numerator: `|sn| <= |rn|·2^s/rd + 1 < 2^k · 2^(61-k) + 1 = 2^61 + 1`. When
-/// the shift is clamped to `0` (`k >= 61`) the reduced denominator is at least
-/// `2` — otherwise the exact path would have been taken — so the value is not
-/// an integer, `|x| < MAX_MAG` strictly, and `ceil(|x|) <= MAX_MAG`.
 /// Denominator: `2^s <= 2^61 <= MAX_MAG`.
+///
+/// Numerator, for `k <= 60`: `s = 61 - k` and `|rn| < 2^k·rd`, so the snapped
+/// quotient is below `2^61` and one more than it still fits.
+///
+/// Numerator, for `k >= 61` (shift clamped to `0`): the result is `ceil(|x|)`,
+/// so it is enough that `floor(|x|) < MAX_MAG`. If it were equal, then
+/// `|rn| == MAX_MAG·rd` exactly, so `rd` divides `|rn|`; coprimality forces
+/// `rd == 1`, and then `|rn| == MAX_MAG` means the pair *did* fit the budget —
+/// contradicting the hypothesis that it did not. That is why coprimality is a
+/// precondition here: without it the bound is simply false.
 pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
     requires
         rd > 0,
         rn != 0,
+        gcd_int(rn, rd) == 1,
         abs_int(rn) <= max_mag() * rd,
         !fits_budget(rn, rd),
         k == bitlen(abs_int(rn) / rd),
@@ -1197,22 +1229,103 @@ pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
         abs_int(sn) <= max_mag(),
         pow2(s) <= max_mag(),
 {
+    crate::model::lemma_max_mag_pow2();
     lemma_pow2_pos(s);
     lemma_pow2_mono(s, 61nat);
-    assert(pow2(61) <= max_mag()) by {
-        lemma_pow2_pos(61nat);
-    }
     let ip = abs_int(rn) / rd;
+    let m = abs_int(rn) * pow2(s);
+    let q = m / rd;
     lemma_bitlen_char(ip);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_int(rn), rd);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m, rd);
+    assert(abs_int(rn) == rd * ip + abs_int(rn) % rd);
+    assert(m == rd * q + m % rd);
     if k >= 61 {
-        // rd >= 2 here: rd == 1 would mean |rn| == |x| <= max_mag, i.e. the
-        // exact path, contradicting !fits_budget.
-        assert(rd >= 2);
-        assert(ip < max_mag());
+        assert(s == 0 && pow2(s) == 1);
+        assert(m == abs_int(rn));
+        assert(q == ip);
+        // ip <= max_mag from the magnitude hypothesis.
+        assert(ip <= max_mag()) by (nonlinear_arith)
+            requires
+                rd > 0,
+                abs_int(rn) <= max_mag() * rd,
+                abs_int(rn) == rd * ip + abs_int(rn) % rd,
+                abs_int(rn) % rd >= 0,
+        ;
+        // Strictness: equality would make rd divide |rn|.
+        if ip == max_mag() {
+            assert(abs_int(rn) == max_mag() * rd) by (nonlinear_arith)
+                requires
+                    rd > 0,
+                    ip == max_mag(),
+                    abs_int(rn) <= max_mag() * rd,
+                    abs_int(rn) == rd * ip + abs_int(rn) % rd,
+                    abs_int(rn) % rd >= 0,
+            ;
+            assert(abs_int(rn) == rd * max_mag()) by (nonlinear_arith)
+                requires
+                    abs_int(rn) == max_mag() * rd,
+            ;
+            assert(divides(rd, abs_int(rn)));
+            lemma_coprime_forces_unit(rn, rd);
+            assert(rd == 1);
+            assert(abs_int(rn) == max_mag());
+            assert(fits_budget(rn, rd));
+        }
     } else {
+        assert(s == 61 - k);
         crate::model::lemma_pow2_add(s, k);
         assert(pow2(s) * pow2(k) == pow2(61));
+        lemma_pow2_pos(k);
+        // |rn| < (ip + 1)·rd <= 2^k·rd
+        assert(abs_int(rn) < (ip + 1) * rd) by (nonlinear_arith)
+            requires
+                abs_int(rn) == rd * ip + abs_int(rn) % rd,
+                0 <= abs_int(rn) % rd < rd,
+        ;
+        assert(ip + 1 <= pow2(k));
+        assert(abs_int(rn) < pow2(k) * rd) by (nonlinear_arith)
+            requires
+                rd > 0,
+                abs_int(rn) < (ip + 1) * rd,
+                ip + 1 <= pow2(k),
+        ;
+        // q·rd <= m == |rn|·2^s < 2^k·rd·2^s == 2^61·rd, so q < 2^61.
+        assert(q * rd <= m) by (nonlinear_arith)
+            requires
+                m == rd * q + m % rd,
+                m % rd >= 0,
+        ;
+        assert(m < pow2(61) * rd) by (nonlinear_arith)
+            requires
+                rd > 0,
+                pow2(s) > 0,
+                m == abs_int(rn) * pow2(s),
+                abs_int(rn) < pow2(k) * rd,
+                pow2(s) * pow2(k) == pow2(61),
+        ;
+        assert(q < pow2(61)) by (nonlinear_arith)
+            requires
+                rd > 0,
+                q * rd <= m,
+                m < pow2(61) * rd,
+        ;
     }
+}
+
+/// A reduced fraction whose denominator divides its numerator has denominator
+/// one.
+pub proof fn lemma_coprime_forces_unit(rn: int, rd: int)
+    requires
+        rd > 0,
+        gcd_int(rn, rd) == 1,
+        divides(rd, abs_int(rn)),
+    ensures
+        rd == 1,
+{
+    crate::gcd::lemma_gcd_greatest(abs_int(rn) as nat, rd as nat, rd);
+    crate::model::lemma_divides_basic(rd);
+    crate::model::lemma_divides_le(rd, 1);
 }
 
 } // verus!
