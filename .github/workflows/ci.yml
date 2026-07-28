@@ -95,8 +95,31 @@ jobs:
           test -n "$dir" || { echo "cargo-verus not found in the archive"; exit 1; }
           echo "$dir" >> "$GITHUB_PATH"
 
+      # Verus is a rustc driver, so it links against one exact compiler version
+      # and refuses to run against any other. Read that version out of the
+      # archive's rust-toolchain.toml, and fall back to parsing the verifier's
+      # own error message if that file ever moves.
+      - name: Install the rustc version Verus is built against
+        run: |
+          set -euo pipefail
+          dir=$(find "$HOME/verus" -maxdepth 2 -name 'cargo-verus' -printf '%h\n' | head -1)
+          tc=""
+          tcfile=$(find "$HOME/verus" -maxdepth 3 -name 'rust-toolchain.toml' | head -1)
+          if [ -n "$tcfile" ]; then
+            tc=$(grep -oP 'channel\s*=\s*"\K[^"]+' "$tcfile" | head -1 || true)
+          fi
+          if [ -z "$tc" ]; then
+            tc=$("$dir/verus" --version 2>&1 \
+              | grep -oP 'required rust toolchain \K[0-9][0-9.]*' | head -1 || true)
+          fi
+          test -n "$tc" || { echo "could not determine the rustc version Verus needs"; exit 1; }
+          echo "Verus is built against rustc $tc"
+          rustup toolchain install "$tc" --profile minimal
+          rustup default "$tc"
+          rustc --version
+
       - name: Verus version
-        run: verus --version || true
+        run: verus --version
 
       - name: Verify
         run: cargo verus verify --all-features

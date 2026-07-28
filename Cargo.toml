@@ -10,6 +10,11 @@ readme = "README.md"
 keywords = ["rational", "verification", "verus", "arithmetic", "exact"]
 categories = ["mathematics"]
 
+# Opt this crate into `cargo verus verify`. Without it the driver reports
+# "cargo did not find any crates that opted into verification" and does nothing.
+[package.metadata.verus]
+verify = true
+
 [lib]
 name = "the_q"
 path = "src/lib.rs"

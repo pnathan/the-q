@@ -39,6 +39,18 @@ The CI workflow already runs `cargo verus verify`. It is marked
 worse than an honest advisory one. **Flip it to required the moment the proofs
 go through**; the line is commented in `.github/workflows/ci.yml`.
 
+Two things the first CI run established about the *harness*, both now fixed:
+
+* Verus is a rustc driver, so it links against one exact compiler version and
+  refuses to run against any other (release `0.2026.07.27.31579f0` wants
+  `1.97.1`). The workflow now reads that version out of the release archive's
+  `rust-toolchain.toml`, installs it with rustup, and makes it the default.
+* `cargo verus` verifies nothing unless the crate opts in. `Cargo.toml` now
+  carries `[package.metadata.verus] verify = true`.
+
+So the *plumbing* is exercised and working. What has still never run is the
+solver against these proofs.
+
 No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 `external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.
 
