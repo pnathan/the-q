@@ -409,6 +409,18 @@ impl Q {
     {
         proof {
             lemma_op_widths(a, b);
+            crate::model::lemma_pow2_124();
+            crate::model::lemma_pow2_126();
+            // The divisor's sign is the numerator's, because `a.d() > 0`; that
+            // is what makes the flip below land on `div_d(a, b) > 0`.
+            assert(b.n() > 0 ==> a.d() * b.n() > 0) by (nonlinear_arith)
+                requires
+                    a.d() > 0,
+            ;
+            assert(b.n() < 0 ==> a.d() * b.n() < 0) by (nonlinear_arith)
+                requires
+                    a.d() > 0,
+            ;
         }
         let mut n: i128 = (a.num as i128) * (b.den as i128);
         let mut d: i128 = (a.den as i128) * (b.num as i128);
@@ -584,6 +596,11 @@ impl Q {
                 assert(gcd_int(self.d(), self.n()) == gcd_int(self.n(), self.d())) by {
                     lemma_gcd_sym(abs_int(self.n()) as nat, self.d() as nat);
                 }
+                assert(self.d() * self.n() > 0) by (nonlinear_arith)
+                    requires
+                        self.d() > 0,
+                        self.n() > 0,
+                ;
             }
             Q { num: self.den, den: self.num }
         } else {
@@ -591,6 +608,11 @@ impl Q {
                 assert(gcd_int(-self.d(), -self.n()) == gcd_int(self.n(), self.d())) by {
                     lemma_gcd_sym(abs_int(self.n()) as nat, self.d() as nat);
                 }
+                assert((-self.d()) * self.n() > 0) by (nonlinear_arith)
+                    requires
+                        self.d() > 0,
+                        self.n() < 0,
+                ;
             }
             Q { num: 0 - self.den, den: 0 - self.num }
         }
@@ -661,6 +683,12 @@ pub proof fn lemma_op_widths(a: Q, b: Q)
         // solver, so a bound stated with it proves nothing about an `i128`.
         abs_int(a.n() * b.d()) < 21267647932558653966460912964485513216,
         abs_int(b.n() * a.d()) < 21267647932558653966460912964485513216,
+        // The two cross terms in the order `div_dir` writes them. Stating both
+        // orders is not redundant: `abs_int` is applied to the product, so the
+        // solver would have to commute *inside* an opaque application.
+        abs_int(a.d() * b.n()) < 21267647932558653966460912964485513216,
+        abs_int(a.d() * b.n()) <= pow2(124),
+        abs_int(a.n() * b.d()) <= pow2(124),
         abs_int(a.n() * b.n()) < 21267647932558653966460912964485513216,
         abs_int(a.d() * b.d()) < 21267647932558653966460912964485513216,
         abs_int(add_n(a, b)) < 42535295865117307932921825928971026432,
@@ -677,6 +705,7 @@ pub proof fn lemma_op_widths(a: Q, b: Q)
 {
     lemma_mul_in_i128(a.n(), b.d());
     lemma_mul_in_i128(b.n(), a.d());
+    lemma_mul_in_i128(a.d(), b.n());
     lemma_mul_in_i128(a.n(), b.n());
     lemma_mul_in_i128(a.d(), b.d());
     lemma_pow2_124();
@@ -798,9 +827,15 @@ pub fn prod_d_exec(a: Q, b: Q) -> (r: i128)
 pub fn magnitude_fits_exec(n: i128, d: i128) -> (r: bool)
     requires
         d > 0,
+        // Negating `n` below is only safe away from `i128::MIN`. Every caller
+        // passes a numerator bounded by `lemma_op_widths`, well inside this.
+        abs_int(n as int) < crate::round::num_input_bound(),
     ensures
         r <==> magnitude_fits(n as int, d as int),
 {
+    proof {
+        crate::model::lemma_pow2_126();
+    }
     let m: i128 = if n < 0 {
         0 - n
     } else {
