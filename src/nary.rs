@@ -319,6 +319,11 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)
         assert(sum_num(s) == 0 && sum_den(s) == 1);
         assert(fold_val(s).n() == 0 && fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
+        // Both sides are zero, but `abs_int(0)` and the `0 · m · …` product
+        // each need saying.
+        assert(fold_val(s).n() * sum_den(s) - sum_num(s) * fold_val(s).d() == 0);
+        assert(crate::model::abs_int(0) == 0);
+        assert((s.len() as int) * m * (fold_val(s).d() * sum_den(s)) == 0);
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -350,6 +355,14 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)
         assert(sum_num(s) == sum_num(init) * last.d() + last.n() * sum_den(init));
         assert(sum_den(s) == sum_den(init) * last.d());
         assert(s.len() == init.len() + 1);
+        // Restate the step lemma's conclusion in the goal's own vocabulary.
+        assert(within_abs_error(
+            fold_val(s),
+            sum_num(init) * last.d() + last.n() * sum_den(init),
+            sum_den(init) * last.d(),
+            (init.len() + 1) as nat,
+            m,
+        ));
     }
 }
 

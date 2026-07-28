@@ -182,9 +182,16 @@ impl Q {
         };
         if arn <= MAX_MAG as i128 && rd <= MAX_MAG as i128 {
             proof {
+                lemma_max_mag_pow2();
                 crate::round::lemma_reduce_exact(n as int, d as int);
                 crate::gcd::lemma_gcd_reduce_coprime(abs_int(n as int) as nat, d as nat);
                 crate::round::lemma_reduce_abs(n as int, d as int);
+                // I1's zero clause: `gcd(0, d) == d`, so a zero numerator
+                // reduces the denominator all the way to one.
+                if num == 0 {
+                    assert(0nat % (d as nat) == 0nat);
+                    assert(gcd_int(0, d as int) == d as int);
+                }
                 // n == rn·g and d == rd·g, and (n, d) is (num, den) up to a
                 // shared sign flip, so rn/rd is num/den as a value either way.
                 lemma_new_value(
