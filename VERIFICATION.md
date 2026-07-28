@@ -121,9 +121,12 @@ den > 0  ∧  gcd(|num|, den) == 1  ∧  (num == 0 ⟹ den == 1)
 ```
 
 Every constructor `ensures` it, every operation `requires` it of its inputs and
-`ensures` it of its result. The `Q` fields are `pub(crate)`, so no external code
-can build a value that violates it; `serde` deserialisation goes through
-`Q::new` and returns an error rather than a malformed value.
+`ensures` it of its result. The `Q` fields are public — Verus cannot state a
+public invariant about a datatype whose fields it cannot see — so a caller *can*
+write `Q { num: 3, den: 0 }`; what it cannot do is pass it to anything, since
+every operation requires the invariant and a malformed value cannot discharge
+it. `serde` deserialisation goes through `Q::new` and returns an error rather
+than a malformed value.
 
 Runtime cross-check: `common::assert_wf` re-derives canonicality with its own
 independent gcd and is called on every value produced in
