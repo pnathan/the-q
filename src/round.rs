@@ -324,7 +324,17 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
         // that with `|red_num|`, which is what `gcd_int(rn, rd)` unfolds to.
         lemma_reduce_abs(n, d);
         lemma_reduce_magnitude_fits(n, d);
+        // I1's zero clause for the exact-path arm below: `n != 0` and
+        // `n == rn·g` force `rn != 0`, so the clause is vacuous there.
+        assert(rn != 0) by (nonlinear_arith)
+            requires
+                n != 0,
+                n == rn * gcd_int(n, d),
+        ;
         if fits_budget(rn, rd) {
+            // `wf` reads the `i64` fields; `fits_budget` bounds the `int`s.
+            assert(((rn as i64) as int) == rn);
+            assert(((rd as i64) as int) == rd);
         } else {
             let s = snap_shift(rn, rd);
             let sn = grid_num(rn, rd, s, dir);
@@ -336,11 +346,6 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // bound true at the clamped shift; `lemma_gcd_reduce_coprime`
             // above established it.
             assert(gcd_int(rn, rd) == 1);
-            assert(rn != 0) by (nonlinear_arith)
-                requires
-                    n != 0,
-                    n == rn * gcd_int(n, d),
-            ;
             lemma_snap_in_budget(rn, rd, s, sn, crate::model::bitlen(abs_int(rn) / rd));
             lemma_reduce_exact(sn, sd);
             lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
