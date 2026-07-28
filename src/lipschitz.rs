@@ -437,7 +437,8 @@ pub proof fn lemma_abs_error_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: n
     assert(m + (k as int) * m == ((k + 1) as int) * m) by (nonlinear_arith);
 }
 
-/// The relative-error unit used throughout: `2^-61`.
+/// The relative-error unit used throughout, as its reciprocal: `2^61`, so
+/// that the bounds stay division-free.
 pub open spec fn unit_error() -> int {
     pow2(precision_b())
 }

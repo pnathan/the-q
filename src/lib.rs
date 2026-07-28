@@ -48,10 +48,11 @@
 //!   is **not globally monotone**; the *rounding step itself* is (R4 is stated
 //!   per-grid, as the specification permits). `README.md` carries the
 //!   counterexample.
-//! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) cannot
-//!   satisfy the R3 error bound — no representable `Q` is that large. Such
-//!   results **saturate**, and the `checked_*` variants report them as `None`.
-//!   No engine value comes near this ceiling.
+//! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) is placed
+//!   **outside** the R3 contract by choice, not by necessity — some such values
+//!   do have a `Q` within the bound. Those results **saturate**, and the
+//!   `checked_*` variants report them as `None`. No engine value comes near
+//!   this ceiling.
 //!
 //! ## Verification
 //!

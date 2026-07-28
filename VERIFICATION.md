@@ -128,7 +128,7 @@ keeping.
 ## One thing verification found that testing could not
 
 `lemma_snap_in_budget` was stated with a hypothesis missing, and the stated
-bound was **false without it**. At the clamped shift (`k >= 61`, `s == 0`) the
+bound was **false without it**. At the clamped shift (`k >= 62`, `s == 0`) the
 snap returns `ceil(|x|)`, so the budget bound needs `floor(|x|) < MAX_MAG`
 strictly; nothing ruled out equality. If it were equal then
 `|rn| == MAX_MAG * rd` exactly, so `rd` divides `|rn|`. Coprimality of the
@@ -230,15 +230,18 @@ commutativity and cross-run determinism provable at all.
   returned exactly.
 * **R2** (`lemma_r2_directed`) — `Down ≤ exact ≤ Up`.
 * **R3** (`lemma_r3_error`) — the bound above, with `B = 61`. The proof splits
-  on `k = bitlen(floor(|x|))`: `k = 0` (shift 61), `1 ≤ k ≤ 60` (shift `61−k`),
-  and `k ≥ 61` (shift 0). `lemma_shift_covers_bound` is the arithmetic core.
+  on `k = bitlen(floor(|x|))`: `k = 0` (shift capped at 61), `1 ≤ k ≤ 61`
+  (shift `62−k`), and `k ≥ 62` (shift 0). `lemma_shift_covers_bound` is the
+  arithmetic core.
 * **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
   specification permits. The composed operation is not globally monotone; see
   the counterexample in `README.md`, which is also a test.
 
-**Documented departure.** R3 is stated under `!saturated(n, d)`. An exact value
-with magnitude above `2^62 − 1` has no representable neighbour within
-`2^-61 · |exact|`, so the bound is unachievable there; those results saturate,
+**Documented departure.** R3 is stated under `!saturated(n, d)`. This scopes the
+contract below the magnitude ceiling by *choice*: it is tempting to say the
+bound is unachievable above it, but that is false — `MAX_MAG + 1/2` sits within
+`2^-61` of `MAX_MAG/1`. Keeping the contract on one clean side of the boundary
+is the reason. Those results saturate,
 and `checked_add`/`checked_sub`/`checked_mul` return `None` exactly in that
 case (`ensures r.is_none() <==> saturated(...)`).
 

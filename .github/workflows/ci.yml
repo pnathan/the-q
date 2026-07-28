@@ -1,8 +1,13 @@
 name: CI
 
 on:
+  # `push` is restricted to the default branch on purpose. A PR from an in-repo
+  # branch already gets a `pull_request` run, and the concurrency group is keyed
+  # on `github.ref` — which differs between `refs/heads/…` and
+  # `refs/pull/N/merge`, so the two do not deduplicate each other. Listening to
+  # both ran the whole pipeline, verification included, twice per commit.
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
 
 # Verification is slow and a superseded commit's run is worthless. Without this
@@ -80,12 +85,20 @@ jobs:
 
       - name: Install Verus
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Pinned deliberately, and pinned *together with* the `vstd`,
+          # `verus_builtin` and `verus_builtin_macros` versions in Cargo.toml —
+          # the verifier binary and those libraries are one unit, and a mismatch
+          # is not guaranteed to fail loudly. Tracking `releases/latest`, as this
+          # job used to, would let an upstream release change the outcome of a
+          # *required* check with no commit to this repository. Bump both ends
+          # in the same commit.
+          VERUS_VERSION: 0.2026.07.27.31579f0
         run: |
           set -euo pipefail
-          api=https://api.github.com/repos/verus-lang/verus/releases/latest
-          curl -sSfL -H "Authorization: Bearer $GH_TOKEN" "$api" > /tmp/verus-release.json
-          url=$(python3 scripts/verus_release_url.py < /tmp/verus-release.json)
+          # Derived from the pinned version rather than resolved through the
+          # releases API: no token, no rate limit, and the URL either matches the
+          # pin exactly or 404s. `-f` makes that a hard failure.
+          url="https://github.com/verus-lang/verus/releases/download/release/${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
           echo "Downloading $url"
           curl -sSfL "$url" -o /tmp/verus.zip
           mkdir -p "$HOME/verus"
