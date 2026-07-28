@@ -60,11 +60,16 @@ pub proof fn lemma_gcd_greatest(a: nat, b: nat, c: int)
 {
     if b == 0 {
     } else {
+        let dq = (a as int) / (b as int);
+        let dr = (a as int) % (b as int);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a as int, b as int);
-        // a%b == 1*a + (-(a/b))*b
-        lemma_divides_linear(c, a as int, b as int, 1, -((a as int) / (b as int)));
-        assert((a as int) % (b as int) == 1 * (a as int) + (-((a as int) / (b as int))) * (
-        b as int));
+        // a%b == 1*a + (-(a/b))*b — the linear combination `lemma_divides_linear`
+        // needs. Distributing the negation over `b · dq` is nonlinear.
+        assert(dr == 1 * (a as int) + (-dq) * (b as int)) by (nonlinear_arith)
+            requires
+                (a as int) == (b as int) * dq + dr,
+        ;
+        lemma_divides_linear(c, a as int, b as int, 1, -dq);
         assert((a as int) % (b as int) == (a % b) as int);
         lemma_gcd_greatest(b, (a % b) as nat, c);
     }

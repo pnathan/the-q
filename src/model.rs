@@ -270,6 +270,12 @@ pub proof fn lemma_pow2_add(a: nat, b: nat)
     } else {
         lemma_pow2_add(a, (b - 1) as nat);
         assert(pow2(a + b) == 2 * pow2((a + b - 1) as nat));
+        assert(pow2(b) == 2 * pow2((b - 1) as nat));
+        // Moving the factor of two across a product of two unknowns is
+        // nonlinear; Z3 will not do it on its own.
+        assert(2 * (pow2(a) * pow2((b - 1) as nat)) == pow2(a) * (2 * pow2(
+            (b - 1) as nat,
+        ))) by (nonlinear_arith);
     }
 }
 
@@ -398,11 +404,17 @@ pub proof fn lemma_pow2_64()
 }
 
 /// `2^124`.
+///
+/// Past roughly `2^64`, `reveal_with_fuel` stops being a usable proof: the
+/// unfolding is linear in the exponent and Z3 exhausts its resource limit
+/// before reaching the literal. Squaring a value that is already pinned costs
+/// one multiplication instead.
 pub proof fn lemma_pow2_124()
     ensures
         pow2(124) == 21267647932558653966460912964485513216,
 {
-    reveal_with_fuel(pow2, 125);
+    lemma_pow2_62();
+    lemma_pow2_add(62, 62);
 }
 
 /// `2^125`.
@@ -410,7 +422,8 @@ pub proof fn lemma_pow2_125()
     ensures
         pow2(125) == 42535295865117307932921825928971026432,
 {
-    reveal_with_fuel(pow2, 126);
+    lemma_pow2_124();
+    assert(pow2(125) == 2 * pow2(124));
 }
 
 /// `2^126`.
@@ -418,7 +431,8 @@ pub proof fn lemma_pow2_126()
     ensures
         pow2(126) == 85070591730234615865843651857942052864,
 {
-    reveal_with_fuel(pow2, 127);
+    lemma_pow2_125();
+    assert(pow2(126) == 2 * pow2(125));
 }
 
 /// The budget in terms of powers of two: `MAX_MAG == 2^62 - 1`, and `2^61`

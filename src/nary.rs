@@ -269,7 +269,7 @@ pub proof fn lemma_fold_wf(s: Seq<Q>)
     decreases s.len(),
 {
     if s.len() == 0 {
-        assert(crate::model::gcd_int(0, 1) == 1);
+        crate::round::lemma_gcd_one();
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];

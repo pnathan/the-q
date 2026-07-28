@@ -1012,7 +1012,7 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
     }
     if n == 0 {
         proof {
-            assert(gcd_int(0, 1) == 1);
+            lemma_gcd_one();
         }
         return Q { num: 0, den: 1 };
     }

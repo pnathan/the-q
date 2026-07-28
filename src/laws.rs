@@ -292,11 +292,17 @@ pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, s
         + ((c.n() * ab.d()) * ld) * (ad * bd)) by (nonlinear_arith);
     assert(((ab.n() * cd) * ld) * (ad * bd) == (ab.n() * (ad * bd)) * (cd * ld))
         by (nonlinear_arith);
-    assert(((c.n() * ab.d()) * ld) * (ad * bd) == ab.d() * (y * ld)) by (nonlinear_arith);
+    assert(((c.n() * ab.d()) * ld) * (ad * bd) == ab.d() * (y * ld)) by (nonlinear_arith)
+        requires
+            y == c.n() * (ad * bd),
+    ;
     // Substitute the inner step. Plain assert.
     assert(ab.n() * (ad * bd) == nab * ab.d());
     assert((ab.n() * (ad * bd)) * (cd * ld) == (nab * ab.d()) * (cd * ld));
-    assert((nab * ab.d()) * (cd * ld) == ab.d() * (x * ld)) by (nonlinear_arith);
+    assert((nab * ab.d()) * (cd * ld) == ab.d() * (x * ld)) by (nonlinear_arith)
+        requires
+            x == nab * cd,
+    ;
     // Recombine. Small identity in named subterms.
     assert(ab.d() * (x * ld) + ab.d() * (y * ld) == ab.d() * ((x + y) * ld)) by (nonlinear_arith);
     assert(x + y == sn);
@@ -337,12 +343,18 @@ pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int,
     assert(right.n() * ((ad * bd) * cd) == right.n() * sd);
     assert(((a.n() * bc.d() + bc.n() * ad) * rd) * (bd * cd) == ((a.n() * bc.d()) * rd) * (bd * cd)
         + ((bc.n() * ad) * rd) * (bd * cd)) by (nonlinear_arith);
-    assert(((a.n() * bc.d()) * rd) * (bd * cd) == bc.d() * (x * rd)) by (nonlinear_arith);
+    assert(((a.n() * bc.d()) * rd) * (bd * cd) == bc.d() * (x * rd)) by (nonlinear_arith)
+        requires
+            x == a.n() * (bd * cd),
+    ;
     assert(((bc.n() * ad) * rd) * (bd * cd) == (bc.n() * (bd * cd)) * (ad * rd))
         by (nonlinear_arith);
     assert(bc.n() * (bd * cd) == nbc * bc.d());
     assert((bc.n() * (bd * cd)) * (ad * rd) == (nbc * bc.d()) * (ad * rd));
-    assert((nbc * bc.d()) * (ad * rd) == bc.d() * (y * rd)) by (nonlinear_arith);
+    assert((nbc * bc.d()) * (ad * rd) == bc.d() * (y * rd)) by (nonlinear_arith)
+        requires
+            y == nbc * ad,
+    ;
     assert(bc.d() * (x * rd) + bc.d() * (y * rd) == bc.d() * ((x + y) * rd)) by (nonlinear_arith);
     // The two numerators agree by ring.
     assert(x + y == sn) by (nonlinear_arith)
@@ -381,6 +393,7 @@ pub proof fn lemma_add_assoc_exact_values(a: Q, b: Q, c: Q, ab: Q, bc: Q, left: 
     let sd = (a.d() * b.d()) * c.d();
     assert(sd > 0) by (nonlinear_arith)
         requires
+            sd == (a.d() * b.d()) * c.d(),
             a.d() > 0,
             b.d() > 0,
             c.d() > 0,
@@ -414,6 +427,7 @@ pub proof fn theorem_mul_associative_exact(a: Q, b: Q, c: Q, ab: Q, bc: Q, left:
     let pd = (a.d() * b.d()) * c.d();
     assert(pd > 0) by (nonlinear_arith)
         requires
+            pd == (a.d() * b.d()) * c.d(),
             a.d() > 0,
             b.d() > 0,
             c.d() > 0,
@@ -536,6 +550,7 @@ pub proof fn theorem_distributive_exact(
     let dd = a.d() * (b.d() * c.d());
     assert(dd > 0) by (nonlinear_arith)
         requires
+            dd == a.d() * (b.d() * c.d()),
             a.d() > 0,
             b.d() > 0,
             c.d() > 0,
@@ -612,11 +627,13 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
     let k = (ad * bd) * (ad * cd);
     assert(g > 0) by (nonlinear_arith)
         requires
+            g == ab.d() * ac.d(),
             ab.d() > 0,
             ac.d() > 0,
     ;
     assert(k > 0) by (nonlinear_arith)
         requires
+            k == (ad * bd) * (ad * cd),
             ad > 0,
             bd > 0,
             cd > 0,
@@ -626,8 +643,21 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
     assert((rhs.n() * g) * k == ((ab.n() * ac.d() + ac.n() * ab.d()) * rd) * k);
     // Distribute the right side and rearrange each half so the two product
     // relations can be substituted.
-    assert(((ab.n() * ac.d() + ac.n() * ab.d()) * rd) * k == ((ab.n() * (ad * bd)) * (ac.d() * (ad
-        * cd))) * rd + ((ac.n() * (ad * cd)) * (ab.d() * (ad * bd))) * rd) by (nonlinear_arith);
+    // Distribution and rearrangement have to be separate steps: a single
+    // partially-factored identity over seven atoms exhausts the rlimit, and
+    // `k` is a local, so its definition has to travel into each block.
+    assert(((ab.n() * ac.d() + ac.n() * ab.d()) * rd) * k == ((ab.n() * ac.d()) * rd) * k + ((
+    ac.n() * ab.d()) * rd) * k) by (nonlinear_arith);
+    assert(((ab.n() * ac.d()) * rd) * k == ((ab.n() * (ad * bd)) * (ac.d() * (ad * cd))) * rd)
+        by (nonlinear_arith)
+        requires
+            k == (ad * bd) * (ad * cd),
+    ;
+    assert(((ac.n() * ab.d()) * rd) * k == ((ac.n() * (ad * cd)) * (ab.d() * (ad * bd))) * rd)
+        by (nonlinear_arith)
+        requires
+            k == (ad * bd) * (ad * cd),
+    ;
     assert(ab.n() * (ad * bd) == (a.n() * b.n()) * ab.d());
     assert(ac.n() * (ad * cd) == (a.n() * c.n()) * ac.d());
     assert(((ab.n() * (ad * bd)) * (ac.d() * (ad * cd))) * rd == (((a.n() * b.n()) * ab.d()) * (
@@ -638,9 +668,17 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
     let u = (a.n() * b.n()) * (ad * cd);
     let v = (a.n() * c.n()) * (ad * bd);
     assert((((a.n() * b.n()) * ab.d()) * (ac.d() * (ad * cd))) * rd == g * (u * rd))
-        by (nonlinear_arith);
+        by (nonlinear_arith)
+        requires
+            g == ab.d() * ac.d(),
+            u == (a.n() * b.n()) * (ad * cd),
+    ;
     assert((((a.n() * c.n()) * ac.d()) * (ab.d() * (ad * bd))) * rd == g * (v * rd))
-        by (nonlinear_arith);
+        by (nonlinear_arith)
+        requires
+            g == ab.d() * ac.d(),
+            v == (a.n() * c.n()) * (ad * bd),
+    ;
     assert(g * (u * rd) + g * (v * rd) == g * ((u + v) * rd)) by (nonlinear_arith);
     assert((rhs.n() * g) * k == g * (rhs.n() * k)) by (nonlinear_arith);
     assert(g * (rhs.n() * k) == g * ((u + v) * rd));
@@ -655,11 +693,18 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
             k == (ad * bd) * (ad * cd),
             dd == ad * (bd * cd),
     ;
-    assert(u + v == ad * dn) by (nonlinear_arith)
+    assert(ad * dn == ad * (a.n() * (b.n() * cd)) + ad * (a.n() * (c.n() * bd)))
+        by (nonlinear_arith)
+        requires
+            dn == a.n() * (b.n() * cd + c.n() * bd),
+    ;
+    assert(u == ad * (a.n() * (b.n() * cd))) by (nonlinear_arith)
         requires
             u == (a.n() * b.n()) * (ad * cd),
+    ;
+    assert(v == ad * (a.n() * (c.n() * bd))) by (nonlinear_arith)
+        requires
             v == (a.n() * c.n()) * (ad * bd),
-            dn == a.n() * (b.n() * cd + c.n() * bd),
     ;
     assert(rhs.n() * (ad * dd) == (ad * dn) * rd);
     assert((rhs.n() * dd) * ad == (dn * rd) * ad) by (nonlinear_arith)
