@@ -233,6 +233,14 @@ commutativity and cross-run determinism provable at all.
   on `k = bitlen(floor(|x|))`: `k = 0` (shift capped at 61), `1 ≤ k ≤ 61`
   (shift `62−k`), and `k ≥ 62` (shift 0). `lemma_shift_covers_bound` is the
   arithmetic core.
+  **`Dir::Nearest` additionally achieves `B = 62`** (`lemma_r3_error_nearest`,
+  `within_error_bound_nearest`): a round-to-nearest pick is never more than
+  half a grid step away, proved by the half-step form of the grid-error lemma
+  (`lemma_grid_error_step_nearest_half`, division-free
+  `2·|sn·rd − rn·2^s| ≤ rd`) composed the same way R3 itself is. This is
+  additional to the uniform `B = 61` statement, not a replacement for it — the
+  directed modes stay at `61` — and `Q::add`/`sub`/`mul`/`div` (the only
+  operations that fix `dir = Nearest`) `ensures` both.
 * **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
   specification permits. The composed operation is not globally monotone; see
   the counterexample in `README.md`, which is also a test.

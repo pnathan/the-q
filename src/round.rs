@@ -33,10 +33,13 @@
 //! directed modes**, one bit better than the specification's `B >= 60` bar.
 //!
 //! `Dir::Nearest` — which every default operation uses — is a half grid step,
-//! so it actually satisfies `B = 62`. That is *not* claimed in the proofs: the
-//! contract is stated uniformly at `B = 61` for all three directions, and
-//! tightening `Nearest` would need a half-step form of `lemma_grid_error_step`
-//! (division-free: `2·|sn·rd − rn·2^s| <= rd`). Left on the table deliberately.
+//! so it actually satisfies `B = 62`. The uniform R3 contract stays at `B =
+//! 61` for all three directions, since the directed modes genuinely achieve no
+//! better — but `Dir::Nearest` additionally carries the tighter bound as its
+//! own guarantee: `lemma_grid_error_step_nearest_half` is the half-step form
+//! (division-free: `2·|sn·rd − rn·2^s| <= rd`), `lemma_r3_error_nearest`
+//! composes it into the full bound, and `Q::add`/`sub`/`mul`/`div` each
+//! `ensures` it alongside the uniform one.
 //!
 //! # Why the shift is `62 - k` and not `61 - k`
 //!
@@ -522,6 +525,49 @@ pub proof fn lemma_error_after_reduce(rn: int, rd: int, sn: int, sd: int, g2: in
     ;
 }
 
+/// [`lemma_error_after_reduce`] at `precision_b_nearest()` instead of
+/// `precision_b()`. Same proof, the exponent is the only thing that changes.
+pub proof fn lemma_error_after_reduce_nearest(rn: int, rd: int, sn: int, sd: int, g2: int, r: Q)
+    requires
+        g2 > 0,
+        r.d() > 0,
+        sn == r.n() * g2,
+        sd == r.d() * g2,
+        abs_int(sn * rd - rn * sd) * pow2(precision_b_nearest()) <= sd * max_int(
+            rd,
+            abs_int(rn),
+        ),
+    ensures
+        abs_int(r.n() * rd - rn * r.d()) * pow2(precision_b_nearest()) <= r.d() * max_int(
+            rd,
+            abs_int(rn),
+        ),
+{
+    let e = abs_int(r.n() * rd - rn * r.d());
+    let m = max_int(rd, abs_int(rn));
+    assert(sn * rd - rn * sd == (r.n() * rd - rn * r.d()) * g2) by (nonlinear_arith)
+        requires
+            sn == r.n() * g2,
+            sd == r.d() * g2,
+    ;
+    assert(abs_int((r.n() * rd - rn * r.d()) * g2) == e * g2) by (nonlinear_arith)
+        requires
+            g2 > 0,
+            e == abs_int(r.n() * rd - rn * r.d()),
+    ;
+    assert((e * g2) * pow2(precision_b_nearest()) == (e * pow2(precision_b_nearest())) * g2)
+        by (nonlinear_arith);
+    assert(sd * m == (r.d() * m) * g2) by (nonlinear_arith)
+        requires
+            sd == r.d() * g2,
+    ;
+    assert(e * pow2(precision_b_nearest()) <= r.d() * m) by (nonlinear_arith)
+        requires
+            g2 > 0,
+            (e * pow2(precision_b_nearest())) * g2 <= (r.d() * m) * g2,
+    ;
+}
+
 /// `gcd(x, 1) == 1` for every `x` — needed for the zero and saturating branches,
 /// whose denominators are `1`.
 pub proof fn lemma_gcd_one()
@@ -779,6 +825,75 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
     }
 }
 
+/// **R3, at `Dir::Nearest`'s tighter bound.** `|result - exact| <= 2^-62 ·
+/// max(1, |exact|)` — one bit better than the uniform R3 statement, and
+/// specific to `Dir::Nearest`: the directed modes do not achieve it (see the
+/// module header).
+///
+/// Same shape as [`lemma_r3_error`], with the whole-step bound
+/// ([`lemma_grid_error_step`]) replaced by the half-step one
+/// ([`lemma_grid_error_step_nearest_half`]) and every downstream lemma
+/// carried at `precision_b_nearest()` instead of `precision_b()`.
+pub proof fn lemma_r3_error_nearest(n: int, d: int)
+    requires
+        d > 0,
+        !saturated(n, d),
+    ensures
+        within_error_bound_nearest(round_frac(n, d, Dir::Nearest), n, d),
+{
+    if exact_path(n, d) {
+        lemma_r1_identity(n, d, Dir::Nearest);
+        let r = round_frac(n, d, Dir::Nearest);
+        assert(r.n() * d - n * r.d() == 0);
+        assert(abs_int(0) == 0);
+        lemma_pow2_pos(precision_b_nearest());
+        assert(r.d() * max_int(d, abs_int(n)) >= 0) by (nonlinear_arith)
+            requires
+                r.d() > 0,
+                d > 0,
+        ;
+        assert(within_error_bound_nearest(r, n, d));
+    } else {
+        lemma_reduce_exact(n, d);
+        let g = gcd_int(n, d);
+        let rn = red_num(n, d);
+        let rd = red_den(n, d);
+        let s = snap_shift(rn, rd);
+        let sn = grid_num(rn, rd, s, Dir::Nearest);
+        let sd = pow2(s);
+        lemma_pow2_pos(s);
+        lemma_pow2_pos(precision_b());
+        lemma_pow2_pos(precision_b_nearest());
+        lemma_grid_error_step_nearest_half(rn, rd, s);
+        lemma_shift_covers_bound(rn, rd);
+        lemma_round_frac_wf(n, d, Dir::Nearest);
+        lemma_snap_result_fields(n, d, Dir::Nearest);
+        let r = round_frac(n, d, Dir::Nearest);
+        let g2 = gcd_int(sn, sd);
+        crate::model::lemma_pow2_61();
+        crate::model::lemma_pow2_62();
+        assert(pow2(precision_b_nearest()) == 2 * pow2(precision_b()));
+        // The half grid step, scaled: `2·|sn·rd − rn·2^s| <= rd`, so
+        // `|sn·rd − rn·2^s|·2^62 <= rd·2^61`, and `rd·2^61 <= 2^s·max(rd,
+        // |rn|)` from the (direction-independent) shift bound.
+        assert(abs_int(sn * rd - rn * sd) * pow2(precision_b_nearest()) <= rd * pow2(
+            precision_b(),
+        )) by (nonlinear_arith)
+            requires
+                2 * abs_int(sn * rd - rn * sd) <= rd,
+                pow2(precision_b()) > 0,
+                pow2(precision_b_nearest()) == 2 * pow2(precision_b()),
+        ;
+        assert(abs_int(sn * rd - rn * sd) * pow2(precision_b_nearest()) <= sd * max_int(
+            rd,
+            abs_int(rn),
+        ));
+        lemma_error_after_reduce_nearest(rn, rd, sn, sd, g2, r);
+        lemma_error_scales_nearest(n, d, g, rn, rd, r, s);
+        assert(within_error_bound_nearest(r, n, d));
+    }
+}
+
 /// One grid step: the snapped numerator is within `1` of the true scaled value,
 /// i.e. `|sn·rd - rn·2^s| <= rd`.
 pub proof fn lemma_grid_error_step(rn: int, rd: int, s: nat, dir: Dir)
@@ -817,6 +932,78 @@ pub proof fn lemma_grid_error_step(rn: int, rd: int, s: nat, dir: Dir)
                     a == rd * q + r,
             ;
         },
+    }
+}
+
+/// The `Dir::Nearest` half step: the snapped numerator is within *half* a
+/// grid step of the true scaled value, i.e. `2·|sn·rd - rn·2^s| <= rd`.
+///
+/// Tighter than [`lemma_grid_error_step`] by exactly the factor a
+/// round-to-nearest (ties to even) pick buys over a directed one: `grid_num`
+/// picks `q` when the fractional remainder `r` is at most half of `rd`, and
+/// `q + 1` when it is at least half, so the chosen integer is always within
+/// `rd/2`, written division-free as `2·r <= rd` or `2·(rd - r) <= rd`. The tie
+/// case (`2·r == rd`) hits equality on whichever side the even rule picks,
+/// which is exactly the boundary this crate's `B = 62` claim rests on.
+pub proof fn lemma_grid_error_step_nearest_half(rn: int, rd: int, s: nat)
+    requires
+        rd > 0,
+    ensures
+        2 * abs_int(grid_num(rn, rd, s, Dir::Nearest) * rd - rn * pow2(s)) <= rd,
+{
+    let a = rn * pow2(s);
+    let q = a / rd;
+    let r = a % rd;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a, rd);
+    assert(0 <= r < rd);
+    let t = r * 2;
+    if t > rd {
+        // Rounds up: sn = q + 1, error = rd - r, and 2·r > rd forces
+        // 2·(rd - r) <= rd.
+        assert(grid_num(rn, rd, s, Dir::Nearest) == q + 1);
+        assert((q + 1) * rd - a == rd - r) by (nonlinear_arith)
+            requires
+                a == rd * q + r,
+        ;
+        assert(2 * (rd - r) <= rd) by (nonlinear_arith)
+            requires
+                t > rd,
+                t == r * 2,
+        ;
+    } else if t < rd {
+        // Rounds down: sn = q, error = -r, and 2·r < rd trivially gives
+        // 2·r <= rd.
+        assert(grid_num(rn, rd, s, Dir::Nearest) == q);
+        assert(q * rd - a == -r);
+        assert(2 * r <= rd) by (nonlinear_arith)
+            requires
+                t < rd,
+                t == r * 2,
+        ;
+    } else {
+        // Exact tie: both candidates sit exactly half a step away, so both
+        // branches of the even rule land on equality.
+        assert(t == rd);
+        if q % 2 == 0 {
+            assert(grid_num(rn, rd, s, Dir::Nearest) == q);
+            assert(q * rd - a == -r);
+            assert(2 * r == rd) by (nonlinear_arith)
+                requires
+                    t == rd,
+                    t == r * 2,
+            ;
+        } else {
+            assert(grid_num(rn, rd, s, Dir::Nearest) == q + 1);
+            assert((q + 1) * rd - a == rd - r) by (nonlinear_arith)
+                requires
+                    a == rd * q + r,
+            ;
+            assert(2 * (rd - r) == rd) by (nonlinear_arith)
+                requires
+                    t == rd,
+                    t == r * 2,
+            ;
+        }
     }
 }
 
@@ -937,6 +1124,53 @@ pub proof fn lemma_error_scales(n: int, d: int, g: int, rn: int, rd: int, r: Q, 
             max_int(d, abs_int(n)) == max_int(rd, abs_int(rn)) * g,
             abs_int((r.n() * rd - rn * r.d()) * g) == abs_int(r.n() * rd - rn * r.d()) * g,
             abs_int(r.n() * rd - rn * r.d()) * pow2(precision_b()) <= r.d() * max_int(
+                rd,
+                abs_int(rn),
+            ),
+    ;
+}
+
+/// [`lemma_error_scales`] at `precision_b_nearest()` instead of
+/// `precision_b()`. Same proof, the exponent and the target predicate
+/// (`within_error_bound_nearest` instead of `within_error_bound`) are the only
+/// things that change.
+pub proof fn lemma_error_scales_nearest(n: int, d: int, g: int, rn: int, rd: int, r: Q, s: nat)
+    requires
+        g > 0,
+        rd > 0,
+        n == rn * g,
+        d == rd * g,
+        r.d() > 0,
+        abs_int(r.n() * rd - rn * r.d()) * pow2(precision_b_nearest()) <= r.d() * max_int(
+            rd,
+            abs_int(rn),
+        ),
+    ensures
+        within_error_bound_nearest(r, n, d),
+{
+    assert(r.n() * d - n * r.d() == (r.n() * rd - rn * r.d()) * g) by (nonlinear_arith)
+        requires
+            n == rn * g,
+            d == rd * g,
+    ;
+    assert(max_int(d, abs_int(n)) == max_int(rd, abs_int(rn)) * g) by (nonlinear_arith)
+        requires
+            g > 0,
+            n == rn * g,
+            d == rd * g,
+    ;
+    assert(abs_int((r.n() * rd - rn * r.d()) * g) == abs_int(r.n() * rd - rn * r.d()) * g)
+        by (nonlinear_arith)
+        requires
+            g > 0,
+    ;
+    assert(within_error_bound_nearest(r, n, d)) by (nonlinear_arith)
+        requires
+            g > 0,
+            r.n() * d - n * r.d() == (r.n() * rd - rn * r.d()) * g,
+            max_int(d, abs_int(n)) == max_int(rd, abs_int(rn)) * g,
+            abs_int((r.n() * rd - rn * r.d()) * g) == abs_int(r.n() * rd - rn * r.d()) * g,
+            abs_int(r.n() * rd - rn * r.d()) * pow2(precision_b_nearest()) <= r.d() * max_int(
                 rd,
                 abs_int(rn),
             ),

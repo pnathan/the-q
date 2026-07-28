@@ -204,6 +204,17 @@ fn magnitude_overflow_saturates_and_checked_reports_it() {
     let q = Q::div(big, tiny);
     assert_wf(q, "saturating div");
     assert_eq!(q, big, "should saturate, not wrap");
+
+    // checked_div reports the same saturating cases as None, and reports
+    // in-budget quotients as Some, agreeing with the plain op — the same
+    // contract checked_add/checked_sub/checked_mul already carry.
+    // `MAX_MAG / (1/MAX_MAG) == MAX_MAG^2`, well past the ceiling.
+    assert!(Q::checked_div(big, tiny).is_none());
+    // `1 / (1/MAX_MAG) == MAX_MAG` exactly — right at the ceiling, not over
+    // it, so this one is `Some`.
+    assert_eq!(Q::checked_div(Q::one(), tiny), Some(big));
+    assert_eq!(Q::checked_div(half, half), Some(Q::one()));
+    assert_eq!(Q::checked_div(big, big), Some(Q::one()));
 }
 
 #[test]

@@ -111,7 +111,10 @@ this crate does.
 
 For an exact value whose magnitude exceeds `2^62 - 1`, R3 is declared not to
 apply: such results **saturate** to `±(2^62 - 1)`, and `checked_add`,
-`checked_sub` and `checked_mul` report the condition as `None`. The exclusion is
+`checked_sub`, `checked_mul` and `checked_div` report the condition as `None`.
+Division saturates on the same ceiling as the other three —
+`(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so `checked_div` closes the
+family rather than leaving it asymmetric. The exclusion is
 a choice rather than a necessity — some unrepresentable values *do* have a `Q`
 inside the bound — made to keep the contract on one clean side of a boundary. No engine value comes anywhere
 near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
@@ -160,11 +163,15 @@ The two meet exactly, so **`B = 61` is achieved for the directed modes** — one
 bit better than the specification's `B >= 60` bar.
 
 `Dir::Nearest`, which every default operation uses, is a *half* grid step and so
-actually satisfies `B = 62`. The proofs do not claim it: the contract is stated
-uniformly at `B = 61` across all three directions. Tightening `Nearest` would
-need a half-step form of `lemma_grid_error_step` (division-free:
-`2·|sn·rd − rn·2^s| ≤ rd`). That bit is left on the table deliberately, and
-noted here so the gap is visible rather than accidental.
+actually satisfies `B = 62`. The uniform R3 contract stays at `B = 61` across
+all three directions — the directed modes genuinely achieve no better — but
+`Dir::Nearest` additionally carries the tighter bound as its own proved
+guarantee: `Q::add`, `Q::sub`, `Q::mul` and `Q::div` each `ensures`
+`within_error_bound_nearest` alongside the uniform `within_error_bound`. The
+proof is the half-step form of the grid-error lemma
+(`round::lemma_grid_error_step_nearest_half`, division-free:
+`2·|sn·rd − rn·2^s| ≤ rd`), composed the same way R3 itself is
+(`round::lemma_r3_error_nearest`).
 
 ### Why `62 - k` and not `61 - k`
 
@@ -191,8 +198,8 @@ Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
 
 Arithmetic: `add`, `sub`, `mul`, `div` (round-to-nearest, ties to even);
 `add_dir`, `sub_dir`, `mul_dir`, `div_dir` (explicit direction); `checked_add`,
-`checked_sub`, `checked_mul`; `neg`, `abs`, `recip`, `pow_u32` — all exact;
-`min`, `max`, `clamp` — all exact.
+`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip`, `pow_u32` —
+all exact; `min`, `max`, `clamp` — all exact.
 
 `div` and `recip` take `!b.is_zero()` as a **precondition**, discharged by the
 caller under Verus. There is no runtime division-by-zero path to panic on.

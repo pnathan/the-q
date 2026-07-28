@@ -318,8 +318,11 @@ could satisfy the bound there, but that is false — `n/d = MAX_MAG + 1/2` is
 within `2^-61` of `MAX_MAG/1`. The exclusion keeps the contract on one clean
 side of a boundary rather than being forced. R3 is therefore stated under
 `!saturated(n, d)`; such results saturate to `±MAX_MAG`,
-and `checked_add`/`checked_sub`/`checked_mul` report them as `None` exactly
-there (`ensures r.is_none() <==> saturated(...)`).
+and `checked_add`/`checked_sub`/`checked_mul`/`checked_div` report them as
+`None` exactly there (`ensures r.is_none() <==> saturated(...)`). Division
+saturates on the same ceiling — `(MAX_MAG/1) / (1/MAX_MAG)` is well past it —
+so `checked_div` is not an exception; the family is symmetric across all four
+arithmetic operations.
 
 **§2.5 / V8 — the accumulated bound is absolute, not relative.** The phrasing
 `k·2^-B` reads naturally as `k · 2^-B · max(1, |exact|)`, matching R3's shape.
