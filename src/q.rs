@@ -79,6 +79,22 @@ pub open spec fn div_d(a: Q, b: Q) -> int {
     }
 }
 
+/// `num` with the sign of a negative `den` folded onto it.
+///
+/// `round_frac` takes a positive denominator, so [`Q::new_rounded`] normalises
+/// the sign before rounding. The pair it actually rounds is therefore
+/// `(signed_den_num(num, den), abs_int(den))`, and that is the pair its
+/// postconditions are stated over — the same *value* as `num / den`, but
+/// rounding `-3 / -4` in direction `Down` has to mean rounding `3 / 4` down,
+/// not `-3 / 4` down.
+pub open spec fn signed_den_num(num: int, den: int) -> int {
+    if den < 0 {
+        -num
+    } else {
+        num
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
@@ -161,6 +177,18 @@ impl Q {
                 &&& r.unwrap().wf()
                 &&& q_is(r.unwrap(), num as int, den as int)
             },
+            // Completeness. Without this the contract is satisfied by an
+            // implementation that returns `None` for every nonzero denominator,
+            // which is a real gap rather than a pedantic one: `q_is` says what
+            // the answer is *when there is one*, and nothing said there ever is.
+            //
+            // The condition is stated on the *unreduced* pair on purpose.
+            // "`None` exactly when the reduced form does not fit" would be
+            // tight but useless — a caller would have to compute the gcd to
+            // discharge it. Both components inside the budget is checkable at
+            // the call site, and reduction only ever shrinks them.
+            (den != 0 && abs_int(num as int) <= max_mag() && abs_int(den as int) <= max_mag())
+                ==> r.is_some(),
     {
         if den == 0 {
             return None;
@@ -222,6 +250,20 @@ impl Q {
             }
             Some(Q { num: rn as i64, den: rd as i64 })
         } else {
+            proof {
+                // Completeness, discharged contrapositively and *only on this
+                // path*. `g == gcd_int(n, d)`, so `rn`/`rd` are exactly
+                // `red_num`/`red_den` and reduction never enlarges either;
+                // reaching here therefore means the caller's own pair was
+                // already out of budget.
+                //
+                // Hoisting these two facts above the `if` also proves it, and
+                // destabilises the `rn == 0 ==> rd == 1` step in the other
+                // branch — the phenomenon the `saturation` module header
+                // describes. Kept narrow for that reason.
+                lemma_max_mag_pow2();
+                crate::round::lemma_reduce_shrinks(n as int, d as int);
+            }
             None
         }
     }
@@ -229,10 +271,53 @@ impl Q {
     /// The rational `num / den`, rounded to the budget if it does not fit.
     ///
     /// `None` **iff** `den == 0`.
+    ///
+    /// The sign is normalised onto the numerator before rounding, so a negative
+    /// `den` rounds the same value in the same direction rather than the
+    /// mirrored one. `signed_den_num` carries that convention, and the
+    /// postconditions below are stated over it.
     pub fn new_rounded(num: i64, den: i64, dir: Dir) -> (r: Option<Q>)
         ensures
             r.is_none() <==> den == 0,
             r.is_some() ==> r.unwrap().wf(),
+            // The value pin. This is the strongest form available — it fixes
+            // the result completely rather than describing properties of it —
+            // and the R2/R3 clauses below are consequences a caller could
+            // derive from it, stated here so they do not have to.
+            r.is_some() ==> r.unwrap() == round_frac(
+                signed_den_num(num as int, den as int),
+                abs_int(den as int),
+                dir,
+            ),
+            // R2 and R3, both guarded on `!saturated` — which is not a
+            // hedge, it is where the crate's rounding contract is scoped.
+            // `new_rounded` accepts any `i64` pair, and `(i64::MAX, 1)` is
+            // past the magnitude ceiling, so an unguarded R3 here would be
+            // false. Callers who want the guard discharged for them have
+            // `from_decimal`, whose inputs cannot saturate.
+            (r.is_some() && !saturated(signed_den_num(num as int, den as int), abs_int(
+                den as int,
+            ))) ==> {
+                // R2: the directed modes land on their own side of the exact
+                // value. R3: the crate-wide per-operation error bound, against
+                // the exact input rational rather than against an idealisation
+                // of it.
+                &&& dir == Dir::Down ==> q_le_frac(
+                    r.unwrap(),
+                    signed_den_num(num as int, den as int),
+                    abs_int(den as int),
+                )
+                &&& dir == Dir::Up ==> q_ge_frac(
+                    r.unwrap(),
+                    signed_den_num(num as int, den as int),
+                    abs_int(den as int),
+                )
+                &&& within_error_bound(
+                    r.unwrap(),
+                    signed_den_num(num as int, den as int),
+                    abs_int(den as int),
+                )
+            },
     {
         if den == 0 {
             return None;
@@ -246,6 +331,10 @@ impl Q {
         proof {
             lemma_pow2_124();
             lemma_pow2_126();
+            if !saturated(n as int, d as int) {
+                crate::round::lemma_r2_directed(n as int, d as int);
+                crate::round::lemma_r3_error(n as int, d as int, dir);
+            }
         }
         Some(round_frac_exec(n, d, dir))
     }
@@ -262,6 +351,17 @@ impl Q {
         ensures
             r.is_some() ==> r.unwrap().wf(),
             dec_places > MAX_DEC_PLACES ==> r.is_none(),
+            // **What it is**, not merely that it is well-formed. The README
+            // calls this the primary ingestion path and the doc comment says
+            // the conversion is exact; until this clause existed, neither
+            // claim was anywhere in the verified contract, so
+            // `from_decimal(85, 2)` was pinned to no value at all.
+            r.is_some() ==> q_is(r.unwrap(), mantissa as int, pow10(dec_places as nat)),
+            // **When it exists.** Both guards are checkable by the caller, and
+            // together they are exactly the failure set: past them, `Q::new`
+            // cannot fail, which is what its new completeness clause buys.
+            r.is_some() <==> (dec_places <= MAX_DEC_PLACES && abs_int(mantissa as int)
+                <= max_mag()),
     {
         if dec_places > MAX_DEC_PLACES {
             return None;
@@ -270,6 +370,12 @@ impl Q {
             return None;
         }
         let scale: i64 = pow10_i64(dec_places);
+        proof {
+            // `scale` is in `[1, 10^18]` and `max_mag()` is `2^62 - 1`, about
+            // `4.6 · 10^18`, so the scale factor is always inside the budget
+            // and `Q::new`'s completeness precondition is met.
+            lemma_max_mag_pow2();
+        }
         Q::new(mantissa, scale)
     }
 }
@@ -285,7 +391,15 @@ pub fn pow10_i64(n: u8) -> (r: i64)
         n <= MAX_DEC_PLACES,
     ensures
         1 <= r <= 1000000000000000000,
+        // The table's whole purpose is to *be* `10^n`, and until this was
+        // stated nothing downstream could say so — `from_decimal` could
+        // describe its own result only as "well-formed". Nineteen unfoldings
+        // of a linear recursion, which is cheap; `pow2`'s literal pins need
+        // lemmas because they are consumed inside nonlinear goals, and these
+        // are not.
+        r == pow10(n as nat),
 {
+    reveal_with_fuel(pow10, 20);
     match n {
         0 => 1,
         1 => 10,

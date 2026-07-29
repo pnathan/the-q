@@ -10,6 +10,9 @@
 mod common;
 
 use common::*;
+use malachite_base::num::arithmetic::traits::Pow;
+use malachite_q::Rational;
+use the_q::convert::{from_f64_dir, from_parts_dir};
 use the_q::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
 
 // ---------------------------------------------------------------------------
@@ -603,4 +606,217 @@ fn rounding_carry_reduces_back_into_budget() {
         "Down should have stopped at the last grid point: got {no_carry}"
     );
     assert_wf(no_carry, "carry (no-carry direction)");
+}
+
+// ---------------------------------------------------------------------------
+// Issue #9: the ingestion constructors' newly-stated value behaviour
+//
+// Each test here targets a postcondition that the proofs now carry and
+// previously did not. They are deliberately executable rather than trusting
+// the `ensures`: a postcondition can be proved and still describe the wrong
+// thing, and these pin the arithmetic a reader would actually expect.
+// ---------------------------------------------------------------------------
+
+/// `Q::new`'s completeness direction: in-budget inputs always produce a value.
+///
+/// The old contract said only what the answer *is* when there is one, which an
+/// implementation returning `None` for every nonzero denominator satisfies.
+#[test]
+fn new_succeeds_for_every_in_budget_pair() {
+    let mut rng = Rng::new(0x9e37_79b9);
+    for _ in 0..20_000 {
+        // Uniform over the whole in-budget range, both signs, including the
+        // exact endpoints.
+        let num = (rng.next_u64() % (2 * MAX_MAG as u64 + 1)) as i64 - MAX_MAG;
+        let den_mag = (rng.next_u64() % (MAX_MAG as u64)) as i64 + 1;
+        let den = if rng.next_u64() & 1 == 0 {
+            den_mag
+        } else {
+            -den_mag
+        };
+        let q = Q::new(num, den)
+            .unwrap_or_else(|| panic!("Q::new({num}, {den}) returned None but both fit"));
+        assert_wf(q, "Q::new in budget");
+    }
+    for (num, den) in [
+        (MAX_MAG, MAX_MAG),
+        (-MAX_MAG, MAX_MAG),
+        (MAX_MAG, -MAX_MAG),
+        (0, MAX_MAG),
+        (1, MAX_MAG),
+        (MAX_MAG, 1),
+    ] {
+        assert!(
+            Q::new(num, den).is_some(),
+            "Q::new({num}, {den}) is in budget and must succeed"
+        );
+    }
+    // And the boundary is genuinely a boundary, so the clause is not vacuous.
+    assert!(
+        Q::new(i64::MAX, 1).is_none(),
+        "i64::MAX is one past the budget"
+    );
+}
+
+/// `from_decimal` is exactly `mantissa / 10^dec_places`, and fails only where
+/// its two documented guards say it does.
+#[test]
+fn from_decimal_is_the_exact_decimal_it_claims() {
+    let mut rng = Rng::new(0x5bf0_3635);
+    for _ in 0..20_000 {
+        let dec_places = (rng.next_u64() % 19) as u8;
+        let mantissa = (rng.next_u64() % (2 * MAX_MAG as u64 + 1)) as i64 - MAX_MAG;
+        let q = Q::from_decimal(mantissa, dec_places)
+            .unwrap_or_else(|| panic!("from_decimal({mantissa}, {dec_places}) must succeed"));
+        let scale = 10i128.pow(dec_places as u32);
+        assert_eq!(
+            rat(q),
+            rat_of(mantissa as i128, scale),
+            "from_decimal({mantissa}, {dec_places}) is not {mantissa}/10^{dec_places}"
+        );
+        assert_wf(q, "from_decimal");
+    }
+    // The doc comment's own example, which had no verified meaning before.
+    assert_eq!(Q::from_decimal(85, 2).unwrap().to_string(), "17/20");
+    // Both failure guards, and nothing else.
+    assert!(
+        Q::from_decimal(1, 19).is_none(),
+        "19 decimal places is out of range"
+    );
+    assert!(
+        Q::from_decimal(i64::MAX, 0).is_none(),
+        "mantissa past MAX_MAG"
+    );
+    assert!(
+        Q::from_decimal(MAX_MAG, 18).is_some(),
+        "both guards satisfied"
+    );
+}
+
+/// `new_rounded` rounds the *value* `num/den`, so a negative denominator does
+/// not mirror the direction. This is what `signed_den_num` encodes, and it is
+/// the part of the contract most likely to have been written backwards.
+#[test]
+fn new_rounded_direction_is_about_the_value_not_the_numerator() {
+    // 1/3 is not representable, so both directions actually round.
+    let a_down = Q::new_rounded(1, 3, Dir::Down).unwrap();
+    let a_up = Q::new_rounded(1, 3, Dir::Up).unwrap();
+    assert_r2(a_down, a_up, &rat_of(1, 3), "1/3");
+
+    // Same value, both signs flipped. Down must still be the lower of the two.
+    let b_down = Q::new_rounded(-1, -3, Dir::Down).unwrap();
+    let b_up = Q::new_rounded(-1, -3, Dir::Up).unwrap();
+    assert_r2(b_down, b_up, &rat_of(1, 3), "-1/-3");
+    assert_eq!(
+        rat(a_down),
+        rat(b_down),
+        "1/3 and -1/-3 must round identically"
+    );
+    assert_eq!(rat(a_up), rat(b_up), "1/3 and -1/-3 must round identically");
+
+    // A genuinely negative value brackets on the other side of zero.
+    let c_down = Q::new_rounded(1, -3, Dir::Down).unwrap();
+    let c_up = Q::new_rounded(1, -3, Dir::Up).unwrap();
+    assert_r2(c_down, c_up, &rat_of(-1, 3), "1/-3");
+
+    // R3 across a random sweep, including the saturating inputs where the
+    // contract is scoped out and only well-formedness is claimed.
+    let mut rng = Rng::new(0x1d8e_4f21);
+    for _ in 0..20_000 {
+        let num = rng.next_u64() as i64;
+        let den = rng.next_u64() as i64;
+        if den == 0 {
+            assert!(Q::new_rounded(num, den, Dir::Nearest).is_none());
+            continue;
+        }
+        let exact = rat_of(num as i128, den as i128);
+        let r = Q::new_rounded(num, den, Dir::Nearest).unwrap();
+        assert_wf(r, "new_rounded");
+        if magnitude_fits(&exact) {
+            assert_r3(r, &exact, "new_rounded");
+        }
+    }
+}
+
+/// The sub-grid branch of `from_f64_dir`: values below `2^-62` land on the
+/// endpoint of the first dyadic cell, on the correct side.
+///
+/// This is the branch `lemma_round_frac_subgrid` covers — the one whose
+/// denominator is past what `round_frac_exec` accepts, so it cannot inherit the
+/// rounder's contract and needed its own proof.
+#[test]
+fn subnormal_inputs_land_on_the_first_grid_cell() {
+    let eps = 1i64 << 61;
+    for v in [f64::MIN_POSITIVE, 5e-324, 1e-300, 2f64.powi(-100)] {
+        for &(neg, sign) in &[(false, 1i64), (true, -1i64)] {
+            let x = if neg { -v } else { v };
+            let exact = Rational::try_from(x).expect("finite");
+
+            let near = from_f64_dir(x, Dir::Nearest).unwrap();
+            assert_eq!(rat(near), zero(), "Nearest must collapse {x} to zero");
+
+            let down = from_f64_dir(x, Dir::Down).unwrap();
+            let up = from_f64_dir(x, Dir::Up).unwrap();
+            assert_r2(down, up, &exact, "subgrid");
+
+            // The directed mode that has to move lands exactly on ±1/2^61;
+            // the other one stays at zero.
+            let (moved, stayed) = if neg { (down, up) } else { (up, down) };
+            assert_eq!(
+                (moved.numerator(), moved.denominator()),
+                (sign, eps),
+                "{x} should have rounded to {sign}/2^61"
+            );
+            assert_eq!(rat(stayed), zero(), "the other direction stays at zero");
+            assert_wf(moved, "subgrid endpoint");
+            assert_wf(stayed, "subgrid zero");
+        }
+    }
+}
+
+/// `from_parts_dir` — the verified core — agrees with the exact rational its
+/// arguments denote, for every direction, across the full exponent range.
+///
+/// `from_f64_dir` can state no contract at all (nothing in Verus relates an
+/// `f64` to a rational), so this is where the differential check belongs.
+#[test]
+fn from_parts_dir_matches_the_rational_its_arguments_denote() {
+    let mut rng = Rng::new(0x2f6b_c0de);
+    let mut rounded = 0usize;
+    for _ in 0..20_000 {
+        let mant = rng.next_u64() % 9_007_199_254_740_993;
+        let e = (rng.next_u64() % 2046) as i32 - 1074;
+        let neg = rng.next_u64() & 1 == 0;
+
+        let m = Rational::from(mant);
+        let scale = if e >= 0 {
+            Rational::from(2u32).pow(e as i64)
+        } else {
+            Rational::from(1) / Rational::from(2u32).pow((-e) as i64)
+        };
+        let exact = if neg { -(m * scale) } else { m * scale };
+
+        for dir in [Dir::Nearest, Dir::Down, Dir::Up] {
+            match from_parts_dir(neg, mant, e, dir) {
+                Some(q) => {
+                    assert_wf(q, "from_parts_dir");
+                    assert_r3(q, &exact, "from_parts_dir");
+                    if rat(q) != exact {
+                        rounded += 1;
+                    }
+                }
+                None => {
+                    // `None` only above the documented 2^61 ceiling.
+                    assert!(
+                        rabs(exact.clone()) > Rational::from(2u32).pow(61i64),
+                        "from_parts_dir({neg}, {mant}, {e}) returned None inside the ceiling"
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        rounded > 0,
+        "the sweep never rounded, so R3 was never exercised"
+    );
 }

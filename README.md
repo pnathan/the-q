@@ -249,7 +249,7 @@ and it is an order-of-magnitude larger verification project.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `665 verified, 0 errors`, no `assume`, no `admit`. The two
+design intention. `691 verified, 0 errors`, no `assume`, no `admit`. The two
 `external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
 are the only things taken on trust.
 
@@ -334,6 +334,27 @@ Also proven: a fold that never rounds is exact, and all three helpers are pinned
 to a spec *function* of their input — reproducibility is a theorem, not a
 property of the current code.
 
+**Ingestion — what the constructors produce, not just that it is well-formed**
+
+Every entry point now pins its own value, which until recently none of them did:
+
+* `Q::new` says what it returns *and* that it returns something: any pair with
+  both components inside the budget succeeds. Without that second half the
+  contract was satisfied by an implementation returning `None` every time.
+* `Q::from_decimal` is exactly `mantissa / 10^dec_places`, and is `None` exactly
+  when `dec_places > 18` or `|mantissa| > MAX_MAG` — both checkable by the
+  caller.
+* `Q::new_rounded` is pinned to `round_frac` of its input, with R2 and R3
+  against that input under the usual `!saturated` scope.
+* `convert::from_parts_dir` — the verified core of `from_f64_dir` — is pinned to
+  `round_frac` of the exact rational the IEEE-754 triple denotes, with R2, R3,
+  the discharge of R3's own `!saturated` side condition, and `None` only above
+  the documented `2^61` ceiling.
+
+The last one includes values below `2^-62`, whose denominator `2^s` is larger
+than the rounder itself accepts; `lemma_round_frac_subgrid` proves the shortcut
+those take lands where `round_frac` would have.
+
 **Intervals**
 
 * `QI::add`, `sub` and `mul` `ensure` well-formedness, so interval results
@@ -355,7 +376,10 @@ corrected twice, so it is now a proof obligation instead of a comment.
 
 * **The `f64` boundary.** `f64_decompose` and `to_f64` are `external_body`.
   Proving them means proving IEEE-754 semantics, which `docs/SPEC.md` §5 puts
-  out of scope. They are backed by shrinking property tests instead.
+  out of scope. They are backed by shrinking property tests instead. Note the
+  boundary is now exactly one step wide: everything *downstream* of the
+  decomposed triple is proven — see the ingestion entry above — and
+  `from_f64_dir` is a two-line composition of the trusted step with it.
 * **`weighted_mean`'s returned value.** Both internal accumulators are bounded;
   composing them through the final division into one bound on what the function
   returns is now *unblocked* (the quotient bound above is the piece that was
@@ -383,7 +407,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `665 verified, 0 errors`,
+**Current status: every proof obligation discharges — `691 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is

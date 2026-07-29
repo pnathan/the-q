@@ -2271,4 +2271,233 @@ pub proof fn lemma_coprime_forces_unit(rn: int, rd: int)
     crate::model::lemma_divides_le(rd, 1);
 }
 
+// ---------------------------------------------------------------------------
+// Below the finest grid
+// ---------------------------------------------------------------------------
+
+/// `2^61`, the denominator of the finest dyadic grid this crate rounds onto.
+pub open spec fn finest_grid_den() -> int {
+    pow2(61)
+}
+
+/// Where a nonzero value strictly inside the first grid cell lands.
+///
+/// `Nearest` collapses it to zero; the directed modes have to stay on their own
+/// side of it, so they return the neighbouring grid point.
+pub open spec fn subgrid_endpoint(positive: bool, dir: Dir) -> Q {
+    match dir {
+        Dir::Nearest => Q { num: 0, den: 1 },
+        Dir::Down => if positive {
+            Q { num: 0, den: 1 }
+        } else {
+            Q { num: (-1int) as i64, den: 2305843009213693952 }
+        },
+        Dir::Up => if positive {
+            Q { num: 1, den: 2305843009213693952 }
+        } else {
+            Q { num: 0, den: 1 }
+        },
+    }
+}
+
+/// **Rounding below the finest grid.** A nonzero value whose magnitude is under
+/// `2^-62` — i.e. strictly inside half the first dyadic cell — rounds to that
+/// cell's endpoint on the correct side.
+///
+/// This is what `convert::tiny` computes directly, and it is the one input path
+/// whose denominator (`2^s` for `s > 124`) is past what `round_frac_exec` will
+/// accept, so the executable code cannot simply call the rounder and inherit its
+/// contract. Proving the shortcut *equals* `round_frac` is what lets
+/// `from_parts_dir` state one uniform postcondition over all its branches
+/// instead of carving out an exception nobody would then reason about.
+#[verifier::rlimit(40)]
+pub proof fn lemma_round_frac_subgrid(n: int, d: int, dir: Dir)
+    requires
+        d > 0,
+        n != 0,
+        abs_int(n) * pow2(62) < d,
+    ensures
+        round_frac(n, d, dir) == subgrid_endpoint(n > 0, dir),
+{
+    lemma_pow2_pos(61nat);
+    lemma_pow2_pos(62nat);
+    lemma_pow2_61();
+    lemma_pow2_62();
+    lemma_max_mag_pow2();
+
+    let g = gcd_int(n, d);
+    let rn = red_num(n, d);
+    let rd = red_den(n, d);
+    lemma_reduce_exact(n, d);
+    lemma_reduce_abs(n, d);
+
+    // The hypothesis survives reduction: both sides carry a factor of `g`.
+    assert(abs_int(rn) >= 1) by (nonlinear_arith)
+        requires
+            abs_int(n) == abs_int(rn) * g,
+            abs_int(n) >= 1,
+            g > 0,
+    ;
+    assert(abs_int(rn) * pow2(62) < rd) by (nonlinear_arith)
+        requires
+            abs_int(n) * pow2(62) < d,
+            abs_int(n) == abs_int(rn) * g,
+            d == rd * g,
+            g > 0,
+    ;
+
+    // Not saturated: the value is tiny, so it certainly fits.
+    assert(abs_int(n) <= max_mag() * d) by (nonlinear_arith)
+        requires
+            abs_int(n) * pow2(62) < d,
+            abs_int(n) >= 1,
+            pow2(62) >= 1,
+            max_mag() >= 1,
+            d > 0,
+    ;
+    assert(magnitude_fits(n, d));
+
+    // But the reduced pair does not fit the budget: `|rn| >= 1` forces
+    // `rd > 2^62`, one past the ceiling.
+    assert(rd > max_mag()) by (nonlinear_arith)
+        requires
+            abs_int(rn) * pow2(62) < rd,
+            abs_int(rn) >= 1,
+            max_mag() == pow2(62) - 1,
+    ;
+    assert(!fits_budget(rn, rd));
+
+    // So it snaps, and onto the *finest* grid: the value's integer part is
+    // zero, `bitlen(0) == 0`, and `snap_shift` sends that to 61.
+    assert(abs_int(rn) < rd) by (nonlinear_arith)
+        requires
+            abs_int(rn) * pow2(62) < rd,
+            abs_int(rn) >= 0,
+            pow2(62) >= 1,
+    ;
+    assert(abs_int(rn) / rd == 0) by {
+        vstd::arithmetic::div_mod::lemma_basic_div_specific_divisor(rd);
+    }
+    assert(bitlen(abs_int(rn) / rd) == 0);
+    let s = snap_shift(rn, rd);
+    assert(s == 61nat);
+
+    let a = rn * pow2(61);
+    assert(abs_int(a) == abs_int(rn) * pow2(61)) by {
+        lemma_abs_mul_pos(rn, pow2(61));
+    }
+    // Half a cell: `2·|a| < rd`, which is what every direction below needs.
+    assert(2 * abs_int(a) < rd) by (nonlinear_arith)
+        requires
+            abs_int(a) == abs_int(rn) * pow2(61),
+            abs_int(rn) * pow2(62) < rd,
+            pow2(62) == 2 * pow2(61),
+    ;
+    assert(a != 0) by (nonlinear_arith)
+        requires
+            abs_int(a) == abs_int(rn) * pow2(61),
+            abs_int(rn) >= 1,
+            pow2(61) >= 1,
+    ;
+    assert((a > 0) == (rn > 0)) by (nonlinear_arith)
+        requires
+            a == rn * pow2(61),
+            pow2(61) > 0,
+    ;
+    assert((rn > 0) == (n > 0)) by (nonlinear_arith)
+        requires
+            n == rn * g,
+            g > 0,
+    ;
+
+    let sn = grid_num(rn, rd, s, dir);
+    lemma_subgrid_grid_num(a, rd, dir);
+    assert(sn == if a > 0 {
+        match dir {
+            Dir::Down => 0int,
+            Dir::Up => 1int,
+            Dir::Nearest => 0int,
+        }
+    } else {
+        match dir {
+            Dir::Down => -1int,
+            Dir::Up => 0int,
+            Dir::Nearest => 0int,
+        }
+    });
+
+    // Finally, reduce the snapped pair. `gcd(0, 2^61) == 2^61` collapses the
+    // zero case to `0/1`; `gcd(±1, 2^61) == 1` leaves the endpoints alone.
+    let sd = pow2(61);
+    if sn == 0 {
+        assert(gcd_int(0, sd) == sd) by {
+            crate::gcd::lemma_gcd_zero(sd as nat);
+        }
+        assert(sd / sd == 1) by (nonlinear_arith)
+            requires
+                sd > 0,
+        ;
+    } else {
+        assert(abs_int(sn) == 1);
+        assert(gcd_int(sn, sd) == 1) by {
+            crate::gcd::lemma_gcd_pos(abs_int(sn) as nat, sd as nat);
+            crate::gcd::lemma_gcd_le(abs_int(sn) as nat, sd as nat);
+        }
+    }
+}
+
+/// The three directions at a value strictly inside half the first grid cell.
+///
+/// Split out because it is pure Euclidean-division case analysis on `a` and
+/// `rd` — no rationals, no reduction — and folding it into the caller made a
+/// single goal the solver would not take whole.
+pub proof fn lemma_subgrid_grid_num(a: int, rd: int, dir: Dir)
+    requires
+        rd > 0,
+        a != 0,
+        2 * abs_int(a) < rd,
+    ensures
+        (dir == Dir::Down && a > 0) ==> a / rd == 0,
+        (dir == Dir::Down && a < 0) ==> a / rd == -1,
+        (dir == Dir::Up && a > 0) ==> -((-a) / rd) == 1,
+        (dir == Dir::Up && a < 0) ==> -((-a) / rd) == 0,
+        a / rd == (if a > 0 {
+            0int
+        } else {
+            -1int
+        }),
+        a % rd == (if a > 0 {
+            a
+        } else {
+            a + rd
+        }),
+{
+    if a > 0 {
+        assert(0 <= a < rd) by (nonlinear_arith)
+            requires
+                2 * abs_int(a) < rd,
+                a > 0,
+                abs_int(a) == a,
+        ;
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, 0, a);
+        assert((-a) / rd == -1) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(-a, rd, -1, rd - a);
+        }
+    } else {
+        assert(0 < -a < rd) by (nonlinear_arith)
+            requires
+                2 * abs_int(a) < rd,
+                a < 0,
+                abs_int(a) == -a,
+        ;
+        assert(a / rd == -1) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, -1, rd + a);
+        }
+        assert(a % rd == a + rd) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(a, rd, -1, rd + a);
+        }
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(-a, rd, 0, -a);
+    }
+}
+
 } // verus!
