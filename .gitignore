@@ -22,3 +22,6 @@ target
 
 # Verus --profile output
 .verus-solver-log/
+
+# Claude Code agent worktrees (transient; not project config)
+.claude/worktrees/
