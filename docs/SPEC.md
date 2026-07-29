@@ -318,8 +318,11 @@ could satisfy the bound there, but that is false — `n/d = MAX_MAG + 1/2` is
 within `2^-61` of `MAX_MAG/1`. The exclusion keeps the contract on one clean
 side of a boundary rather than being forced. R3 is therefore stated under
 `!saturated(n, d)`; such results saturate to `±MAX_MAG`,
-and `checked_add`/`checked_sub`/`checked_mul` report them as `None` exactly
-there (`ensures r.is_none() <==> saturated(...)`).
+and `checked_add`/`checked_sub`/`checked_mul`/`checked_div` report them as
+`None` exactly there (`ensures r.is_none() <==> saturated(...)`). Division
+saturates on the same ceiling — `(MAX_MAG/1) / (1/MAX_MAG)` is well past it —
+so `checked_div` is not an exception; the family is symmetric across all four
+arithmetic operations.
 
 **§2.5 / V8 — the accumulated bound is absolute, not relative.** The phrasing
 `k·2^-B` reads naturally as `k · 2^-B · max(1, |exact|)`, matching R3's shape.
@@ -336,3 +339,33 @@ is a correction, not a weakening: the relative form is not true as stated.
 Euclid", but canonicalisation reduces the `i128` intermediates produced by the
 arithmetic, not `i64` operands. `gcd_u128` carries the proofs; `gcd_u64` is a
 thin verified wrapper kept for the narrow case.
+
+**§2.5 / V8 — `product` and `weighted_mean` each need their own hypothesis,
+and `weighted_mean`'s bound stops short of the returned value.** The `k·2^-B`
+shape is not free of charge outside `sum`:
+
+- `product` (`nary::theorem_product_error_accumulation`) is sound only under
+  `nary::all_unit(s)` — every factor's magnitude at most `1`. Multiplication
+  is 1-Lipschitz only when weighted by the other operand's magnitude
+  (`lipschitz::lemma_mul_lipschitz`); a factor `> 1` would amplify the
+  carried error geometrically rather than additively, and no bound of the
+  shape `k·m/2^B` would hold uniformly in `k`. The hypothesis is trivial in
+  this crate's actual domain (`[0, 1]`) and is not an artifact of the proof
+  technique — see `nary::lemma_abs_error_mul_step`'s doc comment for the
+  worked-out reason.
+- `weighted_mean` gets two bounds, not one:
+  `nary::theorem_wm_num_error_accumulation` (the numerator accumulator
+  `Σ w_i·x_i`, at `2k·m/2^B` — twice `sum`'s rate, because each pair costs
+  two roundings, the `mul` and the `add`) and
+  `nary::theorem_wm_denom_error_accumulation` (the weight accumulator `Σ
+  w_i`, at `k·m/2^B`, a direct restatement of `theorem_sum_error_accumulation`
+  for the weight half of each pair). Composing the two into a bound on the
+  value `weighted_mean` actually *returns* would require passing both through
+  the final division, which needs a further explicit hypothesis (the exact
+  weight sum bounded away from zero) and a finished division error bound that
+  the crate does not have — `lipschitz::lemma_div_lipschitz` states only the
+  algebraic identity division-error reasoning is built from, not a usable
+  bound, for either a single division or a composition of two. That
+  composition is left unproven. This is not a hidden gap: the two theorems
+  above are the actual "n-ary helper" internals V8 asks be bounded, and are
+  documented as the honest stopping point in `nary`'s module doc comment.

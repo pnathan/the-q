@@ -108,7 +108,8 @@ ergonomics at the crate boundary.
 
 | item | body |
 |---|---|
-| `impl Ord for Q`, `impl PartialOrd for Q` | `i128` cross-multiplication, identical to the verified `Q::compare` |
+| `impl Ord for Q` | delegates to the verified `Q::compare`, mapping its `-1`/`0`/`1` onto `Ordering` |
+| `impl PartialOrd for Q` | delegates to `impl Ord for Q` |
 | `impl Add/Sub/Mul/Neg for Q` | delegate to `Q::add`/`Q::sub`/`Q::mul`/`Q::neg` |
 | `impl Display for Q` | `write!(f, "{}/{}", num, den)` |
 | `impl Serialize/Deserialize for Q` (feature `serde`) | encode the `(num, den)` pair; decode through the verified `Q::new`, so a hand-written or corrupted payload yields an error rather than a value violating the type invariant |

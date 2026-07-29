@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  442 verified, 0 errors     <- the-q
+verification results::  665 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -34,7 +34,9 @@ The trajectory, one row per CI round:
 | `a0da72b` | 423 | 7 |
 | `c87f563` | 431 | 3 |
 | `e267cd5` | 440 | 1 |
-| `c1e3e54` | **442** | **0** |
+| `c1e3e54` | 442 | 0 |
+| `6c73847` (`main`) | 443 | 0 |
+| this branch (six merged lines of work) | **665** | **0** |
 
 Verified conditions rose monotonically. The error count did not, and both
 directions had honest causes: it rose when a fixed well-formedness failure
@@ -71,7 +73,7 @@ all invisible locally and only surface in CI. Every proof change here costs a
 
 ## What is established independently of the proofs
 
-* 41 tests green in debug and release, on every commit.
+* 50 tests green in debug and release, on every commit.
 * Differential tests against `malachite-q` — arbitrary precision, fully
   independent: 20,000 random cases per operation per rounding direction against
   R1, R2 and R3, plus exhaustive coverage of every `p/q` with `|p| <= 12,
@@ -163,7 +165,7 @@ No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 | V5 | GCD correctness and termination | MUST | `gcd.rs`, whole module |
 | V6 | Algebraic laws | MUST | `laws.rs`, whole module |
 | V7 | Error-propagation (Lipschitz) lemmas | SHOULD | `lipschitz.rs` |
-| V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation` |
+| V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation`, `nary::theorem_product_error_accumulation`, `nary::theorem_wm_num_error_accumulation`, `nary::theorem_wm_denom_error_accumulation` |
 
 ### V1 — the type invariant
 
@@ -233,6 +235,14 @@ commutativity and cross-run determinism provable at all.
   on `k = bitlen(floor(|x|))`: `k = 0` (shift capped at 61), `1 ≤ k ≤ 61`
   (shift `62−k`), and `k ≥ 62` (shift 0). `lemma_shift_covers_bound` is the
   arithmetic core.
+  **`Dir::Nearest` additionally achieves `B = 62`** (`lemma_r3_error_nearest`,
+  `within_error_bound_nearest`): a round-to-nearest pick is never more than
+  half a grid step away, proved by the half-step form of the grid-error lemma
+  (`lemma_grid_error_step_nearest_half`, division-free
+  `2·|sn·rd − rn·2^s| ≤ rd`) composed the same way R3 itself is. This is
+  additional to the uniform `B = 61` statement, not a replacement for it — the
+  directed modes stay at `61` — and `Q::add`/`sub`/`mul`/`div` (the only
+  operations that fix `dir = Nearest`) `ensures` both.
 * **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
   specification permits. The composed operation is not globally monotone; see
   the counterexample in `README.md`, which is also a test.
@@ -293,10 +303,31 @@ not the order on rationals.
 
 * `lemma_add_lipschitz` / `lemma_triangle` — addition is 1-Lipschitz in each
   argument, so errors add.
-* `lemma_mul_lipschitz` — `a·b − a'·b' == a·(b − b') + b'·(a − a')`, giving
-  constant `1` on `[0, 1]`, which is where every opinion component lives.
-* `lemma_div_lipschitz` — the same split for division, with the denominator
-  bounded away from zero.
+* `lemma_mul_lipschitz` — the algebraic identity
+  `a·b − a'·b' == a·(b − b') + b'·(a − a')`.
+* `lemma_div_lipschitz` — the same split for division.
+
+Those two are *identities*, not bounds, and an identity will not compose two
+`frac_diff_le` hypotheses through a product or a quotient. The bounds that will
+are stated alongside them, with the identities left untouched for the callers
+that use them directly:
+
+* `lemma_mul_lipschitz_bound` — `|a·b − a'·b'| ≤ (ca·e₂ + cb·e₁)/ed` given
+  `|a| ≤ ca` and `|b'| ≤ cb`. `lemma_mul_lipschitz_unit` is the `ca = cb = 1`
+  corollary: on `[0, 1]`, where every opinion component lives, the errors
+  simply add.
+* `lemma_recip_lipschitz_bound` — `|1/b − 1/b'| ≤ (e₂·md²)/(ed·mn²)` for
+  `b, b' ≥ mn/md > 0`. The lower bound is supplied division-free as
+  `mn·bd ≤ md·bn`; a caller with `b ≥ 1/2` passes `mn = 1, md = 2`. The `md²`
+  is the genuine quadratic cost of perturbing a divisor.
+* `lemma_div_lipschitz_bound` — the quotient bound, proved as the reciprocal
+  bound fed into the product bound rather than by attacking the four-way
+  cross-multiplied difference directly. That composition is both shorter and
+  far cheaper for the solver.
+
+Supporting these: `lemma_abs_triangle`, `lemma_abs_prod` (`|u·v| == |u|·|v|`
+with *both* signs unknown, which `model::lemma_abs_mul_pos` does not cover),
+`lemma_frac_diff_scale`, and scalar and pairwise product monotonicity.
 
 These are what an interval or affine-arithmetic layer would be built on.
 `interval::QI` already uses the R2 half.
@@ -322,6 +353,31 @@ thing.
 The empirical claim is checked independently:
 `oracle::long_fold_chain_tracks_oracle` runs 10⁴ mixed operations and asserts
 the accumulated error against the oracle stays inside `k · 2^-61`.
+
+**`product` and `weighted_mean` carry the same shape of bound, each under its
+own hypothesis, not `sum`'s hypothesis reused.**
+
+* `nary::theorem_product_error_accumulation` is `sum`'s theorem's
+  multiplicative twin: `k · m · 2^-61`, but only under `nary::all_unit(s)` —
+  every factor's magnitude at most `1`. This is necessary, not a proof
+  artifact: multiplication is 1-Lipschitz only when weighted by the other
+  operand's magnitude (`lipschitz::lemma_mul_lipschitz`), so a factor `> 1`
+  would amplify the carried error geometrically rather than additively, and
+  no bound of this shape would hold uniformly in `k`. The hypothesis is
+  trivial in the consuming engine's domain (`[0, 1]`).
+* `weighted_mean` gets two bounds on its two internal accumulators —
+  `nary::theorem_wm_num_error_accumulation` (`2k · m · 2^-61` against the true
+  `Σ w_i·x_i`, twice `sum`'s rate because each pair costs two roundings) and
+  `nary::theorem_wm_denom_error_accumulation` (`k · m · 2^-61` against the
+  true `Σ w_i`, a direct restatement of `theorem_sum_error_accumulation` for
+  the weight half of each pair) — but **not** a single bound on the value
+  `weighted_mean` returns. Composing the two through the final division would
+  need the exact weight sum bounded away from zero as a further explicit
+  hypothesis. The other thing it needed — a usable division error bound — now
+  exists (`lipschitz::lemma_div_lipschitz_bound`); when this text was first
+  written only the algebraic identity did. So the composition is unblocked but
+  still unproven, and the two theorems above remain the actual n-ary-helper
+  internals V8 asks be bounded.
 
 ---
 

@@ -78,9 +78,22 @@ outer one. The test suite contains a test that *searches for* an associativity
 failure and fails if it cannot find one, so this note cannot go stale in either
 direction.
 
+That failure is bounded, not just acknowledged. `laws::theorem_add_associativity_bound`
+proves `|((a+b)+c) - (a+(b+c))| <= 4 * 2^-61 * m`, where `m` is a caller-supplied
+bound on `max(1, |exact value|)` for every partial sum the two bracketings
+touch — no `[0, 1]` assumption required. `laws::theorem_mul_associativity_bound_unit_interval`
+proves the multiplicative analogue, `|((a*b)*c) - (a*(b*c))| <= 6 * 2^-61`,
+under the hypothesis that `a, b, c` all lie in `[0, 1]` (the engine's actual
+domain): `mul`'s error is weighted by the *other* factor's magnitude at each
+step rather than simply adding, so a general `m`-parameterised bound would
+grow with `m²`, not `m`, and `[0, 1]` is where that distinction collapses.
+`tests/adversarial.rs` checks both bounds on a genuine associativity-failure
+instance found by the same search.
+
 Consequence for a consuming engine: order-independence claims hold **exactly**
-for computations that stay inside the budget, and **up to the accumulated error
-bound** otherwise.
+for computations that stay inside the budget, and **up to a proven, explicit
+error bound** otherwise — not merely "up to some unquantified accumulated
+error".
 
 ### The composed operation is not globally monotone
 
@@ -111,13 +124,20 @@ this crate does.
 
 For an exact value whose magnitude exceeds `2^62 - 1`, R3 is declared not to
 apply: such results **saturate** to `±(2^62 - 1)`, and `checked_add`,
-`checked_sub` and `checked_mul` report the condition as `None`. The exclusion is
-a choice rather than a necessity — some unrepresentable values *do* have a `Q`
-inside the bound — made to keep the contract on one clean side of a boundary. No engine value comes anywhere
-near this ceiling — opinions live in `[0, 1]` and evidence counts top out around
-10⁵ — the budget pressure is entirely in the *denominator*. This is a documented
-departure from a literal reading of the specification, which states R3
-unconditionally.
+`checked_sub`, `checked_mul` and `checked_div` all report the condition as
+`None`. Division saturates on the same ceiling as the other three —
+`(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so `checked_div` closes the family
+rather than leaving it asymmetric.
+
+The exclusion is a choice rather than a necessity: some unrepresentable values
+*do* have a `Q` inside the bound, and `saturation::lemma_saturation_is_a_choice`
+proves it by exhibiting one. Scoping R3 below the ceiling keeps the contract on
+one clean side of a boundary; it is not that nothing could satisfy it.
+
+No engine value comes anywhere near this ceiling — opinions live in `[0, 1]` and
+evidence counts top out around 10⁵ — so the budget pressure is entirely in the
+*denominator*. This is a documented departure from a literal reading of the
+specification, which states R3 unconditionally.
 
 Relatedly, `Q::new` returns `None` for `i64` pairs above the budget
 (`Q::new(i64::MAX, 1)` does not fit), not only for a zero denominator.
@@ -160,11 +180,15 @@ The two meet exactly, so **`B = 61` is achieved for the directed modes** — one
 bit better than the specification's `B >= 60` bar.
 
 `Dir::Nearest`, which every default operation uses, is a *half* grid step and so
-actually satisfies `B = 62`. The proofs do not claim it: the contract is stated
-uniformly at `B = 61` across all three directions. Tightening `Nearest` would
-need a half-step form of `lemma_grid_error_step` (division-free:
-`2·|sn·rd − rn·2^s| ≤ rd`). That bit is left on the table deliberately, and
-noted here so the gap is visible rather than accidental.
+actually satisfies `B = 62`. The uniform R3 contract stays at `B = 61` across
+all three directions — the directed modes genuinely achieve no better — but
+`Dir::Nearest` additionally carries the tighter bound as its own proved
+guarantee: `Q::add`, `Q::sub`, `Q::mul` and `Q::div` each `ensures`
+`within_error_bound_nearest` alongside the uniform `within_error_bound`. The
+proof is the half-step form of the grid-error lemma
+(`round::lemma_grid_error_step_nearest_half`, division-free:
+`2·|sn·rd − rn·2^s| ≤ rd`), composed the same way R3 itself is
+(`round::lemma_r3_error_nearest`).
 
 ### Why `62 - k` and not `61 - k`
 
@@ -191,8 +215,8 @@ Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
 
 Arithmetic: `add`, `sub`, `mul`, `div` (round-to-nearest, ties to even);
 `add_dir`, `sub_dir`, `mul_dir`, `div_dir` (explicit direction); `checked_add`,
-`checked_sub`, `checked_mul`; `neg`, `abs`, `recip`, `pow_u32` — all exact;
-`min`, `max`, `clamp` — all exact.
+`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip`, `pow_u32` —
+all exact; `min`, `max`, `clamp` — all exact.
 
 `div` and `recip` take `!b.is_zero()` as a **precondition**, discharged by the
 caller under Verus. There is no runtime division-by-zero path to panic on.
@@ -222,6 +246,129 @@ pre-pass and bring the result in through `from_f64_dir`. No arbitrary precision:
 that is the escalation path if benchmarks ever show rounding actually biting,
 and it is an order-of-magnitude larger verification project.
 
+## What is proven
+
+Everything below is a machine-checked Verus obligation in this repository, not a
+design intention. `665 verified, 0 errors`, no `assume`, no `admit`. The two
+`external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
+are the only things taken on trust.
+
+**Representation — every public operation, no exceptions** (V1, V5)
+
+* I1: results are canonical — `den > 0` and `gcd(|num|, den) == 1`.
+* I2: results are in budget — `|num| ≤ 2^62 − 1` and `den ≤ 2^62 − 1`.
+* `Q::wf()` is `requires`d of every input and `ensures`d of every output, so the
+  invariant is a precondition of the next call rather than a claim about it.
+* GCD correctness *and* termination, for the whole module.
+
+**No panic, no overflow** (V2)
+
+* Every `i128` intermediate is proven in range. This is what the `2^62` budget
+  is *for*: it is the largest bound under which the cross-multiplied products
+  cannot overflow `i128`.
+
+**Value correctness** (V3)
+
+* Every operation's result equals the exact rational model value, stated
+  division-free by cross-multiplication — the specification never divides, so
+  there is no rounding hidden inside the specification of rounding.
+
+**The rounding contract R1–R4** (V4)
+
+| | claim |
+|---|---|
+| R1 | rounding is the identity on values already representable |
+| R2 | `Dir::Down` ≤ exact ≤ `Dir::Up` |
+| R3 | error ≤ `2^-61 · max(1, |exact|)`, uniformly across all three directions |
+| R3⁺ | error ≤ `2^-62 · max(1, |exact|)` for `Dir::Nearest` specifically — a half grid step, so one bit better than the directed modes |
+| R4 | rounding is monotone on the grid |
+
+**Algebraic laws** (V6)
+
+* `add` and `mul` are commutative — unconditionally, rounding included.
+* Associativity and distributivity hold exactly whenever no intermediate rounds
+  (`theorem_add_associative_exact`, `theorem_mul_associative_exact`,
+  `theorem_distributive_exact`), with the "no intermediate rounds" side
+  condition itself a proven predicate rather than an assumption.
+* Identity elements, total-order axioms (so `Ord` is a genuine total order — no
+  NaN, no incomparable pairs), `neg`/`abs`/`recip` involutions,
+  `sub == add ∘ neg`, `div == mul ∘ recip`.
+
+**The associativity defect, quantified**
+
+Not associative is a weak statement. These make it a number:
+
+* `|((a+b)+c) − (a+(b+c))| ≤ 4 · 2^-61 · m` for a free, caller-chosen magnitude
+  `m` — no domain restriction.
+* `|((a·b)·c) − (a·(b·c))| ≤ 6 · 2^-61` on `[0, 1]`.
+
+So order-independence goes from *void once rounding occurs* to *holds to within
+about 10⁻¹⁸ on opinion values*.
+
+**Error propagation** (V7)
+
+* `add`/`sub` are exactly 1-Lipschitz in each argument: errors add.
+* Product bound: `|a·b − a'·b'| ≤ (ca·e₂ + cb·e₁)` given `|a| ≤ ca`,
+  `|b'| ≤ cb`; on `[0, 1]` both constants are `1` and the errors simply add.
+* Reciprocal bound: `|1/b − 1/b'| ≤ e₂·md²/(ed·mn²)` for `b, b' ≥ mn/md > 0`.
+  The `md²` is the real quadratic cost of perturbing a divisor.
+* Quotient bound, composed from those two — division is multiplication by the
+  reciprocal.
+
+**N-ary accumulation** (V8)
+
+| helper | bound after `k` elements | hypothesis |
+|---|---|---|
+| `sum` | `k · m · 2^-61` | — |
+| `product` | `k · m · 2^-61` | every factor's magnitude ≤ 1 |
+| `weighted_mean` weight accumulator | `k · m · 2^-61` | — |
+| `weighted_mean` numerator accumulator | `2k · m · 2^-61` | — |
+
+The numerator accumulates at twice the rate because each pair costs two
+roundings, a `mul` then an `add`. `product`'s hypothesis is not cosmetic:
+multiplication is 1-Lipschitz only when weighted by the *other* operand's
+magnitude, so a factor above 1 amplifies carried error geometrically and no
+uniform `k · 2^-61` bound survives.
+
+Also proven: a fold that never rounds is exact, and all three helpers are pinned
+to a spec *function* of their input — reproducibility is a theorem, not a
+property of the current code.
+
+**Intervals**
+
+* `QI::add`, `sub` and `mul` `ensure` well-formedness, so interval results
+  compose without re-establishing anything. `mul` needs no narrowed
+  precondition and no sign case analysis.
+* Enclosure: for `x ∈ a` and `y ∈ b`, the exact `x+y`, `x−y` and `x·y` lie
+  within the computed interval — the product case for **every** sign pattern.
+* Value postconditions on `width` and `hull`.
+
+**One negative result**
+
+`lemma_saturation_is_a_choice` proves that excluding the region above the
+magnitude ceiling from R3 is a *scoping decision, not a necessity*: it exhibits
+a value up there that a well-formed `Q` does satisfy R3 for. The tempting
+opposite claim was written into this crate three times by two authors and
+corrected twice, so it is now a proof obligation instead of a comment.
+
+### Not proven — stated so it cannot be mistaken for covered
+
+* **The `f64` boundary.** `f64_decompose` and `to_f64` are `external_body`.
+  Proving them means proving IEEE-754 semantics, which `docs/SPEC.md` §5 puts
+  out of scope. They are backed by shrinking property tests instead.
+* **`weighted_mean`'s returned value.** Both internal accumulators are bounded;
+  composing them through the final division into one bound on what the function
+  returns is now *unblocked* (the quotient bound above is the piece that was
+  missing) but not done. It additionally needs a weight-sum-bounded-away-from-
+  zero hypothesis.
+* **`pow_u32`** `ensures` only `wf()`. No value postcondition — it is proven
+  not to break the type, not proven to compute a power.
+* **A general `mul` associativity bound outside `[0, 1]`.** Multiplication's
+  error is weighted by the other factor's magnitude at each step, so the general
+  form grows with `m²` rather than `m`. `[0, 1]` is where that collapses to a
+  constant.
+* **N-ary reordering beyond three terms**, for either operator.
+
 ## Verification
 
 Specifications and proofs live in the source, inside `verus!` blocks.
@@ -232,11 +379,11 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   the current status of each.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
   and the differential tests backing it. There are two.
-* **`docs/SPEC.md` §9** — the four places the specification as written does not
+* **`docs/SPEC.md` §9** — the five places the specification as written does not
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `442 verified, 0 errors`,
+**Current status: every proof obligation discharges — `665 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
@@ -262,6 +409,77 @@ tree.
 ```sh
 cargo test --features serde
 cargo test --release --features serde     # overflow checks stay on in release
+```
+
+## Performance
+
+`cargo bench` (`benches/arith.rs`) measures `the-q` against the two things it
+sits between: hardware `f64`, and `malachite-q`'s arbitrary-precision `Rational`
+— the same crate used as the differential oracle. Median of seven runs,
+deterministic inputs, `bench` profile (which inherits `release`, so
+`overflow-checks = true` is *on*: these are the numbers for the configuration
+the crate actually ships).
+
+**Single operations, operands with denominators under 10⁴**
+
+| op | the-q | f64 | exact | q/f64 | exact/q |
+|---|---|---|---|---|---|
+| `add` | 126.8 ns | 2.1 ns | 105.8 ns | 60.9× | 0.8× |
+| `sub` | 130.4 ns | 2.1 ns | 127.7 ns | 62.8× | 1.0× |
+| `mul` | 128.2 ns | 2.3 ns | 145.9 ns | 55.7× | 1.1× |
+| `div` | 138.1 ns | 2.6 ns | 176.1 ns | 52.6× | 1.3× |
+| compare | 5.1 ns | 2.8 ns | 49.0 ns | 1.8× | 9.7× |
+
+On *one* operation with small operands, `the-q` and an exact rational cost about
+the same, and both cost roughly 60× an `f64` op. That comparison is not the
+interesting one, because it is the one case where an exact rational is cheap.
+
+**Chained fusion — `acc = (acc + x) · y`, cost per step at depth `k`**
+
+| depth | the-q | f64 | exact | q/f64 | exact/q | size of exact result |
+|---|---|---|---|---|---|---|
+| `k = 4` | 360.9 ns | 5.0 ns | 465.3 ns | 72.5× | 1.3× | 29 digits |
+| `k = 16` | 1576.3 ns | 4.3 ns | 558.2 ns | 362.7× | 0.4× | 88 digits |
+| `k = 64` | 1864.7 ns | 4.2 ns | 452.9 ns | 446.3× | 0.2× | 311 digits |
+| `k = 256` | 2044.8 ns | 4.2 ns | 640.4 ns | 492.2× | 0.3× | 947 digits |
+| `k = 1024` | 2074.1 ns | 4.1 ns | 1248.3 ns | 500.1× | 0.6× | 2 979 digits |
+| `k = 4096` | 2099.3 ns | 4.1 ns | 3116.1 ns | 507.1× | 1.5× | 8 806 digits |
+
+This is the whole argument for the crate, and it does not flatter it.
+
+`the-q` **rises and then plateaus**: 361 ns/step at `k = 4`, then flat within 2%
+from `k = 256` to `k = 4096`. The rise is not the chain getting longer, it is the
+operands getting *wider* — a few steps in, numerator and denominator fill the
+62-bit budget, so the GCD and the rounding division run at full width on every
+subsequent step. Once they do, depth stops mattering. Same 16 bytes at `k = 4`
+as at `k = 4096`.
+
+The exact backend does not plateau, because it cannot: its result is 8 806
+decimal digits at `k = 4096` and still growing. It is **cheaper than `the-q`
+between roughly `k = 8` and `k = 2000`**, and more expensive outside that
+window — increasingly so, without limit.
+
+`f64` is flat at ~4 ns and roughly 500× faster than `the-q`. That number is
+the price, and it is not small.
+
+**`weighted_mean` over 8 (weight, value) pairs**
+
+| the-q | f64 | exact |
+|---|---|---|
+| 9.8 µs | 19.4 ns | 5.6 µs |
+
+### What the numbers mean
+
+`the-q` is not the fast option and is not sold as one. It is bounded: 16 bytes
+and a fixed worst-case step cost at any depth, where the exact rational's cost
+and memory grow with the length of the computation and `f64` gives up exactness
+immediately. If a chain is short, an exact rational is both faster and exact —
+use one. `the-q` earns its place when chains are long or unbounded, when the
+memory has to be flat, or when the error needs to be a *proven* `2^-61` per step
+rather than folklore.
+
+```sh
+cargo bench --bench arith
 ```
 
 ## Licence

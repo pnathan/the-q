@@ -13,9 +13,13 @@
 //! so the strong claim now contradicts a machine-checked theorem rather than a
 //! comment somebody has to remember.
 //!
-//! It lives alone because its SMT cost tipped marginal neighbours in both
-//! `model` and `laws` — a recursive `pow2` induction in one, a nonlinear
-//! `assert` in the other. Isolation is cheaper than re-tuning those.
+//! It lives in its own module for no better reason than that it did not belong
+//! anywhere in particular. An earlier version of this note claimed the
+//! separation was forced — that the lemma's SMT cost tipped marginal proofs in
+//! `model` and `laws`. That was wrong: re-running the experiment under the
+//! pinned toolchain verifies cleanly with the lemma in `model` (see the closed
+//! issue #15), so nothing here is load-bearing and it can be folded back in if
+//! anyone prefers.
 //!
 //! None of this argues for widening the contract. Excluding the region keeps R3
 //! on one clean side of a boundary and keeps `checked_*` honest. It is simply
