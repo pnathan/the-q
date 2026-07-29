@@ -88,6 +88,14 @@ pub open spec fn all_wf(s: Seq<Q>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).wf()
 }
 
+/// Every element of a slice has magnitude at most `1`: `|x| <= 1`.
+///
+/// This is the hypothesis `product`'s accumulated-error bound needs and
+/// `sum`'s does not: see `theorem_product_error_accumulation` for why.
+pub open spec fn all_unit(s: Seq<Q>) -> bool {
+    forall|i: int| 0 <= i < s.len() ==> abs_int((#[trigger] s[i]).n()) <= s[i].d()
+}
+
 // ---------------------------------------------------------------------------
 // The helpers
 // ---------------------------------------------------------------------------
@@ -151,20 +159,51 @@ pub fn product(xs: &[Q]) -> (r: Q)
         all_wf(xs@),
     ensures
         r.wf(),
+        // The determinism-pinning equality, mirroring `sum`'s: it is what
+        // carries the V8 bound (`theorem_product_error_accumulation`) over to
+        // the real code.
+        r == prod_fold_val(xs@),
 {
     let mut acc = Q::one();
     let mut i: usize = 0;
+    proof {
+        assert(xs@.subrange(0, 0) =~= Seq::<Q>::empty());
+    }
     while i < xs.len()
         invariant
             acc.wf(),
             all_wf(xs@),
             i <= xs.len(),
+            acc == prod_fold_val(xs@.subrange(0, i as int)),
         decreases xs.len() - i,
     {
+        proof {
+            lemma_prod_fold_snoc(xs@, i as int);
+        }
         acc = Q::mul(acc, xs[i]);
         i = i + 1;
     }
+    proof {
+        assert(xs@.subrange(0, xs.len() as int) =~= xs@);
+    }
     acc
+}
+
+/// Extending a prefix by one element extends the product fold by one step.
+pub proof fn lemma_prod_fold_snoc(s: Seq<Q>, i: int)
+    requires
+        0 <= i < s.len(),
+    ensures
+        prod_fold_val(s.subrange(0, i + 1)) == crate::round::round_frac(
+            crate::q::mul_n(prod_fold_val(s.subrange(0, i)), s[i]),
+            crate::q::prod_d(prod_fold_val(s.subrange(0, i)), s[i]),
+            Dir::Nearest,
+        ),
+{
+    let pre = s.subrange(0, i + 1);
+    assert(pre.len() == i + 1);
+    assert(pre[pre.len() as int - 1] == s[i]);
+    assert(pre.subrange(0, pre.len() as int - 1) =~= s.subrange(0, i));
 }
 
 /// Every element of a slice of `(weight, value)` pairs is well-formed.
@@ -182,28 +221,86 @@ pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
         all_wf_pairs(pairs@),
     ensures
         r.is_some() ==> r.unwrap().wf(),
+        // The determinism-pinning equalities, mirroring `sum`'s and
+        // `product`'s: together they carry the V8 bounds
+        // (`theorem_wm_num_error_accumulation`,
+        // `theorem_wm_denom_error_accumulation`) over to the real code.
+        r.is_none() <==> wt_fold_val(pairs@).n() == 0,
+        r.is_some() ==> r.unwrap() == crate::round::round_frac(
+            crate::q::div_n(wm_num_fold_val(pairs@), wt_fold_val(pairs@)),
+            crate::q::div_d(wm_num_fold_val(pairs@), wt_fold_val(pairs@)),
+            Dir::Nearest,
+        ),
 {
     let mut acc_num = Q::zero();
     let mut acc_w = Q::zero();
     let mut i: usize = 0;
+    proof {
+        assert(pairs@.subrange(0, 0) =~= Seq::<(Q, Q)>::empty());
+    }
     while i < pairs.len()
         invariant
             acc_num.wf(),
             acc_w.wf(),
             all_wf_pairs(pairs@),
             i <= pairs.len(),
+            acc_num == wm_num_fold_val(pairs@.subrange(0, i as int)),
+            acc_w == wt_fold_val(pairs@.subrange(0, i as int)),
         decreases pairs.len() - i,
     {
+        proof {
+            lemma_wm_fold_snoc(pairs@, i as int);
+        }
         let (w, x) = pairs[i];
         acc_num = Q::add(acc_num, Q::mul(w, x));
         acc_w = Q::add(acc_w, w);
         i = i + 1;
+    }
+    proof {
+        assert(pairs@.subrange(0, pairs.len() as int) =~= pairs@);
     }
     if acc_w.is_zero() {
         None
     } else {
         Some(Q::div(acc_num, acc_w))
     }
+}
+
+/// Extending a prefix by one pair extends both `weighted_mean` folds — the
+/// numerator accumulator and the weight accumulator — by one step.
+pub proof fn lemma_wm_fold_snoc(s: Seq<(Q, Q)>, i: int)
+    requires
+        0 <= i < s.len(),
+    ensures
+        wm_num_fold_val(s.subrange(0, i + 1)) == crate::round::round_frac(
+            crate::q::add_n(
+                wm_num_fold_val(s.subrange(0, i)),
+                crate::round::round_frac(
+                    crate::q::mul_n(s[i].0, s[i].1),
+                    crate::q::prod_d(s[i].0, s[i].1),
+                    Dir::Nearest,
+                ),
+            ),
+            crate::q::prod_d(
+                wm_num_fold_val(s.subrange(0, i)),
+                crate::round::round_frac(
+                    crate::q::mul_n(s[i].0, s[i].1),
+                    crate::q::prod_d(s[i].0, s[i].1),
+                    Dir::Nearest,
+                ),
+            ),
+            Dir::Nearest,
+        ),
+        wt_fold_val(s.subrange(0, i + 1)) == crate::round::round_frac(
+            crate::q::add_n(wt_fold_val(s.subrange(0, i)), s[i].0),
+            crate::q::prod_d(wt_fold_val(s.subrange(0, i)), s[i].0),
+            Dir::Nearest,
+        ),
+{
+    let pre = s.subrange(0, i + 1);
+    assert(pre.len() == i + 1);
+    assert(pre[pre.len() as int - 1] == s[i]);
+    assert(pre.subrange(0, pre.len() as int - 1) =~= s.subrange(0, i));
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +324,24 @@ pub open spec fn fold_val(s: Seq<Q>) -> Q
         crate::round::round_frac(
             crate::q::add_n(fold_val(init), last),
             crate::q::prod_d(fold_val(init), last),
+            Dir::Nearest,
+        )
+    }
+}
+
+/// The value the left fold of `s` produces under multiplication, as a
+/// function — the `product` analogue of `fold_val`.
+pub open spec fn prod_fold_val(s: Seq<Q>) -> Q
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        Q { num: 1, den: 1 }
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        crate::round::round_frac(
+            crate::q::mul_n(prod_fold_val(init), last),
+            crate::q::prod_d(prod_fold_val(init), last),
             Dir::Nearest,
         )
     }
@@ -290,6 +405,252 @@ pub proof fn lemma_fold_wf(s: Seq<Q>)
                 last.d() > 0,
                 sum_den(s) == sum_den(init) * last.d(),
         ;
+    }
+}
+
+/// Every prefix of the product fold has step values bounded by `m`, and
+/// stays on a non-saturating path — the multiplicative analogue of
+/// `fold_bounded`.
+pub open spec fn prod_fold_bounded(s: Seq<Q>, m: int) -> bool
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        true
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        &&& prod_fold_bounded(init, m)
+        &&& max_int(
+            crate::q::prod_d(prod_fold_val(init), last),
+            abs_int(crate::q::mul_n(prod_fold_val(init), last)),
+        ) <= m * crate::q::prod_d(prod_fold_val(init), last)
+        &&& !crate::round::saturated(
+            crate::q::mul_n(prod_fold_val(init), last),
+            crate::q::prod_d(prod_fold_val(init), last),
+        )
+    }
+}
+
+/// The exact product-fold denominator is positive, and the fold result is
+/// well-formed.
+pub proof fn lemma_prod_fold_wf(s: Seq<Q>)
+    requires
+        all_wf(s),
+    ensures
+        prod_fold_val(s).wf(),
+        prod_den(s) > 0,
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        crate::round::lemma_gcd_one();
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf(init));
+        assert(last.wf());
+        lemma_prod_fold_wf(init);
+        let prev = prod_fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_round_frac_wf(
+            crate::q::mul_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        assert(prod_den(s) == prod_den(init) * last.d());
+        assert(prod_den(s) > 0) by (nonlinear_arith)
+            requires
+                prod_den(init) > 0,
+                last.d() > 0,
+                prod_den(s) == prod_den(init) * last.d(),
+        ;
+    }
+}
+
+/// **The V8 induction step for `product`.** One more rounded `mul` on top of
+/// an accumulator already within `k` units takes the total to `k + 1` units
+/// — **provided the new factor has magnitude at most `1`**.
+///
+/// Multiplication is not 1-Lipschitz on an unbounded domain the way addition
+/// is: `|prev·next − prev'·next| = |next| · |prev − prev'|` scales the
+/// carried error by `|next|`, not by `1` (see `lemma_mul_lipschitz`). If
+/// `|next| <= 1` that scale factor cannot grow the carried error, and the
+/// step behaves exactly like `sum`'s: one more unit from this step's own
+/// rounding (R3, converted to absolute form by the magnitude hypothesis),
+/// plus the carried error passed through with a scale factor at most `1`.
+/// Without `|next| <= 1` no such bound holds uniformly in `k` — a run of
+/// factors with magnitude `> 1` would amplify the carried error
+/// geometrically, not additively, and no per-step "one more unit" law would
+/// exist. That is why `theorem_product_error_accumulation` carries the extra
+/// `all_unit` hypothesis that `theorem_sum_error_accumulation` does not need.
+pub proof fn lemma_abs_error_mul_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: nat, m: int)
+    requires
+        prev.wf(),
+        next.wf(),
+        r.wf(),
+        pd > 0,
+        m >= 1,
+        within_abs_error(prev, pn, pd, k, m),
+        within_error_bound(r, crate::q::mul_n(prev, next), crate::q::prod_d(prev, next)),
+        max_int(
+            crate::q::prod_d(prev, next),
+            abs_int(crate::q::mul_n(prev, next)),
+        ) <= m * crate::q::prod_d(prev, next),
+        abs_int(next.n()) <= next.d(),
+    ensures
+        within_abs_error(r, pn * next.n(), pd * next.d(), (k + 1) as nat, m),
+{
+    let ad = prev.d();
+    let an = prev.n();
+    let bd = next.d();
+    let bn = next.n();
+    let en = crate::q::mul_n(prev, next);
+    let ed = crate::q::prod_d(prev, next);
+    let tn = pn * bn;
+    let td = pd * bd;
+    let e = pow2(precision_b());
+    lemma_pow2_pos(precision_b());
+    assert(ad > 0 && bd > 0 && ed == ad * bd && ed > 0) by (nonlinear_arith)
+        requires
+            ad > 0,
+            bd > 0,
+            ed == ad * bd,
+    ;
+    assert(pd * bd > 0) by (nonlinear_arith)
+        requires
+            pd > 0,
+            bd > 0,
+    ;
+    assert(td > 0);
+    // (a) this step's own rounding error, in absolute form.
+    assert(abs_int(r.n() * ed - en * r.d()) * e <= m * (r.d() * ed)) by (nonlinear_arith)
+        requires
+            abs_int(r.n() * ed - en * r.d()) * e <= r.d() * max_int(ed, abs_int(en)),
+            max_int(ed, abs_int(en)) <= m * ed,
+            r.d() > 0,
+    ;
+    // (b) the carried error. Unlike addition, this does NOT pass through
+    // unchanged: en·td - tn·ed factors as bn·bd times the accumulator's own
+    // error, so the step scales the carried error by |bn|/bd. The
+    // unit-magnitude hypothesis |bn| <= bd is what keeps that scale factor at
+    // or below 1, so the carried error still only grows by one unit.
+    //
+    // The factorisation is given to the solver in small steps -- handed over
+    // whole (four variables, degree four, plus a distribution) it exhausts
+    // the resource limit, exactly as the addition step's analogous
+    // factorisation does.
+    assert((an * bn) * (pd * bd) == (bn * bd) * (an * pd)) by (nonlinear_arith);
+    assert((pn * bn) * (ad * bd) == (bn * bd) * (pn * ad)) by (nonlinear_arith);
+    assert((bn * bd) * (an * pd) - (bn * bd) * (pn * ad) == (bn * bd) * (an * pd - pn * ad))
+        by (nonlinear_arith);
+    assert(en * td - tn * ed == (bn * bd) * (an * pd - pn * ad));
+    assert(ed * td == (bd * bd) * (ad * pd)) by (nonlinear_arith)
+        requires
+            ed == ad * bd,
+            td == pd * bd,
+    ;
+    assert(abs_int((bn * bd) * (an * pd - pn * ad)) == abs_int(bn) * bd * abs_int(
+        an * pd - pn * ad,
+    )) by (nonlinear_arith)
+        requires
+            bd > 0,
+    ;
+    assert(abs_int(an * pd - pn * ad) >= 0);
+    assert(abs_int(bn) * bd * (abs_int(an * pd - pn * ad) * e) <= bd * bd * (abs_int(
+        an * pd - pn * ad,
+    ) * e)) by (nonlinear_arith)
+        requires
+            0 <= abs_int(bn) <= bd,
+            bd > 0,
+            abs_int(an * pd - pn * ad) * e >= 0,
+    ;
+    assert(bd * bd * (abs_int(an * pd - pn * ad) * e) <= bd * bd * ((k as int) * m * (ad * pd)))
+        by (nonlinear_arith)
+        requires
+            bd > 0,
+            abs_int(an * pd - pn * ad) * e <= (k as int) * m * (ad * pd),
+    ;
+    assert(abs_int(en * td - tn * ed) * e <= ((k as int) * m) * (ed * td)) by (nonlinear_arith)
+        requires
+            bd > 0,
+            abs_int(en * td - tn * ed) == abs_int(bn) * bd * abs_int(an * pd - pn * ad),
+            abs_int(bn) * bd * (abs_int(an * pd - pn * ad) * e) <= bd * bd * ((k as int) * m * (ad
+                * pd)),
+            ed * td == (bd * bd) * (ad * pd),
+    ;
+    crate::lipschitz::lemma_frac_triangle(r.n(), r.d(), en, ed, tn, td, m, (k as int) * m, e);
+    assert(m + (k as int) * m == ((k + 1) as int) * m) by (nonlinear_arith);
+}
+
+/// **V8 for `product`.** After `k` folded elements the accumulated error
+/// against the exact product is at most `k · m · 2^-61` — **provided every
+/// factor has magnitude at most `1`** (`all_unit(s)`).
+///
+/// The extra hypothesis over `theorem_sum_error_accumulation` is necessary,
+/// not an artifact of the proof: see `lemma_abs_error_mul_step`. It is
+/// trivially satisfiable in this crate's actual domain — every opinion
+/// component lives in `[0, 1]` — where it coincides with `fold_bounded`'s own
+/// `m == 1` case, exactly as documented in `docs/SPEC.md` §9.
+pub proof fn theorem_product_error_accumulation(s: Seq<Q>, m: int)
+    requires
+        all_wf(s),
+        all_unit(s),
+        m >= 1,
+        prod_fold_bounded(s, m),
+    ensures
+        within_abs_error(prod_fold_val(s), prod_num(s), prod_den(s), s.len(), m),
+    decreases s.len(),
+{
+    lemma_prod_fold_wf(s);
+    if s.len() == 0 {
+        assert(prod_num(s) == 1 && prod_den(s) == 1);
+        assert(prod_fold_val(s).n() == 1 && prod_fold_val(s).d() == 1);
+        crate::model::lemma_pow2_pos(crate::model::precision_b());
+        // Both sides are zero, but `abs_int(0)` and the `0 · m · …` product
+        // each need saying.
+        assert(prod_fold_val(s).n() * prod_den(s) - prod_num(s) * prod_fold_val(s).d() == 0);
+        assert(crate::model::abs_int(0) == 0);
+        assert((s.len() as int) * m * (prod_fold_val(s).d() * prod_den(s)) == 0);
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf(init));
+        assert(all_unit(init));
+        assert(prod_fold_bounded(init, m));
+        theorem_product_error_accumulation(init, m);
+        lemma_prod_fold_wf(init);
+        let prev = prod_fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_r3_error(
+            crate::q::mul_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        crate::round::lemma_round_frac_wf(
+            crate::q::mul_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        assert(abs_int(last.n()) <= last.d());
+        lemma_abs_error_mul_step(
+            prev,
+            prod_num(init),
+            prod_den(init),
+            last,
+            prod_fold_val(s),
+            init.len(),
+            m,
+        );
+        assert(prod_num(s) == prod_num(init) * last.n());
+        assert(prod_den(s) == prod_den(init) * last.d());
+        assert(s.len() == init.len() + 1);
+        // Restate the step lemma's conclusion in the goal's own vocabulary.
+        assert(within_abs_error(
+            prod_fold_val(s),
+            prod_num(init) * last.n(),
+            prod_den(init) * last.d(),
+            (init.len() + 1) as nat,
+            m,
+        ));
     }
 }
 
@@ -419,6 +780,15 @@ pub open spec fn fold_exact(s: Seq<Q>) -> bool
 }
 
 /// Composing two exact steps stays exact.
+///
+/// `#[verifier::rlimit(20)]`: this file grew substantially with the `product`
+/// and `weighted_mean` V8 additions, and the larger module pushed this
+/// already-tight six-atom, degree-four proof (see the comment below) over the
+/// default resource limit even though its own steps are unchanged. The same
+/// annotation is already used for comparably-sized proofs in
+/// `crate::lipschitz` (`lemma_triangle`, `lemma_mul_lipschitz`,
+/// `lemma_div_lipschitz`).
+#[verifier::rlimit(20)]
 pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int, td: int)
     requires
         prev.wf(),
