@@ -45,11 +45,39 @@ floating-point *arithmetic* in it at all, but the correspondence between an
    `f64`". It is an assumption in the ordinary English sense.
 
 **What is not assumed.** Everything downstream. Given the triple,
-`from_f64_dir` builds an exact integer pair (`mantissa · 2^e` over `1`, or
-`mantissa` over `2^-e`) and hands it to the same `round_frac_exec` that every
-arithmetic operation uses. R2 and R3 for `from_f64_dir` are therefore proven
-against the decomposed rational — the trusted step is only the identification of
-that rational with the float.
+`convert::from_parts_dir` builds an exact integer pair (`mantissa · 2^e` over
+`1`, or `mantissa` over `2^-e`) and hands it to the same `round_frac_exec` that
+every arithmetic operation uses. R2 and R3 are therefore proven against the
+decomposed rational — the trusted step is only the identification of that
+rational with the float.
+
+That sentence used to name `from_f64_dir`, and was **stronger than the code
+carried**: `from_f64_dir` ensured only `wf()`, so R2 and R3 appeared nowhere in
+the verified contract and rested on the differential tests. The fix was to make
+the claim true rather than to soften it. The integer core is now
+`convert::from_parts_dir`, which `ensures`
+
+* `r == round_frac(parts_num(neg, mant, e), parts_den(e), dir)` — the full value
+  pin, not merely properties of the result;
+* R2 (`q_le_frac`/`q_ge_frac` for the directed modes) and R3
+  (`within_error_bound`) against that same rational;
+* `!saturated(...)` whenever it returns, so R3's own scope condition is
+  discharged rather than passed on;
+* and that `None` happens *only* above the documented `2^61` ceiling.
+
+Those hold for the domain the `requires` names — `mant <= 2^53` and
+`-1074 <= e <= 971`, exactly what `f64_decompose` can emit. A `requires` is
+ghost, though, and this function is `pub`, so it binds only callers Verus
+checks; an unverified one passing a larger `mant` would reach `mant · 2^e` and
+overflow `i128`. The body re-checks the same bounds at run time and returns
+`None` outside them, so the function is total for every caller, not just the
+provable ones. That check is dead code under verification, which is why none of
+the postconditions above are weakened by it.
+
+`from_f64_dir` is now a two-line composition of `f64_decompose` with that core,
+and still ensures only `wf()` — correctly, since no postcondition mentioning `v`
+is statable at all. The boundary is now visible in the type signatures instead of
+being described in this file.
 
 **Tests backing it.**
 

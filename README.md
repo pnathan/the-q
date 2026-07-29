@@ -215,8 +215,10 @@ Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
 
 Arithmetic: `add`, `sub`, `mul`, `div` (round-to-nearest, ties to even);
 `add_dir`, `sub_dir`, `mul_dir`, `div_dir` (explicit direction); `checked_add`,
-`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip`, `pow_u32` —
-all exact; `min`, `max`, `clamp` — all exact.
+`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip` — all exact;
+`pow_u32` — a fold of rounding `mul`, so it rounds as soon as the exact power
+leaves the budget, and underflows to `0` for a small enough base (`(1/3)^40`);
+`min`, `max`, `clamp` — all exact.
 
 `div` and `recip` take `!b.is_zero()` as a **precondition**, discharged by the
 caller under Verus. There is no runtime division-by-zero path to panic on.
@@ -249,7 +251,7 @@ and it is an order-of-magnitude larger verification project.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `665 verified, 0 errors`, no `assume`, no `admit`. The two
+design intention. `691 verified, 0 errors`, no `assume`, no `admit`. The two
 `external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
 are the only things taken on trust.
 
@@ -334,6 +336,30 @@ Also proven: a fold that never rounds is exact, and all three helpers are pinned
 to a spec *function* of their input — reproducibility is a theorem, not a
 property of the current code.
 
+**Ingestion — what the constructors produce, not just that it is well-formed**
+
+Every entry point now pins its own value, which until recently none of them did:
+
+* `Q::new` says what it returns *and* that it returns something: any pair with
+  both components inside the budget succeeds. Without that second half the
+  contract was satisfied by an implementation returning `None` every time.
+* `Q::from_decimal` is exactly `mantissa / 10^dec_places`, and is `None` exactly
+  when `dec_places > 18` or `|mantissa| > MAX_MAG` — both checkable by the
+  caller.
+* `Q::new_rounded` is pinned to `round_frac` of its input, with R2 and R3
+  against that input under the usual `!saturated` scope.
+* `convert::from_parts_dir` — the verified core of `from_f64_dir` — is pinned to
+  `round_frac` of the exact rational the IEEE-754 triple denotes, with R2, R3,
+  the discharge of R3's own `!saturated` side condition, and `None` only above
+  the documented `2^61` ceiling.
+
+The last one covers the whole exponent range in one postcondition, including the
+tail below `2^-125` where the denominator `2^s` is larger than `round_frac_exec`
+itself accepts and the code takes a shortcut instead of calling the rounder;
+`lemma_round_frac_subgrid` proves that shortcut lands where `round_frac` would
+have. (The cutoff is on the exponent, not the magnitude: a value below `2^-62`
+with `e >= -124` — say `2^-100` — still goes through the ordinary rounder.)
+
 **Intervals**
 
 * `QI::add`, `sub` and `mul` `ensure` well-formedness, so interval results
@@ -355,7 +381,10 @@ corrected twice, so it is now a proof obligation instead of a comment.
 
 * **The `f64` boundary.** `f64_decompose` and `to_f64` are `external_body`.
   Proving them means proving IEEE-754 semantics, which `docs/SPEC.md` §5 puts
-  out of scope. They are backed by shrinking property tests instead.
+  out of scope. They are backed by shrinking property tests instead. Note the
+  boundary is now exactly one step wide: everything *downstream* of the
+  decomposed triple is proven — see the ingestion entry above — and
+  `from_f64_dir` is a two-line composition of the trusted step with it.
 * **`weighted_mean`'s returned value.** Both internal accumulators are bounded;
   composing them through the final division into one bound on what the function
   returns is now *unblocked* (the quotient bound above is the piece that was
@@ -383,7 +412,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `665 verified, 0 errors`,
+**Current status: every proof obligation discharges — `691 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is

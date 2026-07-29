@@ -42,6 +42,21 @@ pub open spec fn pow2(n: nat) -> int
     }
 }
 
+/// `10^n` as an unbounded integer.
+///
+/// The decimal counterpart of [`pow2`], and for the same reason: `from_decimal`
+/// cannot say *what value it produces* without a spec-level name for its scale
+/// factor. Only ever applied at `n <= MAX_DEC_PLACES`.
+pub open spec fn pow10(n: nat) -> int
+    decreases n,
+{
+    if n == 0 {
+        1int
+    } else {
+        10 * pow10((n - 1) as nat)
+    }
+}
+
 /// Absolute value on `int`.
 pub open spec fn abs_int(x: int) -> int {
     if x >= 0 { x } else { -x }

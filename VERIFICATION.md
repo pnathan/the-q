@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  665 verified, 0 errors     <- the-q
+verification results::  691 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -36,7 +36,8 @@ The trajectory, one row per CI round:
 | `e267cd5` | 440 | 1 |
 | `c1e3e54` | 442 | 0 |
 | `6c73847` (`main`) | 443 | 0 |
-| this branch (six merged lines of work) | **665** | **0** |
+| `5edea2e` (five merged lines of work) | 665 | 0 |
+| this branch (ingestion contracts, #9) | **691** | **0** |
 
 Verified conditions rose monotonically. The error count did not, and both
 directions had honest causes: it rose when a fixed well-formedness failure
@@ -73,7 +74,7 @@ all invisible locally and only surface in CI. Every proof change here costs a
 
 ## What is established independently of the proofs
 
-* 50 tests green in debug and release, on every commit.
+* 57 tests green in debug and release, on every commit.
 * Differential tests against `malachite-q` — arbitrary precision, fully
   independent: 20,000 random cases per operation per rounding direction against
   R1, R2 and R3, plus exhaustive coverage of every `p/q` with `|p| <= 12,
