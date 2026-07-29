@@ -338,6 +338,7 @@ pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, s
 }
 
 /// The right bracketing of `a + b + c` denotes the same common sum.
+#[verifier::rlimit(20)]
 pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int, sd: int)
     requires
         a.wf(),

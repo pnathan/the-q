@@ -209,6 +209,16 @@ impl Q {
                     g as int,
                     neg,
                 );
+                // I1's zero clause on the returned pair: `rn == 0` forces
+                // `rd == 1` via the fact just established above (`rd == d` when
+                // `num == 0`, and `d == 1` follows from `lemma_gcd_zero` +
+                // `lemma_fundamental_div_mod_converse`). Restating it here as
+                // its own step — rather than leaving the solver to rediscover
+                // it while also proving the whole `wf()` conjunction — is what
+                // keeps this proof from being sensitive to unrelated additions
+                // elsewhere in the module (see the `saturation` module header
+                // for the general phenomenon).
+                assert(rn == 0 ==> rd == 1);
             }
             Some(Q { num: rn as i64, den: rd as i64 })
         } else {
@@ -454,6 +464,10 @@ impl Q {
     }
 
     /// `a + b`, round to nearest (ties to even).
+    ///
+    /// A half grid step, not a whole one, so this achieves `B = 62` — one bit
+    /// better than the `B = 61` the directed modes are limited to (see
+    /// `round::lemma_r3_error_nearest`).
     pub fn add(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -462,11 +476,24 @@ impl Q {
             r.wf(),
             r == round_frac(add_n(a, b), prod_d(a, b), Dir::Nearest),
             exact_path(add_n(a, b), prod_d(a, b)) ==> q_is(r, add_n(a, b), prod_d(a, b)),
+            !saturated(add_n(a, b), prod_d(a, b)) ==> crate::model::within_error_bound_nearest(
+                r,
+                add_n(a, b),
+                prod_d(a, b),
+            ),
     {
-        Q::add_dir(a, b, Dir::Nearest)
+        let r = Q::add_dir(a, b, Dir::Nearest);
+        proof {
+            lemma_op_widths(a, b);
+            if !saturated(add_n(a, b), prod_d(a, b)) {
+                crate::round::lemma_r3_error_nearest(add_n(a, b), prod_d(a, b));
+            }
+        }
+        r
     }
 
-    /// `a - b`, round to nearest (ties to even).
+    /// `a - b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
+    /// does.
     pub fn sub(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -475,11 +502,24 @@ impl Q {
             r.wf(),
             r == round_frac(sub_n(a, b), prod_d(a, b), Dir::Nearest),
             exact_path(sub_n(a, b), prod_d(a, b)) ==> q_is(r, sub_n(a, b), prod_d(a, b)),
+            !saturated(sub_n(a, b), prod_d(a, b)) ==> crate::model::within_error_bound_nearest(
+                r,
+                sub_n(a, b),
+                prod_d(a, b),
+            ),
     {
-        Q::sub_dir(a, b, Dir::Nearest)
+        let r = Q::sub_dir(a, b, Dir::Nearest);
+        proof {
+            lemma_op_widths(a, b);
+            if !saturated(sub_n(a, b), prod_d(a, b)) {
+                crate::round::lemma_r3_error_nearest(sub_n(a, b), prod_d(a, b));
+            }
+        }
+        r
     }
 
-    /// `a * b`, round to nearest (ties to even).
+    /// `a * b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
+    /// does.
     pub fn mul(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -488,11 +528,24 @@ impl Q {
             r.wf(),
             r == round_frac(mul_n(a, b), prod_d(a, b), Dir::Nearest),
             exact_path(mul_n(a, b), prod_d(a, b)) ==> q_is(r, mul_n(a, b), prod_d(a, b)),
+            !saturated(mul_n(a, b), prod_d(a, b)) ==> crate::model::within_error_bound_nearest(
+                r,
+                mul_n(a, b),
+                prod_d(a, b),
+            ),
     {
-        Q::mul_dir(a, b, Dir::Nearest)
+        let r = Q::mul_dir(a, b, Dir::Nearest);
+        proof {
+            lemma_op_widths(a, b);
+            if !saturated(mul_n(a, b), prod_d(a, b)) {
+                crate::round::lemma_r3_error_nearest(mul_n(a, b), prod_d(a, b));
+            }
+        }
+        r
     }
 
     /// `a / b`, round to nearest (ties to even). Requires `!b.is_zero()`.
+    /// Achieves `B = 62`, as `add` does.
     pub fn div(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -502,8 +555,28 @@ impl Q {
             r.wf(),
             r == round_frac(div_n(a, b), div_d(a, b), Dir::Nearest),
             exact_path(div_n(a, b), div_d(a, b)) ==> q_is(r, div_n(a, b), div_d(a, b)),
+            !saturated(div_n(a, b), div_d(a, b)) ==> crate::model::within_error_bound_nearest(
+                r,
+                div_n(a, b),
+                div_d(a, b),
+            ),
     {
-        Q::div_dir(a, b, Dir::Nearest)
+        let r = Q::div_dir(a, b, Dir::Nearest);
+        proof {
+            lemma_op_widths(a, b);
+            assert(b.n() > 0 ==> a.d() * b.n() > 0) by (nonlinear_arith)
+                requires
+                    a.d() > 0,
+            ;
+            assert(b.n() < 0 ==> a.d() * b.n() < 0) by (nonlinear_arith)
+                requires
+                    a.d() > 0,
+            ;
+            if !saturated(div_n(a, b), div_d(a, b)) {
+                crate::round::lemma_r3_error_nearest(div_n(a, b), div_d(a, b));
+            }
+        }
+        r
     }
 
     /// `a + b`, or `None` if the exact sum is too large in magnitude to be
@@ -565,6 +638,33 @@ impl Q {
         }
         if magnitude_fits_exec(sub_n_exec(a, b), prod_d_exec(a, b)) {
             Some(Q::sub(a, b))
+        } else {
+            None
+        }
+    }
+
+    /// `a / b`, or `None` if the exact quotient is too large in magnitude.
+    /// Requires `!b.is_zero()`.
+    ///
+    /// Division saturates on the same magnitude ceiling as `add`, `sub` and
+    /// `mul` — `(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so this closes
+    /// the `checked_*` family rather than leaving it asymmetric.
+    pub fn checked_div(a: Q, b: Q) -> (r: Option<Q>)
+        requires
+            a.wf(),
+            b.wf(),
+            b.n() != 0,
+        ensures
+            r.is_none() <==> saturated(div_n(a, b), div_d(a, b)),
+            r.is_some() ==> r.unwrap() == round_frac(div_n(a, b), div_d(a, b), Dir::Nearest),
+            r.is_some() ==> r.unwrap().wf(),
+    {
+        proof {
+            lemma_op_widths(a, b);
+            crate::model::lemma_pow2_126();
+        }
+        if magnitude_fits_exec(div_n_exec(a, b), div_d_exec(a, b)) {
+            Some(Q::div(a, b))
         } else {
             None
         }
@@ -847,6 +947,66 @@ pub fn prod_d_exec(a: Q, b: Q) -> (r: i128)
         lemma_pow2_126();
     }
     (a.den as i128) * (b.den as i128)
+}
+
+/// Exec mirror of `div_n`: sign-normalised the same way [`Q::div_dir`]
+/// computes it, so it pairs with [`div_d_exec`].
+pub fn div_n_exec(a: Q, b: Q) -> (r: i128)
+    requires
+        a.wf(),
+        b.wf(),
+        b.n() != 0,
+    ensures
+        r as int == div_n(a, b),
+{
+    proof {
+        lemma_op_widths(a, b);
+        lemma_pow2_126();
+        assert(b.n() > 0 ==> a.d() * b.n() > 0) by (nonlinear_arith)
+            requires
+                a.d() > 0,
+        ;
+        assert(b.n() < 0 ==> a.d() * b.n() < 0) by (nonlinear_arith)
+            requires
+                a.d() > 0,
+        ;
+    }
+    let mut n: i128 = (a.num as i128) * (b.den as i128);
+    let d: i128 = (a.den as i128) * (b.num as i128);
+    if d < 0 {
+        n = 0 - n;
+    }
+    n
+}
+
+/// Exec mirror of `div_d`: always positive, the denominator [`div_n_exec`]
+/// pairs with.
+pub fn div_d_exec(a: Q, b: Q) -> (r: i128)
+    requires
+        a.wf(),
+        b.wf(),
+        b.n() != 0,
+    ensures
+        r as int == div_d(a, b),
+        r > 0,
+{
+    proof {
+        lemma_op_widths(a, b);
+        lemma_pow2_126();
+        assert(b.n() > 0 ==> a.d() * b.n() > 0) by (nonlinear_arith)
+            requires
+                a.d() > 0,
+        ;
+        assert(b.n() < 0 ==> a.d() * b.n() < 0) by (nonlinear_arith)
+            requires
+                a.d() > 0,
+        ;
+    }
+    let mut d: i128 = (a.den as i128) * (b.num as i128);
+    if d < 0 {
+        d = 0 - d;
+    }
+    d
 }
 
 /// The magnitude test, without ever forming `MAX_MAG · d`.

@@ -213,6 +213,30 @@ pub open spec fn within_error_bound(r: Q, n: int, d: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= r.d() * max_int(d, abs_int(n))
 }
 
+/// The precision `Dir::Nearest` actually achieves: a *half* grid step rather
+/// than a whole one, because the nearest integer is never more than half a
+/// unit from the exact scaled value (`lemma_grid_error_step_nearest_half` in
+/// `round.rs`).
+///
+/// This is **not** the crate-wide R3 contract — `precision_b` stays at `61`
+/// because the directed modes (`Dir::Down`, `Dir::Up`) genuinely achieve no
+/// better than that. It is the tighter bound available specifically on the
+/// path every default operation (`Q::add`/`sub`/`mul`/`div`) takes, proved as
+/// an additional guarantee alongside the uniform one rather than in place of
+/// it.
+pub open spec fn precision_b_nearest() -> nat {
+    62nat
+}
+
+/// R3 at `Dir::Nearest`'s tighter bound, division-free. Same shape as
+/// `within_error_bound`, at `B = 62` instead of `61`.
+pub open spec fn within_error_bound_nearest(r: Q, n: int, d: int) -> bool {
+    abs_int(r.n() * d - n * r.d()) * pow2(precision_b_nearest()) <= r.d() * max_int(
+        d,
+        abs_int(n),
+    )
+}
+
 /// The accumulated bound after `k` operations: `k · 2^-B · max(1, |exact|)`.
 /// Used by the n-ary helpers (V8).
 pub open spec fn within_error_bound_k(r: Q, n: int, d: int, k: nat) -> bool {
