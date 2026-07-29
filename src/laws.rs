@@ -338,6 +338,13 @@ pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, s
 }
 
 /// The right bracketing of `a + b + c` denotes the same common sum.
+///
+/// The explicit `rlimit` is a pre-existing tuning knob, not new to this
+/// proof: this identity was already at the edge of the default resource
+/// budget (as the sibling lemmas' comments about "exhausts the rlimit" note),
+/// and the file's growth pushed it just over. The statement and proof steps
+/// below are unchanged; only the solver's time budget is raised.
+#[verifier::rlimit(20)]
 pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int, sd: int)
     requires
         a.wf(),
@@ -892,6 +899,205 @@ pub proof fn theorem_div_is_mul_recip(a: Q, b: Q, rb: Q)
             rb.d() > 0,
             b.n() != 0,
     ;
+}
+
+// ---------------------------------------------------------------------------
+// Associativity up to a proven error bound
+//
+// `theorem_add_associative_exact` above is the honest statement on the exact
+// path. This section answers the harder question the README leaves open:
+// when rounding *does* bite, how far apart can `(a+b)+c` and `a+(b+c)` get?
+//
+// Both bracketings round the *same* exact value `a+b+c` through two rounding
+// steps apiece. Each step costs at most one R3 unit against whatever it was
+// fed, and error propagates through exact addition untouched (the same fact
+// `crate::lipschitz::lemma_abs_error_step` uses for the V8 fold bound), so the
+// two 2-unit paths are at most `4` units apart by the triangle inequality.
+// ---------------------------------------------------------------------------
+
+/// A value equal to itself carries zero accumulated error against any budget.
+/// The base case every chain below starts from — `a` is not the output of any
+/// rounding, so it is a perfect approximation of itself.
+pub proof fn lemma_self_zero_error(x: Q, m: int)
+    requires
+        x.wf(),
+    ensures
+        within_abs_error(x, x.n(), x.d(), 0, m),
+{
+    assert(x.n() * x.d() - x.n() * x.d() == 0);
+    assert(abs_int(0) == 0);
+}
+
+/// `|x| == |-x|`, spelled out for [`abs_int`] specifically because it is
+/// defined by a sign case split rather than by a property Verus's nonlinear
+/// tactic picks up on its own.
+pub proof fn lemma_abs_int_neg(x: int)
+    ensures
+        abs_int(-x) == abs_int(x),
+{
+}
+
+/// The ring identity underlying both bracketings of `a + b + c`: combining
+/// `a, b` first and then folding in `c` reaches the same numerator/denominator
+/// pair (up to the obvious reassociation) as combining `b, c` first and
+/// folding in `a`. Neither side needs to be exact — this is pure algebra on
+/// the *exact* numerators and denominators the two additions would compute.
+pub proof fn lemma_sum3_ring(a: Q, b: Q, c: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+    ensures
+        add_n(a, b) * c.d() + c.n() * prod_d(a, b) == add_n(b, c) * a.d() + a.n() * prod_d(b, c),
+        prod_d(a, b) * c.d() == prod_d(b, c) * a.d(),
+{
+    let ad = a.d();
+    let an = a.n();
+    let bd = b.d();
+    let bn = b.n();
+    let cd = c.d();
+    let cn = c.n();
+    // Unfold `add_n`/`prod_d` to plain arithmetic *before* handing anything to
+    // `nonlinear_arith`: that tactic sees function applications as opaque
+    // terms, not their definitions, unless an equality is supplied.
+    assert(add_n(a, b) == an * bd + bn * ad);
+    assert(prod_d(a, b) == ad * bd);
+    assert(add_n(b, c) == bn * cd + cn * bd);
+    assert(prod_d(b, c) == bd * cd);
+    // The two three-monomial expansions match term for term, up to
+    // reassociation — a single ring identity over six named atoms.
+    assert((an * bd + bn * ad) * cd + cn * (ad * bd) == (bn * cd + cn * bd) * ad + an * (bd * cd))
+        by (nonlinear_arith);
+    assert(ad * bd * cd == bd * cd * ad) by (nonlinear_arith);
+}
+
+/// **Associativity up to a proven error, for `add`.**
+///
+/// `(a+b)+c` and `a+(b+c)` are both rounded approximations of the same exact
+/// value `a + b + c`, each reached by exactly two rounding steps. By R3, each
+/// step contributes at most one unit of `2^-61 · m` error against whatever it
+/// was fed, where `m` bounds the magnitude of that step's exact input; the
+/// error already carried passes through exact addition untouched, because
+/// addition is exactly 1-Lipschitz. That makes each bracketing land within
+/// `2` units of the true sum, and the triangle inequality bounds their
+/// mutual distance by `4` units:
+///
+/// `|((a+b)+c) - (a+(b+c))| <= 4 · 2^-61 · m`.
+///
+/// The hypotheses are exactly the per-step non-saturation and magnitude
+/// bounds R3 needs, for all four additions the two bracketings perform —
+/// the same shape [`crate::nary::fold_bounded`] uses for the V8 sum bound,
+/// specialised to a tree of depth two instead of a left fold. No `[0, 1]`
+/// assumption is required: `m` is a free parameter, chosen by the caller to
+/// fit whatever domain it works in. (In the consuming engine's domain,
+/// opinion components live in `[0, 1]`, partial sums of up to three of them
+/// fit comfortably under `m == 3`, giving a defect of at most
+/// `12 · 2^-61 ≈ 5.2 · 10^-18` — far below the unit of least precision that
+/// matters to a subjective-logic fusion.)
+pub proof fn theorem_add_associativity_bound(a: Q, b: Q, c: Q, dir: Dir, m: int)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        m >= 1,
+        !saturated(add_n(a, b), prod_d(a, b)),
+        max_int(prod_d(a, b), abs_int(add_n(a, b))) <= m * prod_d(a, b),
+        !saturated(add_n(b, c), prod_d(b, c)),
+        max_int(prod_d(b, c), abs_int(add_n(b, c))) <= m * prod_d(b, c),
+        ({
+            let ab = round_frac(add_n(a, b), prod_d(a, b), dir);
+            &&& !saturated(add_n(ab, c), prod_d(ab, c))
+            &&& max_int(prod_d(ab, c), abs_int(add_n(ab, c))) <= m * prod_d(ab, c)
+        }),
+        ({
+            let bc = round_frac(add_n(b, c), prod_d(b, c), dir);
+            &&& !saturated(add_n(a, bc), prod_d(a, bc))
+            &&& max_int(prod_d(a, bc), abs_int(add_n(a, bc))) <= m * prod_d(a, bc)
+        }),
+    ensures
+        ({
+            let ab = round_frac(add_n(a, b), prod_d(a, b), dir);
+            let bc = round_frac(add_n(b, c), prod_d(b, c), dir);
+            let left = round_frac(add_n(ab, c), prod_d(ab, c), dir);
+            let right = round_frac(add_n(a, bc), prod_d(a, bc), dir);
+            within_abs_error(left, right.n(), right.d(), 4, m)
+        }),
+{
+    crate::q::lemma_op_widths(a, b);
+    crate::q::lemma_op_widths(b, c);
+    let ab = round_frac(add_n(a, b), prod_d(a, b), dir);
+    let bc = round_frac(add_n(b, c), prod_d(b, c), dir);
+    crate::round::lemma_round_frac_wf(add_n(a, b), prod_d(a, b), dir);
+    crate::round::lemma_round_frac_wf(add_n(b, c), prod_d(b, c), dir);
+    crate::q::lemma_op_widths(ab, c);
+    crate::q::lemma_op_widths(a, bc);
+    crate::q::lemma_op_widths(bc, a);
+    let left = round_frac(add_n(ab, c), prod_d(ab, c), dir);
+    let right = round_frac(add_n(a, bc), prod_d(a, bc), dir);
+    crate::round::lemma_round_frac_wf(add_n(ab, c), prod_d(ab, c), dir);
+    crate::round::lemma_round_frac_wf(add_n(a, bc), prod_d(a, bc), dir);
+
+    // --- left bracketing: a (0 units) -> ab (1 unit) -> left (2 units) ---
+    lemma_self_zero_error(a, m);
+    crate::round::lemma_r3_error(add_n(a, b), prod_d(a, b), dir);
+    crate::lipschitz::lemma_abs_error_step(a, a.n(), a.d(), b, ab, 0, m);
+    crate::round::lemma_r3_error(add_n(ab, c), prod_d(ab, c), dir);
+    crate::lipschitz::lemma_abs_error_step(ab, add_n(a, b), prod_d(a, b), c, left, 1, m);
+
+    let sn = add_n(a, b) * c.d() + c.n() * prod_d(a, b);
+    let sd = prod_d(a, b) * c.d();
+    assert(within_abs_error(left, sn, sd, 2, m));
+
+    // --- right bracketing: b (0 units) -> bc (1 unit) -> right (2 units),
+    // reached by folding `a` into `bc` on the right, using that `add_n` and
+    // `prod_d` are already symmetric formulas to identify the result with
+    // `right`. ---
+    lemma_self_zero_error(b, m);
+    crate::round::lemma_r3_error(add_n(b, c), prod_d(b, c), dir);
+    crate::lipschitz::lemma_abs_error_step(b, b.n(), b.d(), c, bc, 0, m);
+
+    assert(add_n(bc, a) == add_n(a, bc));
+    assert(prod_d(bc, a) == bc.d() * a.d());
+    assert(prod_d(a, bc) == a.d() * bc.d());
+    assert(bc.d() * a.d() == a.d() * bc.d()) by (nonlinear_arith);
+    assert(prod_d(bc, a) == prod_d(a, bc));
+    crate::round::lemma_r3_error(add_n(a, bc), prod_d(a, bc), dir);
+    assert(within_error_bound(right, add_n(bc, a), prod_d(bc, a)));
+    assert(max_int(prod_d(bc, a), abs_int(add_n(bc, a))) <= m * prod_d(bc, a));
+    crate::lipschitz::lemma_abs_error_step(bc, add_n(b, c), prod_d(b, c), a, right, 1, m);
+
+    lemma_sum3_ring(a, b, c);
+    assert(within_abs_error(right, sn, sd, 2, m));
+
+    // --- combine the two 2-unit bounds via the triangle inequality ---
+    crate::model::lemma_pow2_pos(precision_b());
+    assert(left.d() > 0);
+    assert(right.d() > 0);
+    assert(sd > 0) by (nonlinear_arith)
+        requires
+            sd == prod_d(a, b) * c.d(),
+            prod_d(a, b) > 0,
+            c.d() > 0,
+    ;
+    lemma_abs_int_neg(right.n() * sd - sn * right.d());
+    assert(sn * right.d() - right.n() * sd == -(right.n() * sd - sn * right.d()));
+    assert(abs_int(sn * right.d() - right.n() * sd) == abs_int(right.n() * sd - sn * right.d()));
+    assert(abs_int(right.n() * sd - sn * right.d()) * pow2(precision_b()) <= 2 * m * (right.d()
+        * sd));
+    assert(right.d() * sd == sd * right.d()) by (nonlinear_arith);
+    assert(abs_int(sn * right.d() - right.n() * sd) * pow2(precision_b()) <= 2 * m * (sd
+        * right.d()));
+    crate::lipschitz::lemma_frac_triangle(
+        left.n(),
+        left.d(),
+        sn,
+        sd,
+        right.n(),
+        right.d(),
+        2 * m,
+        2 * m,
+        pow2(precision_b()),
+    );
 }
 
 } // verus!
