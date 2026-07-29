@@ -215,8 +215,10 @@ Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
 
 Arithmetic: `add`, `sub`, `mul`, `div` (round-to-nearest, ties to even);
 `add_dir`, `sub_dir`, `mul_dir`, `div_dir` (explicit direction); `checked_add`,
-`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip`, `pow_u32` —
-all exact; `min`, `max`, `clamp` — all exact.
+`checked_sub`, `checked_mul`, `checked_div`; `neg`, `abs`, `recip` — all exact;
+`pow_u32` — a fold of rounding `mul`, so it rounds as soon as the exact power
+leaves the budget, and underflows to `0` for a small enough base (`(1/3)^40`);
+`min`, `max`, `clamp` — all exact.
 
 `div` and `recip` take `!b.is_zero()` as a **precondition**, discharged by the
 caller under Verus. There is no runtime division-by-zero path to panic on.

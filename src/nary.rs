@@ -234,8 +234,13 @@ pub open spec fn all_wf_pairs(s: Seq<(Q, Q)>) -> bool {
 /// `sum(w_i · x_i) / sum(w_i)` — the shape the averaging-belief-fusion formula
 /// needs.
 ///
-/// `None` when the weights sum to zero (the mean is undefined there, and this
-/// crate does not invent a value for it).
+/// `None` when the *accumulated* weight sum is zero — `wt_fold_val` below, the
+/// fold's own rounded total, not the exact sum. Two different inputs land here:
+/// weights that cancel exactly, and weights whose exact sum is nonzero but too
+/// small for the grid, so the fold rounds it to zero (`1/MAX_MAG` against
+/// `-1/(MAX_MAG - 2)` sums to about `-2^-123` and is refused). The mean is
+/// undefined in the first case and unrepresentable in the second, and this crate
+/// invents a value for neither.
 pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
     requires
         all_wf_pairs(pairs@),
