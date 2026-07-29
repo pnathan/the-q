@@ -5,8 +5,8 @@
 //! | law | status |
 //! |---|---|
 //! | `a + b == b + a`, `a * b == b * a` | **always**, bit-for-bit |
-//! | `(a + b) + c == a + (b + c)` | **only on the exact path** |
-//! | `(a * b) * c == a * (b * c)` | **only on the exact path** |
+//! | `(a + b) + c == a + (b + c)` | exact path: **exactly**; otherwise: **within `4 · 2^-61 · m`** |
+//! | `(a * b) * c == a * (b * c)` | exact path: **exactly**; otherwise, on `[0, 1]`: **within `6 · 2^-61`** |
 //! | `a * (b + c) == a*b + a*c` | **only on the exact path** |
 //! | `Ord` is a total order agreeing with the ghost order | always |
 //! | `-(-a) == a`, `abs(abs(a)) == abs(a)`, `1/(1/a) == a` | always |
@@ -14,9 +14,12 @@
 //! Commutativity survives rounding because both orderings feed *provably equal*
 //! integers into the same rounding function. Associativity does not, and this
 //! crate does not pretend otherwise: rounding the inner sum first can land on a
-//! different grid point than rounding the outer one. The consuming engine's
+//! different grid point than rounding the outer one. That failure is bounded,
+//! though, not just acknowledged: `theorem_add_associativity_bound` and
+//! `theorem_mul_associativity_bound_unit_interval` below turn "not associative"
+//! into "associative up to a proven error". The consuming engine's
 //! order-independence claims therefore hold **exactly** whenever the whole
-//! computation stays inside the budget, and **up to the accumulated error
+//! computation stays inside the budget, and **up to that proven error
 //! bound** otherwise. See `README.md`.
 
 use verus_builtin_macros::verus;

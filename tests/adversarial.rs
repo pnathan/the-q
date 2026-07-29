@@ -343,6 +343,96 @@ fn associativity_can_fail_when_rounding_bites() {
 }
 
 #[test]
+fn associativity_defect_for_add_is_quantitatively_bounded() {
+    // The test above shows `add` can fail to be associative. This one shows
+    // that failure is not unbounded: it demonstrates
+    // `laws::theorem_add_associativity_bound` on a genuine failure instance —
+    // `|((a+b)+c) - (a+(b+c))| <= 4 * 2^-61 * m`, where `m` bounds
+    // `max(1, |exact value|)` for every one of the four additions the two
+    // bracketings perform.
+    let mut rng = Rng::new(0xA55_0C_1A);
+    let mut checked_a_failure = false;
+    for _ in 0..200_000 {
+        let (a, b, c) = (rng.q(), rng.q(), rng.q());
+        let left = Q::add(Q::add(a, b), c);
+        let right = Q::add(a, Q::add(b, c));
+        if left == right {
+            continue;
+        }
+        checked_a_failure = true;
+
+        let ab = Q::add(a, b);
+        let bc = Q::add(b, c);
+        let ab_exact = rat(a) + rat(b);
+        let bc_exact = rat(b) + rat(c);
+        let left_inner_exact = rat(ab) + rat(c);
+        let right_inner_exact = rat(a) + rat(bc);
+
+        let mut m = one();
+        for exact in [&ab_exact, &bc_exact, &left_inner_exact, &right_inner_exact] {
+            let mag = rabs(exact.clone());
+            if mag > m {
+                m = mag;
+            }
+        }
+
+        let err = rabs(rat(left) - rat(right));
+        // Division-free, matching the theorem's own statement:
+        // |left - right| * 2^61 <= 4 * m.
+        assert!(
+            err.clone() * two_pow_b()
+                <= malachite_q::Rational::from_signeds(4i128, 1i128) * m.clone(),
+            "associativity defect exceeded the proven bound: a={a:?} b={b:?} c={c:?}, \
+             left={left:?} right={right:?}, err={err}, m={m}"
+        );
+    }
+    assert!(
+        checked_a_failure,
+        "no associativity failure found to check the bound against"
+    );
+}
+
+#[test]
+fn associativity_defect_for_mul_is_quantitatively_bounded_on_unit_interval() {
+    // The multiplicative analogue: `laws::theorem_mul_associativity_bound_unit_interval`
+    // claims `|((a*b)*c) - (a*(b*c))| <= 6 * 2^-61` whenever `a, b, c` all lie
+    // in `[0, 1]`. Draw wide unit-interval values (denominators near the
+    // budget, so rounding is essentially guaranteed) until a genuine
+    // associativity failure turns up, and check the bound on it.
+    let mut rng = Rng::new(0x0FF_1CE);
+    let wide01 = |r: &mut Rng| loop {
+        let d = MAX_MAG - r.below(1024) as i64;
+        let n = r.below((d as u64) + 1) as i64;
+        if let Some(q) = Q::new(n, d) {
+            return q;
+        }
+    };
+    let mut checked_a_failure = false;
+    for _ in 0..200_000 {
+        let (a, b, c) = (wide01(&mut rng), wide01(&mut rng), wide01(&mut rng));
+        assert!(a.in_unit_interval() && b.in_unit_interval() && c.in_unit_interval());
+        let left = Q::mul(Q::mul(a, b), c);
+        let right = Q::mul(a, Q::mul(b, c));
+        if left == right {
+            continue;
+        }
+        checked_a_failure = true;
+
+        let err = rabs(rat(left) - rat(right));
+        // |left - right| * 2^61 <= 6.
+        assert!(
+            err.clone() * two_pow_b() <= malachite_q::Rational::from_signeds(6i128, 1i128),
+            "multiplicative associativity defect exceeded the proven bound: \
+             a={a:?} b={b:?} c={c:?}, left={left:?} right={right:?}, err={err}"
+        );
+    }
+    assert!(
+        checked_a_failure,
+        "no associativity failure found to check the bound against"
+    );
+}
+
+#[test]
 fn the_composed_operation_is_not_globally_monotone() {
     // README documents this, and R4 is stated per-grid because of it: "return
     // it exactly if it fits, otherwise snap to the dyadic grid" is not monotone

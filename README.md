@@ -78,9 +78,22 @@ outer one. The test suite contains a test that *searches for* an associativity
 failure and fails if it cannot find one, so this note cannot go stale in either
 direction.
 
+That failure is bounded, not just acknowledged. `laws::theorem_add_associativity_bound`
+proves `|((a+b)+c) - (a+(b+c))| <= 4 * 2^-61 * m`, where `m` is a caller-supplied
+bound on `max(1, |exact value|)` for every partial sum the two bracketings
+touch — no `[0, 1]` assumption required. `laws::theorem_mul_associativity_bound_unit_interval`
+proves the multiplicative analogue, `|((a*b)*c) - (a*(b*c))| <= 6 * 2^-61`,
+under the hypothesis that `a, b, c` all lie in `[0, 1]` (the engine's actual
+domain): `mul`'s error is weighted by the *other* factor's magnitude at each
+step rather than simply adding, so a general `m`-parameterised bound would
+grow with `m²`, not `m`, and `[0, 1]` is where that distinction collapses.
+`tests/adversarial.rs` checks both bounds on a genuine associativity-failure
+instance found by the same search.
+
 Consequence for a consuming engine: order-independence claims hold **exactly**
-for computations that stay inside the budget, and **up to the accumulated error
-bound** otherwise.
+for computations that stay inside the budget, and **up to a proven, explicit
+error bound** otherwise — not merely "up to some unquantified accumulated
+error".
 
 ### The composed operation is not globally monotone
 
