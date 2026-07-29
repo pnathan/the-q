@@ -19,6 +19,11 @@
 //! them, so they are kept as-is; the bounds are the form you want when composing
 //! two `frac_diff_le` hypotheses through a product or a quotient, which the
 //! identity alone will not do for you.
+//!
+//! The quotient bound is *not* built on the quotient identity. Division is
+//! multiplication by the reciprocal, so it is `lemma_recip_lipschitz_bound` fed
+//! into `lemma_mul_lipschitz_bound` — shorter to state and far cheaper for the
+//! solver than the four-way cross-multiplied difference taken head-on.
 
 use verus_builtin_macros::verus;
 

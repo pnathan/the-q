@@ -39,6 +39,13 @@ serde_json = "1"
 # Shrinking property tests over the trusted f64 boundary and the trait glue.
 proptest = "1"
 
+# Comparison benchmark against f64 and the exact-rational oracle. No criterion:
+# a median of seven timed runs does not need a framework. `harness = false`
+# because this is a `main`, not a set of `#[bench]` functions.
+[[bench]]
+name = "arith"
+harness = false
+
 [features]
 default = []
 serde = ["dep:serde"]
