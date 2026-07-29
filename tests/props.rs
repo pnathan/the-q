@@ -365,6 +365,120 @@ fn interval_width_is_zero_on_the_exact_path() {
     assert_eq!(QI::add(a, b).lo, Q::one());
 }
 
+/// Non-degenerate, arbitrary-sign intervals bracket the exact result of every
+/// point drawn from inside them — not just the endpoint-to-endpoint case
+/// `intervals_bracket_the_exact_result` checks. This is the black-box
+/// counterpart of `theorem_interval_add_contains`, `_sub_contains` and
+/// `_mul_contains`: those are proved for arbitrary `x`/`y` in range, and this
+/// samples that arbitrary range instead of only ever using the endpoints
+/// themselves (which is all a point interval can exercise). Signed endpoints
+/// in particular exercise `mul`'s corner rule across every sign pattern,
+/// which the existing (nonnegative-only) test above never reaches.
+#[test]
+fn signed_intervals_bracket_arbitrary_interior_points() {
+    use the_q::interval::QI;
+    let mut rng = Rng::new(0x519_5460_51_9);
+    for _ in 0..10_000 {
+        let (a_lo, a_hi) = ordered_pair(&mut rng);
+        let (b_lo, b_hi) = ordered_pair(&mut rng);
+        let ia = QI::new(a_lo, a_hi);
+        let ib = QI::new(b_lo, b_hi);
+        let x = interior_point(&mut rng, a_lo, a_hi);
+        let y = interior_point(&mut rng, b_lo, b_hi);
+
+        let s = QI::add(ia, ib);
+        assert!(Q::le(s.lo, s.hi), "sum interval not well-formed");
+        let exact = rat(x) + rat(y);
+        assert!(
+            rat(s.lo) <= exact && exact <= rat(s.hi),
+            "sum interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
+            rat(s.lo),
+            rat(s.hi)
+        );
+
+        let d = QI::sub(ia, ib);
+        assert!(Q::le(d.lo, d.hi), "difference interval not well-formed");
+        let exact = rat(x) - rat(y);
+        assert!(
+            rat(d.lo) <= exact && exact <= rat(d.hi),
+            "diff interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
+            rat(d.lo),
+            rat(d.hi)
+        );
+
+        let m = QI::mul(ia, ib);
+        assert!(Q::le(m.lo, m.hi), "product interval not well-formed");
+        let exact = rat(x) * rat(y);
+        assert!(
+            rat(m.lo) <= exact && exact <= rat(m.hi),
+            "product interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
+            rat(m.lo),
+            rat(m.hi)
+        );
+    }
+}
+
+/// The composability the layer is supposed to have: the output of one
+/// interval operation, fed straight into the next without any re-validation
+/// in between, stays well-formed and keeps bracketing the exact chained
+/// result. Signed endpoints exercise `mul`'s corner rule inside the chain.
+#[test]
+fn interval_ops_chain_without_reestablishing_wf() {
+    use the_q::interval::QI;
+    let mut rng = Rng::new(0xC0FFEE_5EED);
+    for _ in 0..5_000 {
+        let (a_lo, a_hi) = ordered_pair(&mut rng);
+        let (b_lo, b_hi) = ordered_pair(&mut rng);
+        let (c_lo, c_hi) = ordered_pair(&mut rng);
+        let ia = QI::new(a_lo, a_hi);
+        let ib = QI::new(b_lo, b_hi);
+        let ic = QI::new(c_lo, c_hi);
+
+        // `QI::add`'s result feeds `QI::mul` directly, and that result feeds
+        // `QI::sub` directly: no intermediate `QI::new`/re-check.
+        let sum = QI::add(ia, ib);
+        let prod = QI::mul(sum, ic);
+        let diff = QI::sub(prod, ia);
+        assert!(
+            Q::le(diff.lo, diff.hi),
+            "chained interval lost well-formedness"
+        );
+
+        let x = interior_point(&mut rng, a_lo, a_hi);
+        let y = interior_point(&mut rng, b_lo, b_hi);
+        let z = interior_point(&mut rng, c_lo, c_hi);
+        let exact = (rat(x) + rat(y)) * rat(z) - rat(x);
+        assert!(
+            rat(diff.lo) <= exact && exact <= rat(diff.hi),
+            "chained interval [{},{}] misses {exact}",
+            rat(diff.lo),
+            rat(diff.hi)
+        );
+    }
+}
+
+/// A uniformly-flavoured pair `(lo, hi)` with `lo <= hi`, drawn from the same
+/// mixture of magnitude classes as `Rng::q` — signed, so both endpoints can
+/// land on either side of zero.
+fn ordered_pair(rng: &mut Rng) -> (Q, Q) {
+    let (p, q) = (rng.q(), rng.q());
+    if Q::le(p, q) {
+        (p, q)
+    } else {
+        (q, p)
+    }
+}
+
+/// A `Q` in `[lo, hi]`, biased toward the endpoints themselves so the corner
+/// rule's boundary is exercised as often as its interior.
+fn interior_point(rng: &mut Rng, lo: Q, hi: Q) -> Q {
+    match rng.below(4) {
+        0 => lo,
+        1 => hi,
+        _ => Q::clamp(rng.q(), lo, hi),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // pow
 // ---------------------------------------------------------------------------
