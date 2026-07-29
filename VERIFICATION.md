@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  478 verified, 0 errors     <- the-q
+verification results::  482 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -163,7 +163,7 @@ No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 | V5 | GCD correctness and termination | MUST | `gcd.rs`, whole module |
 | V6 | Algebraic laws | MUST | `laws.rs`, whole module |
 | V7 | Error-propagation (Lipschitz) lemmas | SHOULD | `lipschitz.rs` |
-| V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation` |
+| V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation`, `nary::theorem_product_error_accumulation`, `nary::theorem_wm_num_error_accumulation`, `nary::theorem_wm_denom_error_accumulation` |
 
 ### V1 — the type invariant
 
@@ -330,6 +330,30 @@ thing.
 The empirical claim is checked independently:
 `oracle::long_fold_chain_tracks_oracle` runs 10⁴ mixed operations and asserts
 the accumulated error against the oracle stays inside `k · 2^-61`.
+
+**`product` and `weighted_mean` carry the same shape of bound, each under its
+own hypothesis, not `sum`'s hypothesis reused.**
+
+* `nary::theorem_product_error_accumulation` is `sum`'s theorem's
+  multiplicative twin: `k · m · 2^-61`, but only under `nary::all_unit(s)` —
+  every factor's magnitude at most `1`. This is necessary, not a proof
+  artifact: multiplication is 1-Lipschitz only when weighted by the other
+  operand's magnitude (`lipschitz::lemma_mul_lipschitz`), so a factor `> 1`
+  would amplify the carried error geometrically rather than additively, and
+  no bound of this shape would hold uniformly in `k`. The hypothesis is
+  trivial in the consuming engine's domain (`[0, 1]`).
+* `weighted_mean` gets two bounds on its two internal accumulators —
+  `nary::theorem_wm_num_error_accumulation` (`2k · m · 2^-61` against the true
+  `Σ w_i·x_i`, twice `sum`'s rate because each pair costs two roundings) and
+  `nary::theorem_wm_denom_error_accumulation` (`k · m · 2^-61` against the
+  true `Σ w_i`, a direct restatement of `theorem_sum_error_accumulation` for
+  the weight half of each pair) — but **not** a single bound on the value
+  `weighted_mean` returns. Composing the two through the final division would
+  need the exact weight sum bounded away from zero as a further explicit
+  hypothesis, plus a finished division error bound
+  (`lipschitz::lemma_div_lipschitz` states only the algebraic identity such a
+  bound would be built from). That composition is left unproven; the two
+  theorems above are the actual n-ary-helper internals V8 asks be bounded.
 
 ---
 
