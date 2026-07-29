@@ -1100,4 +1100,530 @@ pub proof fn theorem_add_associativity_bound(a: Q, b: Q, c: Q, dir: Dir, m: int)
     );
 }
 
+// ---------------------------------------------------------------------------
+// Associativity up to a proven error, for `mul`
+//
+// `mul`'s error does not accumulate the same way `add`'s does. Addition's
+// Lipschitz constant is exactly `1` in each argument, so magnitude bounds on
+// the *sums* were all `theorem_add_associativity_bound` needed. Multiplication
+// scales an existing error by the *other* factor's magnitude
+// (`crate::lipschitz::lemma_mul_lipschitz`), so a general bound would need a
+// magnitude parameter for both the products *and* the individual factors, and
+// the defect would grow with the square of that bound rather than linearly.
+//
+// The consuming engine's actual domain sidesteps this: opinion components live
+// in `[0, 1]`, and on `[0, 1]` every relevant magnitude is at most `1` (or, for
+// a once-rounded intermediate, boundedly close to it), which is exactly the
+// hypothesis this section proves the bound under.
+// ---------------------------------------------------------------------------
+
+/// A cross-multiplied inequality survives cancelling a shared positive factor.
+pub proof fn lemma_cancel_pos_le(x: int, y: int, c: int)
+    requires
+        c > 0,
+        x * c <= y * c,
+    ensures
+        x <= y,
+{
+    assert(x <= y) by (nonlinear_arith)
+        requires
+            c > 0,
+            x * c <= y * c,
+    ;
+}
+
+/// `|x·y| == |x|·y` for `y >= 0` — [`crate::model::lemma_abs_mul_pos`] widened
+/// to cover the `y == 0` edge, which that lemma's strict `c > 0` excludes.
+pub proof fn lemma_abs_mul_nonneg(x: int, y: int)
+    requires
+        y >= 0,
+    ensures
+        abs_int(x * y) == abs_int(x) * y,
+{
+    if y == 0 {
+        assert(x * y == 0) by (nonlinear_arith)
+            requires
+                y == 0,
+        ;
+        assert(abs_int(x) * y == 0) by (nonlinear_arith)
+            requires
+                y == 0,
+        ;
+    } else {
+        crate::model::lemma_abs_mul_pos(x, y);
+    }
+}
+
+/// The exact product of two `[0, 1]` values is itself in `[0, 1]`.
+pub proof fn lemma_unit_interval_mul(a: Q, b: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        0 <= a.n(),
+        a.n() <= a.d(),
+        0 <= b.n(),
+        b.n() <= b.d(),
+    ensures
+        0 <= mul_n(a, b),
+        mul_n(a, b) <= prod_d(a, b),
+{
+    assert(mul_n(a, b) == a.n() * b.n());
+    assert(prod_d(a, b) == a.d() * b.d());
+    assert(a.n() * b.n() >= 0) by (nonlinear_arith)
+        requires
+            a.n() >= 0,
+            b.n() >= 0,
+    ;
+    assert(a.n() * b.n() <= a.d() * b.n()) by (nonlinear_arith)
+        requires
+            a.n() <= a.d(),
+            b.n() >= 0,
+    ;
+    assert(a.d() * b.n() <= a.d() * b.d()) by (nonlinear_arith)
+        requires
+            b.n() <= b.d(),
+            a.d() > 0,
+    ;
+    assert(mul_n(a, b) <= prod_d(a, b));
+}
+
+/// A `[0, 1]` product, rounded: the result is within one absolute-error unit
+/// of the exact product, and its magnitude is at most `2` (the exact product
+/// is at most `1`, and one grid step cannot push it far past that).
+pub proof fn lemma_rounded_product_bound(a: Q, b: Q, dir: Dir)
+    requires
+        a.wf(),
+        b.wf(),
+        0 <= a.n(),
+        a.n() <= a.d(),
+        0 <= b.n(),
+        b.n() <= b.d(),
+        !saturated(mul_n(a, b), prod_d(a, b)),
+    ensures
+        ({
+            let ab = round_frac(mul_n(a, b), prod_d(a, b), dir);
+            &&& ab.wf()
+            &&& within_abs_error(ab, mul_n(a, b), prod_d(a, b), 1, 1)
+            &&& -ab.d() <= ab.n()
+            &&& ab.n() <= 2 * ab.d()
+            &&& abs_int(ab.n()) <= 2 * ab.d()
+        }),
+{
+    lemma_unit_interval_mul(a, b);
+    crate::q::lemma_op_widths(a, b);
+    crate::round::lemma_round_frac_wf(mul_n(a, b), prod_d(a, b), dir);
+    crate::round::lemma_r3_error(mul_n(a, b), prod_d(a, b), dir);
+    crate::model::lemma_pow2_pos(precision_b());
+    let ab = round_frac(mul_n(a, b), prod_d(a, b), dir);
+    let pn = mul_n(a, b);
+    let pd = prod_d(a, b);
+    assert(pd > 0);
+    assert(abs_int(pn) == pn);
+    assert(max_int(pd, abs_int(pn)) == pd);
+    assert(abs_int(ab.n() * pd - pn * ab.d()) * pow2(precision_b()) <= ab.d() * pd);
+    assert(within_abs_error(ab, pn, pd, 1, 1));
+    assert(pow2(precision_b()) >= 1);
+    let diff = ab.n() * pd - pn * ab.d();
+    assert(abs_int(diff) >= 0);
+    assert(abs_int(diff) <= abs_int(diff) * pow2(precision_b())) by (nonlinear_arith)
+        requires
+            abs_int(diff) >= 0,
+            pow2(precision_b()) >= 1,
+    ;
+    assert(abs_int(diff) <= ab.d() * pd);
+    // Upper bound: ab.n()·pd <= pn·ab.d() + ab.d()·pd <= 2·(ab.d()·pd).
+    assert(ab.n() * pd <= pn * ab.d() + ab.d() * pd) by (nonlinear_arith)
+        requires
+            diff == ab.n() * pd - pn * ab.d(),
+            abs_int(diff) <= ab.d() * pd,
+    ;
+    assert(pn * ab.d() <= pd * ab.d()) by (nonlinear_arith)
+        requires
+            pn <= pd,
+            ab.d() > 0,
+    ;
+    assert(ab.n() * pd <= pd * ab.d() + ab.d() * pd) by (nonlinear_arith)
+        requires
+            ab.n() * pd <= pn * ab.d() + ab.d() * pd,
+            pn * ab.d() <= pd * ab.d(),
+    ;
+    assert(pd * ab.d() + ab.d() * pd == (2 * ab.d()) * pd) by (nonlinear_arith);
+    assert(ab.n() * pd <= (2 * ab.d()) * pd);
+    lemma_cancel_pos_le(ab.n(), 2 * ab.d(), pd);
+    // Lower bound: ab.n()·pd >= pn·ab.d() - ab.d()·pd >= -(ab.d()·pd).
+    assert(ab.n() * pd >= pn * ab.d() - ab.d() * pd) by (nonlinear_arith)
+        requires
+            diff == ab.n() * pd - pn * ab.d(),
+            abs_int(diff) <= ab.d() * pd,
+    ;
+    assert(pn * ab.d() >= 0) by (nonlinear_arith)
+        requires
+            pn >= 0,
+            ab.d() > 0,
+    ;
+    assert(ab.n() * pd >= 0 - ab.d() * pd) by (nonlinear_arith)
+        requires
+            ab.n() * pd >= pn * ab.d() - ab.d() * pd,
+            pn * ab.d() >= 0,
+    ;
+    assert((-ab.d()) * pd == 0 - ab.d() * pd) by (nonlinear_arith);
+    assert((-ab.d()) * pd <= ab.n() * pd);
+    lemma_cancel_pos_le(-ab.d(), ab.n(), pd);
+    assert(abs_int(ab.n()) <= 2 * ab.d());
+}
+
+/// Scaling a bounded rational error by a `[0, 1]` value cannot make it worse:
+/// if `|X - Y| <= e/ed` and `0 <= C <= 1`, then `|X·C - Y·C| <= e/ed` too,
+/// stated division-free with both fractions scaled by `C`'s numerator and
+/// denominator.
+pub proof fn lemma_frac_scale_nonneg(xn: int, xd: int, yn: int, yd: int, cn: int, cd: int, e: int, ed: int)
+    requires
+        xd > 0,
+        yd > 0,
+        cd > 0,
+        ed > 0,
+        e >= 0,
+        0 <= cn <= cd,
+        abs_int(xn * yd - yn * xd) * ed <= e * (xd * yd),
+    ensures
+        abs_int((xn * cn) * (yd * cd) - (yn * cn) * (xd * cd)) * ed <= e * ((xd * cd) * (yd * cd)),
+{
+    let diffx = xn * yd - yn * xd;
+    let k = cn * cd;
+    // Split into three small ring steps — bundling the reassociation and the
+    // distribution over the difference into one call is a degree-4 identity
+    // over six atoms, past what `nonlinear_arith` reliably closes in one bite.
+    assert((xn * cn) * (yd * cd) == k * (xn * yd)) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+    assert((yn * cn) * (xd * cd) == k * (yn * xd)) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+    assert(k * (xn * yd) - k * (yn * xd) == k * diffx) by (nonlinear_arith)
+        requires
+            diffx == xn * yd - yn * xd,
+    ;
+    assert((xn * cn) * (yd * cd) - (yn * cn) * (xd * cd) == k * diffx);
+    assert(k >= 0) by (nonlinear_arith)
+        requires
+            cn >= 0,
+            cd > 0,
+            k == cn * cd,
+    ;
+    lemma_abs_mul_nonneg(diffx, k);
+    assert(k * diffx == diffx * k) by (nonlinear_arith);
+    assert(abs_int(k * diffx) == abs_int(diffx) * k);
+    assert(abs_int((xn * cn) * (yd * cd) - (yn * cn) * (xd * cd)) == abs_int(diffx) * k);
+    assert((abs_int(diffx) * k) * ed == k * (abs_int(diffx) * ed)) by (nonlinear_arith);
+    assert(k * (abs_int(diffx) * ed) <= k * (e * (xd * yd))) by (nonlinear_arith)
+        requires
+            k >= 0,
+            abs_int(diffx) * ed <= e * (xd * yd),
+    ;
+    assert(k * (e * (xd * yd)) == (cn * cd) * (e * (xd * yd))) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+    assert(cn * cd <= cd * cd) by (nonlinear_arith)
+        requires
+            cn <= cd,
+            cd > 0,
+    ;
+    assert(e * (xd * yd) >= 0) by (nonlinear_arith)
+        requires
+            e >= 0,
+            xd > 0,
+            yd > 0,
+    ;
+    assert((cn * cd) * (e * (xd * yd)) <= (cd * cd) * (e * (xd * yd))) by (nonlinear_arith)
+        requires
+            cn * cd <= cd * cd,
+            e * (xd * yd) >= 0,
+    ;
+    assert((cd * cd) * (e * (xd * yd)) == e * ((xd * cd) * (yd * cd))) by (nonlinear_arith);
+    assert(abs_int((xn * cn) * (yd * cd) - (yn * cn) * (xd * cd)) * ed <= e * ((xd * cd) * (yd
+        * cd)));
+}
+
+/// If `x`'s numerator is within `k` denominator-widths of zero and `y` is a
+/// `[0, 1]` value, the exact product `x·y` is within `k` widths of zero too —
+/// the magnitude bound R3 needs for a second rounding step on top of `x`.
+pub proof fn lemma_prod_magnitude_bound(x: Q, y: Q, k: int)
+    requires
+        x.wf(),
+        y.wf(),
+        k >= 1,
+        abs_int(x.n()) <= k * x.d(),
+        0 <= y.n(),
+        y.n() <= y.d(),
+    ensures
+        max_int(prod_d(x, y), abs_int(mul_n(x, y))) <= k * prod_d(x, y),
+{
+    assert(mul_n(x, y) == x.n() * y.n());
+    assert(prod_d(x, y) == x.d() * y.d());
+    lemma_abs_mul_nonneg(x.n(), y.n());
+    assert(abs_int(x.n() * y.n()) == abs_int(x.n()) * y.n());
+    assert(k * x.d() >= 0) by (nonlinear_arith)
+        requires
+            k >= 1,
+            x.d() > 0,
+    ;
+    assert(abs_int(x.n()) * y.n() <= (k * x.d()) * y.n()) by (nonlinear_arith)
+        requires
+            abs_int(x.n()) <= k * x.d(),
+            y.n() >= 0,
+    ;
+    assert((k * x.d()) * y.n() <= (k * x.d()) * y.d()) by (nonlinear_arith)
+        requires
+            y.n() <= y.d(),
+            k * x.d() >= 0,
+    ;
+    assert((k * x.d()) * y.d() == k * (x.d() * y.d())) by (nonlinear_arith);
+    assert(abs_int(mul_n(x, y)) <= k * prod_d(x, y));
+    assert(prod_d(x, y) >= 0) by (nonlinear_arith)
+        requires
+            prod_d(x, y) == x.d() * y.d(),
+            x.d() > 0,
+            y.d() > 0,
+    ;
+    assert(prod_d(x, y) <= k * prod_d(x, y)) by (nonlinear_arith)
+        requires
+            prod_d(x, y) >= 0,
+            k >= 1,
+    ;
+    assert(max_int(prod_d(x, y), abs_int(mul_n(x, y))) <= k * prod_d(x, y));
+}
+
+/// The ring identity underlying both bracketings of `a · b · c`: combining
+/// `a, b` first and folding in `c` reaches the same numerator/denominator
+/// product (up to reassociation) as combining `b, c` first and folding in
+/// `a`. The multiplicative analogue of [`lemma_sum3_ring`].
+pub proof fn lemma_mul3_ring(a: Q, b: Q, c: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+    ensures
+        mul_n(a, b) * c.n() == mul_n(b, c) * a.n(),
+        prod_d(a, b) * c.d() == prod_d(b, c) * a.d(),
+{
+    let an = a.n();
+    let ad = a.d();
+    let bn = b.n();
+    let bd = b.d();
+    let cn = c.n();
+    let cd = c.d();
+    assert(mul_n(a, b) == an * bn);
+    assert(mul_n(b, c) == bn * cn);
+    assert(prod_d(a, b) == ad * bd);
+    assert(prod_d(b, c) == bd * cd);
+    assert((an * bn) * cn == (bn * cn) * an) by (nonlinear_arith);
+    assert((ad * bd) * cd == (bd * cd) * ad) by (nonlinear_arith);
+}
+
+/// **Associativity up to a proven error, for `mul`, on `[0, 1]`.**
+///
+/// `(a·b)·c` and `a·(b·c)` are both rounded approximations of the same exact
+/// product `a·b·c`. Each bracketing costs two things: the R3 error of its own
+/// final rounding step (at most `2` units, because a once-rounded `[0, 1]`
+/// product can have magnitude up to `2`, not `1`), and the error already
+/// carried by its first rounding step, scaled by the *other*, exact factor —
+/// which is at most `1` unit, because that factor is itself in `[0, 1]`
+/// (`crate::lipschitz::lemma_mul_lipschitz`'s bounded-domain case, specialised
+/// to a coefficient of exactly `1`). That puts each bracketing within `3`
+/// units of the exact product, and the triangle inequality bounds their
+/// mutual distance by `6`:
+///
+/// `|((a·b)·c) - (a·(b·c))| <= 6 · 2^-61 ≈ 2.6 · 10^-18`.
+///
+/// This is the `[0, 1]`-domain case the module doc promises in place of a
+/// fully general, magnitude-parameterised bound: unlike `add`, `mul`'s error
+/// does not simply add across steps — it is weighted by the *other* factor's
+/// magnitude at each step, so a general bound would grow with the *square* of
+/// a free magnitude parameter `m`, not linearly in it. On the engine's actual
+/// domain that magnitude is always `1`, so the distinction is invisible here,
+/// but it is the reason this theorem is stated for `[0, 1]` rather than for
+/// an arbitrary `m` the way [`theorem_add_associativity_bound`] is.
+pub proof fn theorem_mul_associativity_bound_unit_interval(a: Q, b: Q, c: Q, dir: Dir)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        0 <= a.n(),
+        a.n() <= a.d(),
+        0 <= b.n(),
+        b.n() <= b.d(),
+        0 <= c.n(),
+        c.n() <= c.d(),
+        !saturated(mul_n(a, b), prod_d(a, b)),
+        !saturated(mul_n(b, c), prod_d(b, c)),
+        ({
+            let ab = round_frac(mul_n(a, b), prod_d(a, b), dir);
+            !saturated(mul_n(ab, c), prod_d(ab, c))
+        }),
+        ({
+            let bc = round_frac(mul_n(b, c), prod_d(b, c), dir);
+            !saturated(mul_n(a, bc), prod_d(a, bc))
+        }),
+    ensures
+        ({
+            let ab = round_frac(mul_n(a, b), prod_d(a, b), dir);
+            let bc = round_frac(mul_n(b, c), prod_d(b, c), dir);
+            let left = round_frac(mul_n(ab, c), prod_d(ab, c), dir);
+            let right = round_frac(mul_n(a, bc), prod_d(a, bc), dir);
+            within_abs_error(left, right.n(), right.d(), 6, 1)
+        }),
+{
+    lemma_rounded_product_bound(a, b, dir);
+    lemma_rounded_product_bound(b, c, dir);
+    let ab = round_frac(mul_n(a, b), prod_d(a, b), dir);
+    let bc = round_frac(mul_n(b, c), prod_d(b, c), dir);
+    crate::q::lemma_op_widths(a, b);
+    crate::q::lemma_op_widths(b, c);
+    crate::q::lemma_op_widths(ab, c);
+    crate::q::lemma_op_widths(a, bc);
+    crate::q::lemma_op_widths(bc, a);
+    crate::round::lemma_round_frac_wf(mul_n(ab, c), prod_d(ab, c), dir);
+    crate::round::lemma_round_frac_wf(mul_n(a, bc), prod_d(a, bc), dir);
+    crate::model::lemma_pow2_pos(precision_b());
+    let left = round_frac(mul_n(ab, c), prod_d(ab, c), dir);
+    let right = round_frac(mul_n(a, bc), prod_d(a, bc), dir);
+
+    let pn = a.n() * b.n() * c.n();
+    let pd = a.d() * b.d() * c.d();
+    assert(pd > 0) by (nonlinear_arith)
+        requires
+            pd == a.d() * b.d() * c.d(),
+            a.d() > 0,
+            b.d() > 0,
+            c.d() > 0,
+    ;
+
+    // --- left: ab (1 unit) scaled by the exact, unrounded c, then left's own
+    // R3 step (2 units against a magnitude-2 target) ---
+    lemma_frac_scale_nonneg(ab.n(), ab.d(), mul_n(a, b), prod_d(a, b), c.n(), c.d(), 1, pow2(
+        precision_b(),
+    ));
+    assert(mul_n(ab, c) == ab.n() * c.n());
+    assert(prod_d(ab, c) == ab.d() * c.d());
+    assert(mul_n(a, b) * c.n() == pn);
+    assert(prod_d(a, b) * c.d() == pd);
+    assert(abs_int(mul_n(ab, c) * pd - pn * prod_d(ab, c)) * pow2(precision_b()) <= 1 * (prod_d(
+        ab,
+        c,
+    ) * pd));
+
+    lemma_prod_magnitude_bound(ab, c, 2);
+    crate::round::lemma_r3_error(mul_n(ab, c), prod_d(ab, c), dir);
+    // within_error_bound gives `left.d() * max_int(...)`; the magnitude bound
+    // gives `max_int(...) <= 2 * prod_d(ab,c)`, and it takes one reordering
+    // step to see that as `2 * (left.d() * prod_d(ab,c))`.
+    assert(left.d() * (2 * prod_d(ab, c)) == 2 * (left.d() * prod_d(ab, c))) by (nonlinear_arith);
+    assert(abs_int(left.n() * prod_d(ab, c) - mul_n(ab, c) * left.d()) * pow2(precision_b())
+        <= left.d() * max_int(prod_d(ab, c), abs_int(mul_n(ab, c))));
+    assert(left.d() * max_int(prod_d(ab, c), abs_int(mul_n(ab, c))) <= left.d() * (2 * prod_d(
+        ab,
+        c,
+    ))) by (nonlinear_arith)
+        requires
+            max_int(prod_d(ab, c), abs_int(mul_n(ab, c))) <= 2 * prod_d(ab, c),
+            left.d() > 0,
+    ;
+    assert(within_abs_error(left, mul_n(ab, c), prod_d(ab, c), 2, 1));
+
+    crate::lipschitz::lemma_frac_triangle(
+        left.n(),
+        left.d(),
+        mul_n(ab, c),
+        prod_d(ab, c),
+        pn,
+        pd,
+        2,
+        1,
+        pow2(precision_b()),
+    );
+    assert(within_abs_error(left, pn, pd, 3, 1));
+
+    // --- right: bc (1 unit) scaled by the exact, unrounded a, then right's
+    // own R3 step, reached through `bc·a` and identified with `right` via the
+    // same symmetric-formula trick `theorem_add_associativity_bound` uses ---
+    lemma_frac_scale_nonneg(bc.n(), bc.d(), mul_n(b, c), prod_d(b, c), a.n(), a.d(), 1, pow2(
+        precision_b(),
+    ));
+    assert(mul_n(bc, a) == bc.n() * a.n());
+    assert(prod_d(bc, a) == bc.d() * a.d());
+    lemma_mul3_ring(a, b, c);
+    assert(mul_n(b, c) * a.n() == pn);
+    assert(prod_d(b, c) * a.d() == pd);
+    assert(abs_int(mul_n(bc, a) * pd - pn * prod_d(bc, a)) * pow2(precision_b()) <= 1 * (prod_d(
+        bc,
+        a,
+    ) * pd));
+
+    assert(mul_n(bc, a) == mul_n(a, bc)) by (nonlinear_arith)
+        requires
+            mul_n(bc, a) == bc.n() * a.n(),
+            mul_n(a, bc) == a.n() * bc.n(),
+    ;
+    assert(prod_d(bc, a) == prod_d(a, bc)) by (nonlinear_arith)
+        requires
+            prod_d(bc, a) == bc.d() * a.d(),
+            prod_d(a, bc) == a.d() * bc.d(),
+    ;
+
+    lemma_prod_magnitude_bound(bc, a, 2);
+    assert(max_int(prod_d(bc, a), abs_int(mul_n(bc, a))) <= 2 * prod_d(bc, a));
+    crate::round::lemma_r3_error(mul_n(a, bc), prod_d(a, bc), dir);
+    assert(within_error_bound(right, mul_n(bc, a), prod_d(bc, a)));
+    assert(right.d() * (2 * prod_d(bc, a)) == 2 * (right.d() * prod_d(bc, a)))
+        by (nonlinear_arith);
+    assert(abs_int(right.n() * prod_d(bc, a) - mul_n(bc, a) * right.d()) * pow2(precision_b())
+        <= right.d() * max_int(prod_d(bc, a), abs_int(mul_n(bc, a))));
+    assert(right.d() * max_int(prod_d(bc, a), abs_int(mul_n(bc, a))) <= right.d() * (2 * prod_d(
+        bc,
+        a,
+    ))) by (nonlinear_arith)
+        requires
+            max_int(prod_d(bc, a), abs_int(mul_n(bc, a))) <= 2 * prod_d(bc, a),
+            right.d() > 0,
+    ;
+    assert(within_abs_error(right, mul_n(bc, a), prod_d(bc, a), 2, 1));
+
+    crate::lipschitz::lemma_frac_triangle(
+        right.n(),
+        right.d(),
+        mul_n(bc, a),
+        prod_d(bc, a),
+        pn,
+        pd,
+        2,
+        1,
+        pow2(precision_b()),
+    );
+    assert(within_abs_error(right, pn, pd, 3, 1));
+
+    // --- combine the two 3-unit bounds via the triangle inequality ---
+    lemma_abs_int_neg(right.n() * pd - pn * right.d());
+    assert(pn * right.d() - right.n() * pd == -(right.n() * pd - pn * right.d()));
+    assert(abs_int(pn * right.d() - right.n() * pd) == abs_int(right.n() * pd - pn * right.d()));
+    assert(abs_int(right.n() * pd - pn * right.d()) * pow2(precision_b()) <= 3 * (right.d() * pd));
+    assert(right.d() * pd == pd * right.d()) by (nonlinear_arith);
+    assert(abs_int(pn * right.d() - right.n() * pd) * pow2(precision_b()) <= 3 * (pd
+        * right.d()));
+
+    crate::lipschitz::lemma_frac_triangle(
+        left.n(),
+        left.d(),
+        pn,
+        pd,
+        right.n(),
+        right.d(),
+        3,
+        3,
+        pow2(precision_b()),
+    );
+}
+
 } // verus!
