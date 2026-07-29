@@ -232,11 +232,11 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   the current status of each.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
   and the differential tests backing it. There are two.
-* **`docs/SPEC.md` §9** — the four places the specification as written does not
+* **`docs/SPEC.md` §9** — the five places the specification as written does not
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `442 verified, 0 errors`,
+**Current status: every proof obligation discharges — `482 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is

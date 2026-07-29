@@ -12,8 +12,28 @@
 //! N-ary `i128` accumulation would re-open the overflow analysis for no
 //! benefit, so it is not done.
 //!
-//! The accumulated error after `k` elements is `k · 2^-61 · max(1, |exact|)`
-//! (theorem `theorem_sum_error_accumulation`).
+//! `sum`'s accumulated error after `k` elements is `k · 2^-61 · max(1,
+//! |exact|)` (theorem `theorem_sum_error_accumulation`).
+//!
+//! `product` and `weighted_mean` carry the same shape of bound, but each
+//! needs its own hypothesis, because the underlying operation is not
+//! addition:
+//!
+//! * `product` (`theorem_product_error_accumulation`) needs every factor's
+//!   magnitude bounded by `1` (`all_unit`). Multiplication is only
+//!   1-Lipschitz when weighted by the other operand's magnitude, so without
+//!   that hypothesis the carried error would amplify geometrically instead of
+//!   accumulating additively, and no `k · 2^-61` bound would hold uniformly
+//!   in `k`. The hypothesis is trivially satisfied in this crate's actual
+//!   domain — every opinion component lives in `[0, 1]`.
+//! * `weighted_mean` gets two separate bounds
+//!   (`theorem_wm_num_error_accumulation`,
+//!   `theorem_wm_denom_error_accumulation`) for its two internal
+//!   accumulators, each against its own exact target (the true weighted sum,
+//!   the true weight sum). Composing the two through the final division into
+//!   a single bound on the returned value would need a further explicit
+//!   hypothesis — the exact weight sum bounded away from zero — and is not
+//!   attempted; see the doc comment on `theorem_wm_num_error_accumulation`.
 
 use verus_builtin_macros::verus;
 
@@ -842,6 +862,476 @@ pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int,
             bd > 0,
             r.n() * td * (ad * bd) == (tn * r.d()) * (ad * bd),
     ;
+}
+
+// ---------------------------------------------------------------------------
+// V8 — accumulated error for `weighted_mean`
+// ---------------------------------------------------------------------------
+//
+// `weighted_mean` folds two accumulators in the same loop: `acc_num` (a sum
+// of rounded per-pair products) and `acc_w` (a plain sum of weights, exactly
+// `sum`'s fold restricted to the weight half of each pair). Each is given its
+// own V8 bound below, stated against the corresponding *exact* target
+// (`wsum_num`/`wsum_den` for the true weighted sum `Σ w_i·x_i`, `wt_num`/
+// `wt_den` for the true weight sum `Σ w_i`) — no rounding anywhere in either
+// target, so composing the two through the final division is a genuinely
+// separate step (see the doc comment on `theorem_wm_num_error_accumulation`
+// for why that composition is intentionally NOT attempted here).
+
+/// Numerator of the exact left-fold sum of just the weights in `s`.
+pub open spec fn wt_num(s: Seq<(Q, Q)>) -> int
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        0int
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        wt_num(init) * last.d() + last.n() * wt_den(init)
+    }
+}
+
+/// Denominator of the exact left-fold sum of just the weights in `s`.
+pub open spec fn wt_den(s: Seq<(Q, Q)>) -> int
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        1int
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        wt_den(init) * last.d()
+    }
+}
+
+/// Numerator of the *true* weighted sum `Σ w_i · x_i` — an exact fold over
+/// the exact per-pair products, with no rounding anywhere. This, not the sum
+/// of the *rounded* per-pair products, is the target `weighted_mean`'s
+/// numerator accumulator is measured against.
+pub open spec fn wsum_num(s: Seq<(Q, Q)>) -> int
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        0int
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        let ln = last.0.n() * last.1.n();
+        let ld = last.0.d() * last.1.d();
+        wsum_num(init) * ld + ln * wsum_den(init)
+    }
+}
+
+/// Denominator of the true weighted sum `Σ w_i · x_i`.
+pub open spec fn wsum_den(s: Seq<(Q, Q)>) -> int
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        1int
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        let ld = last.0.d() * last.1.d();
+        wsum_den(init) * ld
+    }
+}
+
+/// The value the exec loop's weight accumulator (`acc_w`) computes, as a
+/// function — `fold_val` restricted to the weight half of each pair.
+pub open spec fn wt_fold_val(s: Seq<(Q, Q)>) -> Q
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        Q { num: 0, den: 1 }
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        crate::round::round_frac(
+            crate::q::add_n(wt_fold_val(init), last),
+            crate::q::prod_d(wt_fold_val(init), last),
+            Dir::Nearest,
+        )
+    }
+}
+
+/// The value the exec loop's numerator accumulator (`acc_num`) computes: at
+/// each step, round the pair's product, then round it into the running sum
+/// — exactly what `Q::add(acc_num, Q::mul(w, x))` does.
+pub open spec fn wm_num_fold_val(s: Seq<(Q, Q)>) -> Q
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        Q { num: 0, den: 1 }
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        let t = crate::round::round_frac(
+            crate::q::mul_n(last.0, last.1),
+            crate::q::prod_d(last.0, last.1),
+            Dir::Nearest,
+        );
+        crate::round::round_frac(
+            crate::q::add_n(wm_num_fold_val(init), t),
+            crate::q::prod_d(wm_num_fold_val(init), t),
+            Dir::Nearest,
+        )
+    }
+}
+
+/// Every prefix of the weight fold has step values bounded by `m`, and stays
+/// on a non-saturating path — `fold_bounded` restricted to the weight half.
+pub open spec fn wt_bounded(s: Seq<(Q, Q)>, m: int) -> bool
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        true
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        &&& wt_bounded(init, m)
+        &&& max_int(
+            crate::q::prod_d(wt_fold_val(init), last),
+            abs_int(crate::q::add_n(wt_fold_val(init), last)),
+        ) <= m * crate::q::prod_d(wt_fold_val(init), last)
+        &&& !crate::round::saturated(
+            crate::q::add_n(wt_fold_val(init), last),
+            crate::q::prod_d(wt_fold_val(init), last),
+        )
+    }
+}
+
+/// Every prefix of the numerator fold has BOTH of its per-element roundings
+/// — the `mul` and the `add` — bounded by `m` and non-saturating. Two
+/// roundings happen per pair (`Q::mul` then `Q::add`), so this hypothesis
+/// covers both, unlike `fold_bounded`'s one.
+pub open spec fn wm_num_bounded(s: Seq<(Q, Q)>, m: int) -> bool
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        true
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        let mn = crate::q::mul_n(last.0, last.1);
+        let md = crate::q::prod_d(last.0, last.1);
+        let t = crate::round::round_frac(mn, md, Dir::Nearest);
+        let prevn = wm_num_fold_val(init);
+        &&& wm_num_bounded(init, m)
+        &&& max_int(md, abs_int(mn)) <= m * md
+        &&& !crate::round::saturated(mn, md)
+        &&& max_int(
+            crate::q::prod_d(prevn, t),
+            abs_int(crate::q::add_n(prevn, t)),
+        ) <= m * crate::q::prod_d(prevn, t)
+        &&& !crate::round::saturated(
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+        )
+    }
+}
+
+/// The exact weight-fold denominator is positive, and the fold result is
+/// well-formed.
+pub proof fn lemma_wt_fold_wf(s: Seq<(Q, Q)>)
+    requires
+        all_wf_pairs(s),
+    ensures
+        wt_fold_val(s).wf(),
+        wt_den(s) > 0,
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        crate::round::lemma_gcd_one();
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        assert(all_wf_pairs(init));
+        assert(last.wf());
+        lemma_wt_fold_wf(init);
+        let prev = wt_fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        assert(wt_den(s) == wt_den(init) * last.d());
+        assert(wt_den(s) > 0) by (nonlinear_arith)
+            requires
+                wt_den(init) > 0,
+                last.d() > 0,
+                wt_den(s) == wt_den(init) * last.d(),
+        ;
+    }
+}
+
+/// The exact numerator-fold denominator is positive, and the fold result is
+/// well-formed.
+pub proof fn lemma_wm_num_fold_wf(s: Seq<(Q, Q)>)
+    requires
+        all_wf_pairs(s),
+    ensures
+        wm_num_fold_val(s).wf(),
+        wsum_den(s) > 0,
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        crate::round::lemma_gcd_one();
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf_pairs(init));
+        assert(last.0.wf() && last.1.wf());
+        lemma_wm_num_fold_wf(init);
+        let prevn = wm_num_fold_val(init);
+        crate::q::lemma_op_widths(last.0, last.1);
+        let mn = crate::q::mul_n(last.0, last.1);
+        let md = crate::q::prod_d(last.0, last.1);
+        crate::round::lemma_round_frac_wf(mn, md, Dir::Nearest);
+        let t = crate::round::round_frac(mn, md, Dir::Nearest);
+        crate::q::lemma_op_widths(prevn, t);
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+            Dir::Nearest,
+        );
+        assert(wsum_den(s) == wsum_den(init) * (last.0.d() * last.1.d()));
+        assert(wsum_den(s) > 0) by (nonlinear_arith)
+            requires
+                wsum_den(init) > 0,
+                last.0.d() > 0,
+                last.1.d() > 0,
+                wsum_den(s) == wsum_den(init) * (last.0.d() * last.1.d()),
+        ;
+    }
+}
+
+/// **V8 for `weighted_mean`'s weight accumulator.** After `k` pairs the
+/// weight accumulator's error against the exact weight sum is at most
+/// `k · m · 2^-61`.
+///
+/// A direct restatement of `theorem_sum_error_accumulation` for the weight
+/// half of each pair — the induction and the lemma it calls
+/// (`crate::lipschitz::lemma_abs_error_step`) are identical; only the
+/// indexing (`s[i].0` instead of `s[i]`) differs.
+pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Q, Q)>, m: int)
+    requires
+        all_wf_pairs(s),
+        m >= 1,
+        wt_bounded(s, m),
+    ensures
+        within_abs_error(wt_fold_val(s), wt_num(s), wt_den(s), s.len(), m),
+    decreases s.len(),
+{
+    lemma_wt_fold_wf(s);
+    if s.len() == 0 {
+        assert(wt_num(s) == 0 && wt_den(s) == 1);
+        assert(wt_fold_val(s).n() == 0 && wt_fold_val(s).d() == 1);
+        crate::model::lemma_pow2_pos(crate::model::precision_b());
+        assert(wt_fold_val(s).n() * wt_den(s) - wt_num(s) * wt_fold_val(s).d() == 0);
+        assert(crate::model::abs_int(0) == 0);
+        assert((s.len() as int) * m * (wt_fold_val(s).d() * wt_den(s)) == 0);
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1].0;
+        assert(all_wf_pairs(init));
+        assert(wt_bounded(init, m));
+        theorem_wm_denom_error_accumulation(init, m);
+        lemma_wt_fold_wf(init);
+        let prev = wt_fold_val(init);
+        crate::q::lemma_op_widths(prev, last);
+        crate::round::lemma_r3_error(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prev, last),
+            crate::q::prod_d(prev, last),
+            Dir::Nearest,
+        );
+        crate::lipschitz::lemma_abs_error_step(
+            prev,
+            wt_num(init),
+            wt_den(init),
+            last,
+            wt_fold_val(s),
+            init.len(),
+            m,
+        );
+        assert(wt_num(s) == wt_num(init) * last.d() + last.n() * wt_den(init));
+        assert(wt_den(s) == wt_den(init) * last.d());
+        assert(s.len() == init.len() + 1);
+        assert(within_abs_error(
+            wt_fold_val(s),
+            wt_num(init) * last.d() + last.n() * wt_den(init),
+            wt_den(init) * last.d(),
+            (init.len() + 1) as nat,
+            m,
+        ));
+    }
+}
+
+/// R3 plus a magnitude bound on the exact value converts to a one-step
+/// absolute-error bound. This is "part (a)" of every V8 induction step
+/// elsewhere in this file, factored out here because
+/// `theorem_wm_num_error_accumulation` needs it applied twice per element
+/// (once for the `mul`, once for the `add`) instead of once.
+pub proof fn lemma_r3_to_abs_error_1(r: Q, n: int, d: int, m: int)
+    requires
+        r.wf(),
+        d > 0,
+        m >= 1,
+        within_error_bound(r, n, d),
+        max_int(d, abs_int(n)) <= m * d,
+    ensures
+        within_abs_error(r, n, d, 1, m),
+{
+    lemma_pow2_pos(precision_b());
+    assert(abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= m * (r.d() * d))
+        by (nonlinear_arith)
+        requires
+            abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= r.d() * max_int(d, abs_int(n)),
+            max_int(d, abs_int(n)) <= m * d,
+            r.d() > 0,
+    ;
+}
+
+/// **V8 for `weighted_mean`'s numerator accumulator.** After `k` pairs the
+/// numerator accumulator's error against the true weighted sum `Σ w_i · x_i`
+/// is at most `2k · m · 2^-61` — twice `sum`'s rate, because each pair costs
+/// two roundings (the `mul` and the `add`) instead of one.
+///
+/// Unlike `theorem_product_error_accumulation`, no `all_unit` hypothesis is
+/// needed here: this accumulator is a *sum* of (independently rounded)
+/// per-pair products, not a running product, so the carried error passes
+/// through the outer `add` unchanged (addition is exactly 1-Lipschitz)
+/// regardless of any pair's magnitude. Only the per-step magnitude bound
+/// (`wm_num_bounded`, needed twice per step to convert each rounding's
+/// relative R3 bound to an absolute one) is required — exactly the same kind
+/// of hypothesis `fold_bounded` supplies for `sum`, just applied twice.
+///
+/// This bounds the numerator accumulator alone, against the exact (unrounded)
+/// weighted sum — not the value `weighted_mean` finally returns after
+/// dividing by the weight accumulator. Composing this bound with
+/// `theorem_wm_denom_error_accumulation` through the division would need a
+/// further explicit hypothesis (the exact weight sum bounded away from zero:
+/// division is not Lipschitz otherwise, `crate::lipschitz::lemma_div_lipschitz`
+/// states only the algebraic core, not a finished bound) and is left
+/// unproven here. That is a real gap, not a hidden one: the two theorems in
+/// this section are the actual "n-ary helper" bound V8 asks for — the
+/// internal accumulation — and are exactly what `docs/SPEC.md` §9 documents
+/// as the honest state of this obligation for `weighted_mean`.
+pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Q, Q)>, m: int)
+    requires
+        all_wf_pairs(s),
+        m >= 1,
+        wm_num_bounded(s, m),
+    ensures
+        within_abs_error(wm_num_fold_val(s), wsum_num(s), wsum_den(s), (2 * s.len()) as nat, m),
+    decreases s.len(),
+{
+    lemma_wm_num_fold_wf(s);
+    if s.len() == 0 {
+        assert(wsum_num(s) == 0 && wsum_den(s) == 1);
+        assert(wm_num_fold_val(s).n() == 0 && wm_num_fold_val(s).d() == 1);
+        crate::model::lemma_pow2_pos(crate::model::precision_b());
+        assert(wm_num_fold_val(s).n() * wsum_den(s) - wsum_num(s) * wm_num_fold_val(s).d() == 0);
+        assert(crate::model::abs_int(0) == 0);
+        assert((2 * s.len()) as int == 0) by (nonlinear_arith)
+            requires
+                s.len() == 0,
+        ;
+        assert(((2 * s.len()) as int) * m * (wm_num_fold_val(s).d() * wsum_den(s)) == 0)
+            by (nonlinear_arith)
+            requires
+                (2 * s.len()) as int == 0,
+        ;
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        assert(all_wf_pairs(init));
+        assert(wm_num_bounded(init, m));
+        theorem_wm_num_error_accumulation(init, m);
+        lemma_wm_num_fold_wf(init);
+        let prevn = wm_num_fold_val(init);
+        let wn0 = wsum_num(init);
+        let wd0 = wsum_den(init);
+        let k0 = init.len();
+        let e = pow2(precision_b());
+        lemma_pow2_pos(precision_b());
+
+        // Step 1: the per-pair product's own rounding error (one unit).
+        crate::q::lemma_op_widths(last.0, last.1);
+        let mn = crate::q::mul_n(last.0, last.1);
+        let md = crate::q::prod_d(last.0, last.1);
+        crate::round::lemma_r3_error(mn, md, Dir::Nearest);
+        crate::round::lemma_round_frac_wf(mn, md, Dir::Nearest);
+        let t = crate::round::round_frac(mn, md, Dir::Nearest);
+        lemma_r3_to_abs_error_1(t, mn, md, m);
+
+        // Step 2: combine the carried numerator error (2·k0 units) and the
+        // product's own error (1 unit) across the exact addition -- errors
+        // from two independent approximants simply add.
+        crate::lipschitz::lemma_add_lipschitz(
+            prevn.n(),
+            prevn.d(),
+            t.n(),
+            t.d(),
+            wn0,
+            wd0,
+            mn,
+            md,
+            (2 * k0) as int * m,
+            1 * m,
+            e,
+        );
+
+        // Step 3: this step's own `add` rounding error (one more unit).
+        crate::q::lemma_op_widths(prevn, t);
+        crate::round::lemma_r3_error(
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+            Dir::Nearest,
+        );
+        crate::round::lemma_round_frac_wf(
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+            Dir::Nearest,
+        );
+        lemma_r3_to_abs_error_1(
+            wm_num_fold_val(s),
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+            m,
+        );
+
+        // Chain steps 2 and 3.
+        crate::lipschitz::lemma_frac_triangle(
+            wm_num_fold_val(s).n(),
+            wm_num_fold_val(s).d(),
+            crate::q::add_n(prevn, t),
+            crate::q::prod_d(prevn, t),
+            wn0 * md + mn * wd0,
+            wd0 * md,
+            1 * m,
+            (2 * k0) as int * m + 1 * m,
+            e,
+        );
+
+        assert(wsum_num(s) == wn0 * md + mn * wd0);
+        assert(wsum_den(s) == wd0 * md);
+        assert(s.len() == k0 + 1);
+        assert(1 * m + ((2 * k0) as int * m + 1 * m) == ((2 * (k0 + 1)) as int) * m)
+            by (nonlinear_arith);
+        assert(within_abs_error(
+            wm_num_fold_val(s),
+            wn0 * md + mn * wd0,
+            wd0 * md,
+            (2 * (k0 + 1)) as nat,
+            m,
+        ));
+    }
 }
 
 } // verus!
