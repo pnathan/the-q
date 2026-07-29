@@ -820,3 +820,87 @@ fn from_parts_dir_matches_the_rational_its_arguments_denote() {
         "the sweep never rounded, so R3 was never exercised"
     );
 }
+
+/// `from_parts_dir` is total, including outside the domain its `requires` names.
+///
+/// The precondition is ghost: `cargo build` erases it, so it constrains only
+/// callers Verus checks, and the function is `pub`. Without the runtime re-check
+/// the `e >= 0` branch computes `mant · 2^e` in `i128` — for `mant` near
+/// `u64::MAX` and `e == 64` that is about `2^127`, which overflows. This crate
+/// builds with `overflow-checks` on in both profiles, so the old code panicked
+/// here; a dependent crate's default release profile would have wrapped instead
+/// and returned a well-formed `Q` bearing no relation to the input.
+#[test]
+fn from_parts_dir_is_total_outside_its_documented_domain() {
+    // `mant` past 2^53, at the exact exponent where the product overflows.
+    for dir in [Dir::Nearest, Dir::Down, Dir::Up] {
+        for e in [64i32, 63, 0, 971, -1074] {
+            for mant in [u64::MAX, u64::MAX / 2, 9_007_199_254_740_993] {
+                assert!(
+                    from_parts_dir(false, mant, e, dir).is_none(),
+                    "mant {mant} is past 2^53 and must be rejected, not multiplied (e={e})"
+                );
+                assert!(from_parts_dir(true, mant, e, dir).is_none());
+            }
+        }
+        // Exponents outside [-1074, 971], including the values that would make
+        // `(-e) as u32` or `e as u32` nonsense.
+        for e in [972i32, -1075, i32::MAX, i32::MIN, 100_000, -100_000] {
+            assert!(
+                from_parts_dir(false, 1, e, dir).is_none(),
+                "exponent {e} is outside the documented domain"
+            );
+        }
+    }
+    // The in-domain endpoints still work — the guard rejects nothing it shouldn't.
+    for dir in [Dir::Nearest, Dir::Down, Dir::Up] {
+        assert!(from_parts_dir(false, 9_007_199_254_740_992, -1074, dir).is_some());
+        assert!(from_parts_dir(false, 1, 971, dir).is_none()); // in domain, past 2^61
+        assert!(from_parts_dir(false, 0, 971, dir).is_some()); // zero is always fine
+    }
+}
+
+/// The `e == -124` / `e == -125` seam, pinned deterministically.
+///
+/// `-124` is the last exponent whose denominator `2^-e` still fits what
+/// `round_frac_exec` accepts; `-125` is the first that takes the `tiny`
+/// shortcut and relies on `lemma_round_frac_subgrid` instead. The two paths
+/// are different code, so the branch cutoff itself deserves a test rather than
+/// only the ~1-in-2046 chance of the random sweep landing on it.
+#[test]
+fn the_subgrid_branch_seam_agrees_across_both_paths() {
+    let eps = 1i64 << 61;
+    for (mant, e) in [(1u64, -124i32), (1, -125), (9_007_199_254_740_992, -124)] {
+        for neg in [false, true] {
+            let exact = {
+                let m = Rational::from(mant);
+                let scaled = m / Rational::from(2u32).pow((-e) as i64);
+                if neg {
+                    -scaled
+                } else {
+                    scaled
+                }
+            };
+            // Every one of these is far below 2^-62, so all three directions
+            // must agree with the subgrid endpoints regardless of which branch
+            // computed them.
+            let near = from_parts_dir(neg, mant, e, Dir::Nearest).unwrap();
+            let down = from_parts_dir(neg, mant, e, Dir::Down).unwrap();
+            let up = from_parts_dir(neg, mant, e, Dir::Up).unwrap();
+
+            assert_eq!(rat(near), zero(), "Nearest must collapse {mant}·2^{e}");
+            assert_r2(down, up, &exact, "seam");
+
+            let (moved, stayed) = if neg { (down, up) } else { (up, down) };
+            let sign = if neg { -1i64 } else { 1 };
+            assert_eq!(
+                (moved.numerator(), moved.denominator()),
+                (sign, eps),
+                "{mant}·2^{e} should have rounded to {sign}/2^61"
+            );
+            assert_eq!(rat(stayed), zero());
+            assert_wf(moved, "seam endpoint");
+            assert_wf(stayed, "seam zero");
+        }
+    }
+}

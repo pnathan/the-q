@@ -332,8 +332,7 @@ impl Q {
             lemma_pow2_124();
             lemma_pow2_126();
             if !saturated(n as int, d as int) {
-                crate::round::lemma_r2_directed(n as int, d as int);
-                crate::round::lemma_r3_error(n as int, d as int, dir);
+                crate::round::lemma_r2_r3_directed(n as int, d as int, dir);
             }
         }
         Some(round_frac_exec(n, d, dir))

@@ -894,6 +894,27 @@ pub proof fn lemma_r3_error_nearest(n: int, d: int)
     }
 }
 
+/// **R2 and R3 together**, at one call and under one guard.
+///
+/// The two share a precondition exactly (`d > 0`, `!saturated(n, d)`), and every
+/// caller that wants a *value* contract rather than mere well-formedness wants
+/// both — the ingestion constructors each state R2 and R3 side by side, so each
+/// would otherwise repeat the same pair of calls after the same guard. Bundling
+/// them means a future change to how the two compose lands in one place instead
+/// of at every entry point.
+pub proof fn lemma_r2_r3_directed(n: int, d: int, dir: Dir)
+    requires
+        d > 0,
+        !saturated(n, d),
+    ensures
+        q_le_frac(round_frac(n, d, Dir::Down), n, d),
+        q_ge_frac(round_frac(n, d, Dir::Up), n, d),
+        within_error_bound(round_frac(n, d, dir), n, d),
+{
+    lemma_r2_directed(n, d);
+    lemma_r3_error(n, d, dir);
+}
+
 /// One grid step: the snapped numerator is within `1` of the true scaled value,
 /// i.e. `|sn·rd - rn·2^s| <= rd`.
 pub proof fn lemma_grid_error_step(rn: int, rd: int, s: nat, dir: Dir)
@@ -2284,16 +2305,21 @@ pub open spec fn finest_grid_den() -> int {
 ///
 /// `Nearest` collapses it to zero; the directed modes have to stay on their own
 /// side of it, so they return the neighbouring grid point.
+///
+/// The denominator goes through [`finest_grid_den`] rather than repeating the
+/// literal: that is the whole point of naming the constant, and it keeps this
+/// definition tied to `pow2(61)` instead of to a digit string that has to be
+/// checked by eye against the one in `convert::tiny`.
 pub open spec fn subgrid_endpoint(positive: bool, dir: Dir) -> Q {
     match dir {
         Dir::Nearest => Q { num: 0, den: 1 },
         Dir::Down => if positive {
             Q { num: 0, den: 1 }
         } else {
-            Q { num: (-1int) as i64, den: 2305843009213693952 }
+            Q { num: (-1int) as i64, den: finest_grid_den() as i64 }
         },
         Dir::Up => if positive {
-            Q { num: 1, den: 2305843009213693952 }
+            Q { num: 1, den: finest_grid_den() as i64 }
         } else {
             Q { num: 0, den: 1 }
         },
@@ -2318,6 +2344,11 @@ pub proof fn lemma_round_frac_subgrid(n: int, d: int, dir: Dir)
         abs_int(n) * pow2(62) < d,
     ensures
         round_frac(n, d, dir) == subgrid_endpoint(n > 0, dir),
+        // Handed back rather than kept private: the proof below has to establish
+        // it anyway to get at `round_frac`, and the one caller needs exactly this
+        // to discharge R2/R3's `!saturated` guard. Leaving it internal made the
+        // caller repeat the identical `nonlinear_arith` block.
+        magnitude_fits(n, d),
 {
     lemma_pow2_pos(61nat);
     lemma_pow2_pos(62nat);

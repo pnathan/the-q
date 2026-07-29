@@ -65,6 +65,15 @@ the claim true rather than to soften it. The integer core is now
   discharged rather than passed on;
 * and that `None` happens *only* above the documented `2^61` ceiling.
 
+Those hold for the domain the `requires` names — `mant <= 2^53` and
+`-1074 <= e <= 971`, exactly what `f64_decompose` can emit. A `requires` is
+ghost, though, and this function is `pub`, so it binds only callers Verus
+checks; an unverified one passing a larger `mant` would reach `mant · 2^e` and
+overflow `i128`. The body re-checks the same bounds at run time and returns
+`None` outside them, so the function is total for every caller, not just the
+provable ones. That check is dead code under verification, which is why none of
+the postconditions above are weakened by it.
+
 `from_f64_dir` is now a two-line composition of `f64_decompose` with that core,
 and still ensures only `wf()` — correctly, since no postcondition mentioning `v`
 is statable at all. The boundary is now visible in the type signatures instead of

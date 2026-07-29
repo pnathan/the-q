@@ -351,9 +351,12 @@ Every entry point now pins its own value, which until recently none of them did:
   the discharge of R3's own `!saturated` side condition, and `None` only above
   the documented `2^61` ceiling.
 
-The last one includes values below `2^-62`, whose denominator `2^s` is larger
-than the rounder itself accepts; `lemma_round_frac_subgrid` proves the shortcut
-those take lands where `round_frac` would have.
+The last one covers the whole exponent range in one postcondition, including the
+tail below `2^-125` where the denominator `2^s` is larger than `round_frac_exec`
+itself accepts and the code takes a shortcut instead of calling the rounder;
+`lemma_round_frac_subgrid` proves that shortcut lands where `round_frac` would
+have. (The cutoff is on the exponent, not the magnitude: a value below `2^-62`
+with `e >= -124` — say `2^-100` — still goes through the ordinary rounder.)
 
 **Intervals**
 

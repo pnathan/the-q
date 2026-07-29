@@ -143,6 +143,19 @@ pub open spec fn parts_den(e: i32) -> int {
 /// One postcondition covers all three branches — including the sub-grid one,
 /// whose denominator `2^s` with `s > 124` is past what `round_frac_exec` accepts.
 /// `round::lemma_round_frac_subgrid` is what closes that gap.
+///
+/// # The domain is checked at run time as well as proved
+///
+/// The `requires` below is what a *verified* caller discharges, and
+/// [`f64_decompose`]'s postcondition matches it exactly, so `from_f64_dir` gets
+/// it for free. But `requires` is ghost: `cargo build` erases it, so it binds
+/// nobody outside a `verus!` block, and this function is `pub`. An unverified
+/// caller passing `mant` above `2^53` would otherwise reach `mant · 2^e` with
+/// `e` up to `64` and overflow `i128` — silently, in any dependent crate built
+/// with the default `overflow-checks = false`. The first thing the body does is
+/// therefore re-check the same bounds and return `None`, which costs one
+/// comparison on a path that already branches and makes the function total for
+/// every caller rather than only for the ones Verus can see.
 pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
     requires
         mant <= 9007199254740992u64,
@@ -175,9 +188,13 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
         // reason this returns `None`.
         r.is_none() ==> abs_int(parts_num(neg, mant, e)) > pow2(61) * parts_den(e),
 {
+    // The `requires` above, enforced for callers Verus never sees. Dead under
+    // verification — which is why the postconditions below are unweakened by it.
+    if mant > 9007199254740992u64 || e < -1074 || e > 971 {
+        return None;
+    }
     if mant == 0 {
         proof {
-            lemma_pow2_pos(61nat);
             if e >= 0 {
                 assert(parts_num(neg, mant, e) == 0) by (nonlinear_arith)
                     requires
@@ -187,8 +204,7 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
             assert(parts_den(e) > 0) by {
                 lemma_pow2_pos((-e) as nat);
             }
-            lemma_r2_directed(parts_num(neg, mant, e), parts_den(e));
-            lemma_r3_error(parts_num(neg, mant, e), parts_den(e), dir);
+            lemma_r2_r3_directed(parts_num(neg, mant, e), parts_den(e), dir);
         }
         return Some(Q::zero());
     }
@@ -289,8 +305,7 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
                     pow2(62) == 2 * pow2(61),
                     pow2(61) > 0,
             ;
-            lemma_r2_directed(n as int, 1int);
-            lemma_r3_error(n as int, 1int, dir);
+            lemma_r2_r3_directed(n as int, 1int, dir);
         }
         Some(round_frac_exec(n, 1, dir))
     } else if e >= -124 {
@@ -321,8 +336,7 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
                     pow2(62) == 4611686018427387904int,
                     d as int >= 1,
             ;
-            lemma_r2_directed(n as int, d as int);
-            lemma_r3_error(n as int, d as int, dir);
+            lemma_r2_r3_directed(n as int, d as int, dir);
         }
         Some(round_frac_exec(n, d, dir))
     } else {
@@ -359,17 +373,12 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
             assert(abs_int(n) >= 1);
             assert(n != 0);
             assert((n > 0) == !neg);
-            assert(abs_int(n) <= max_mag() * d) by (nonlinear_arith)
-                requires
-                    abs_int(n) * pow2(62) < d,
-                    abs_int(n) >= 1,
-                    pow2(62) >= 1,
-                    max_mag() >= 1,
-                    d > 0,
-            ;
+            // `magnitude_fits` — hence `!saturated` — comes back out of the
+            // subgrid lemma, which cannot reach `round_frac` without proving it
+            // first. Re-deriving it here was the same `nonlinear_arith` block a
+            // second time, in a second file.
             lemma_round_frac_subgrid(n, d, dir);
-            lemma_r2_directed(n, d);
-            lemma_r3_error(n, d, dir);
+            lemma_r2_r3_directed(n, d, dir);
         }
         Some(tiny(neg, dir))
     }
