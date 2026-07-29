@@ -1293,10 +1293,11 @@ impl PartialOrd for Q {
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl Ord for Q {
     fn cmp(&self, other: &Q) -> core::cmp::Ordering {
-        // Cross-multiplication in i128; both products are bounded by 2^124.
-        let l = (self.num as i128) * (other.den as i128);
-        let r = (other.num as i128) * (self.den as i128);
-        l.cmp(&r)
+        // Delegate to the verified `Q::compare` (proven against the ghost
+        // order in `verus!` above) rather than reimplementing the
+        // cross-multiplication here. This impl only maps its `-1`/`0`/`1`
+        // onto `Ordering`.
+        Q::compare(*self, *other).cmp(&0)
     }
 }
 
