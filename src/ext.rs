@@ -25,7 +25,7 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-use crate::types::Rat;
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -251,19 +251,68 @@ impl Q {
         Q::Number(Rat::neg_one())
     }
 
-    /// The exact rational `num / den`, canonicalised, or a special.
+    /// The rational `num / den`, or the special that stands for it.
     ///
     /// Unlike [`Rat::new`] this is **total**: `den == 0` is no longer a failure
     /// to be reported out-of-band but a value in the type, resolved by the
     /// IEEE 754 convention of issue #26 §4 — `x/0` takes the positive-side limit
     /// by fiat, exactly as IEEE does for `+0`, and `0/0` carries no information.
     ///
-    /// A pair that is finite but does not fit the budget saturates by sign
-    /// rather than failing. `Rat::new` remains available for callers that want
-    /// the partial, allocation-free answer.
+    /// # Saturation is judged on the value, not on the components
+    ///
+    /// This distinction is load-bearing and easy to get wrong. `Rat::new`
+    /// returns `None` for two quite different reasons: the *value* exceeds the
+    /// budget (`i64::MAX / 1`), or the *reduced denominator* exceeds it while
+    /// the value itself is tiny (`1 / i64::MIN`, which is about `-1.08e-19`).
+    /// Only the first is saturation. Treating the second as `NegSat` would
+    /// claim `|value| > MAX_MAG` of a value in `(-1, 0)` — an unsound denotation,
+    /// and exactly the class of silent wrong answer this type exists to remove.
+    ///
+    /// So the test here is [`crate::model`]'s `magnitude_fits` on the value, and
+    /// a pair that fits in magnitude but not in its components is **rounded**
+    /// rather than saturated. That is sound under R3, and #26 §11 makes the same
+    /// call in rejecting a `Tiny` state: underflow-to-zero is inside the
+    /// rounding contract, not a defect to surface.
+    ///
+    /// Where [`Rat::new`] succeeds, this agrees with it exactly — rounding a
+    /// value that is already representable returns it unchanged (R1).
     pub fn new(num: i64, den: i64) -> (r: Q)
         ensures
             r.wf(),
+            // Division by zero, per #26 §4, applied uniformly.
+            (den == 0 && num == 0) ==> r == Q::Nan,
+            (den == 0 && num > 0) ==> r == Q::PosInf,
+            (den == 0 && num < 0) ==> r == Q::NegInf,
+            // Away from a zero denominator the result is never an infinity or a
+            // `Nan`: a ratio of two integers is a real number, and the only
+            // question is whether it fits.
+            den != 0 ==> (!r.spec_is_nan() && !r.spec_is_infinite()),
+            // Saturation happens exactly when the *value* leaves the budget...
+            den != 0 ==> (r.spec_is_saturated() <==> !crate::model::magnitude_fits(
+                crate::q::signed_den_num(num as int, den as int),
+                crate::model::abs_int(den as int),
+            )),
+            // ...and when it does, it carries the correct sign.
+            (den != 0 && r == Q::PosSat) ==> crate::q::signed_den_num(
+                num as int,
+                den as int,
+            ) > 0,
+            (den != 0 && r == Q::NegSat) ==> crate::q::signed_den_num(
+                num as int,
+                den as int,
+            ) < 0,
+            // Otherwise the value is pinned completely, to the same nearest-mode
+            // rounding of the same sign-normalised pair that `new_rounded` uses.
+            (den != 0 && crate::model::magnitude_fits(
+                crate::q::signed_den_num(num as int, den as int),
+                crate::model::abs_int(den as int),
+            )) ==> r == Q::Number(
+                crate::round::round_frac(
+                    crate::q::signed_den_num(num as int, den as int),
+                    crate::model::abs_int(den as int),
+                    Dir::Nearest,
+                ),
+            ),
     {
         if den == 0 {
             if num == 0 {
@@ -274,18 +323,37 @@ impl Q {
                 Q::NegInf
             }
         } else {
-            match Rat::new(num, den) {
-                Some(x) => Q::Number(x),
-                // `Rat::new` fails only on `den == 0` (handled above) or on a
-                // reduced pair outside the budget, which is a genuine magnitude
-                // overflow. The sign of `num/den` is the sign of the product of
-                // the signs, and neither is zero here: `num == 0` would reduce
-                // to `0/1`, which always fits.
-                None => if (num > 0) == (den > 0) {
-                    Q::PosSat
-                } else {
-                    Q::NegSat
-                },
+            // Normalise the sign onto the numerator first, matching
+            // `new_rounded`'s convention, so that the magnitude test and the
+            // rounding agree about which value they are talking about.
+            // `0 - (i64::MIN as i128)` is `2^63`, comfortably inside `i128`.
+            let n: i128 = if den < 0 {
+                0 - (num as i128)
+            } else {
+                num as i128
+            };
+            let d: i128 = if den < 0 {
+                0 - (den as i128)
+            } else {
+                den as i128
+            };
+            proof {
+                // `|n| <= 2^63 < 2^126 = num_input_bound()`, which is
+                // `magnitude_fits_exec`'s precondition.
+                crate::model::lemma_pow2_64();
+                crate::model::lemma_pow2_126();
+                crate::model::lemma_pow2_mono(64, 126);
+            }
+            if crate::q::magnitude_fits_exec(n, d) {
+                match Rat::new_rounded(num, den, Dir::Nearest) {
+                    Some(x) => Q::Number(x),
+                    // Unreachable: `new_rounded` is `None` iff `den == 0`.
+                    None => Q::Nan,
+                }
+            } else if n > 0 {
+                Q::PosSat
+            } else {
+                Q::NegSat
             }
         }
     }
@@ -415,6 +483,288 @@ impl Q {
             Q::PosInf => Some(Sign::Positive),
             Q::NegInf => Some(Sign::Negative),
             Q::Nan => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Total division (issue #26 §10.2)
+//
+// This closes the three defects that open #26, all of which reproduce on the
+// kernel today:
+//
+//   * `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }` — a value that
+//     violates the type invariant and detonates later, far from the cause.
+//   * `Rat::div(x, 0)` panics.
+//   * `Rat::checked_div(x, 0)` panics, where std and `num-traits` both return
+//     `None` for exactly this case.
+//
+// Every cell below is derived from the denotations in §2 rather than chosen:
+// the result is the smallest state whose denotation contains the true image
+// `{ x/y : x ∈ ⟦a⟧, y ∈ ⟦b⟧ }`. `Nan` is always sound because it denotes
+// everything, so precision is the only thing that has to be argued.
+// ---------------------------------------------------------------------------
+
+impl Q {
+    /// `x / y` for two representable rationals with `y != 0`.
+    ///
+    /// Saturates rather than clamping. The kernel's `Rat::div` silently returns
+    /// `±MAX_MAG/1` when the exact quotient leaves the budget, which is a
+    /// singleton denotation that does not contain the true value; reporting
+    /// `PosSat`/`NegSat` instead keeps the denotation honest.
+    fn div_numbers(x: Rat, y: Rat) -> (r: Q)
+        requires
+            x.wf(),
+            y.wf(),
+            y.n() != 0,
+        ensures
+            r.wf(),
+            !r.spec_is_nan(),
+            !r.spec_is_infinite(),
+    {
+        let n: i128 = crate::q::div_n_exec(x, y);
+        let d: i128 = crate::q::div_d_exec(x, y);
+        proof {
+            crate::q::lemma_op_widths(x, y);
+            crate::model::lemma_pow2_126();
+        }
+        if crate::q::magnitude_fits_exec(n, d) {
+            Q::Number(Rat::div(x, y))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
+    /// A saturation divided by a representable rational.
+    ///
+    /// `pos` says which saturation the numerator is. The image of
+    /// `(MAX_MAG, ∞) / y` is `(MAX_MAG/y, ∞)` for `y > 0`, which stays inside
+    /// `⟦PosSat⟧` only while `MAX_MAG/y >= MAX_MAG` — that is, while `y <= 1`.
+    /// Past the unit boundary the image dips into representable territory and
+    /// no saturation state is sound, which is the precision cliff §6 accepts.
+    /// The boundary is inclusive: at `y == 1` the image is exactly `⟦PosSat⟧`.
+    fn sat_div_number(pos: bool, y: Rat) -> (r: Q)
+        requires
+            y.wf(),
+        ensures
+            r.wf(),
+            // A saturation is finite, so the quotient can only become infinite
+            // by dividing by zero. `div` needs this to prove that an infinity in
+            // its result always points at a zero divisor.
+            r.spec_is_infinite() ==> y.n() == 0,
+            // ...and conversely, a zero divisor always produces one, so no
+            // representable quotient can survive it.
+            y.n() == 0 ==> r.spec_is_infinite(),
+    {
+        let s = y.signum();
+        if s == 0 {
+            // A saturation is sign-definite and nonzero, so this is `x/0` with
+            // `x != 0`: the IEEE convention of §4 gives a signed infinity.
+            if pos {
+                Q::PosInf
+            } else {
+                Q::NegInf
+            }
+        } else if s > 0 {
+            if y.numerator() <= y.denominator() {
+                if pos {
+                    Q::PosSat
+                } else {
+                    Q::NegSat
+                }
+            } else {
+                Q::Nan
+            }
+        } else {
+            if y.numerator() >= 0 - y.denominator() {
+                if pos {
+                    Q::NegSat
+                } else {
+                    Q::PosSat
+                }
+            } else {
+                Q::Nan
+            }
+        }
+    }
+
+    /// `a / b`, total.
+    ///
+    /// Never panics and never returns a value outside the type invariant. The
+    /// division-by-zero cases follow issue #26 §4's decision to take IEEE 754 as
+    /// the reference model, applied **uniformly** — an earlier draft of the
+    /// design used the IEEE rule for `x/0` but a limit-rigorous `Nan` for
+    /// `recip(0)` and `±∞/0`, which broke `recip(x) == div(one, x)` at `x = 0`
+    /// for no reason.
+    ///
+    /// Two cells are worth pointing at because they are exact where the obvious
+    /// guess is `Nan`:
+    ///
+    /// * `Sat / Inf` is `Number(0)`. `PosSat` denotes **reals only**, never
+    ///   `±∞`, so the image is `{s/±∞} = {0}` exactly. This is where saturation
+    ///   is strictly better behaved than infinity.
+    /// * `Inf / Sat` is a signed infinity, for the same reason: dividing `±∞` by
+    ///   a finite real leaves it infinite.
+    pub fn div(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            // `Nan` is absorbing on both sides — no information in, none out.
+            a.spec_is_nan() ==> r.spec_is_nan(),
+            b.spec_is_nan() ==> r.spec_is_nan(),
+            // Dividing two representable rationals by a nonzero divisor yields a
+            // rational or an overflow, never an infinity and never `Nan`. This
+            // is what makes the `checked_div` sugar below meaningful.
+            (a.spec_is_number() && b.spec_is_number() && !b.spec_is_zero()) ==> (r.spec_is_number()
+                || r.spec_is_saturated()),
+            // An infinity in the result means a zero divisor or an infinite
+            // numerator — never an overflow. This is the property that keeps
+            // `is_infinite()` usable as a diagnostic: it points at a division by
+            // zero, while an overflow reports `is_saturated()` instead, and the
+            // two never blur into each other.
+            r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_zero()),
+            // No representable quotient survives a zero divisor or an infinite
+            // numerator. Together with the clauses above this is what makes
+            // `checked_div` a faithful `Option` view of the discriminant.
+            b.spec_is_zero() ==> !r.spec_is_number(),
+            a.spec_is_infinite() ==> !r.spec_is_number(),
+    {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            // --- a representable numerator ---
+            (Q::Number(x), Q::Number(y)) => {
+                if y.is_zero() {
+                    if x.is_zero() {
+                        // 0/0 carries no information at all.
+                        Q::Nan
+                    } else if x.signum() > 0 {
+                        Q::PosInf
+                    } else {
+                        Q::NegInf
+                    }
+                } else {
+                    Q::div_numbers(x, y)
+                }
+            },
+            // `x / Sat`: the image is `(0, x/M)`, which straddles representable
+            // values, so only `x == 0` has a sound answer — and there it is
+            // exact, because `Sat` cannot be infinite.
+            (Q::Number(x), Q::PosSat) => if x.is_zero() {
+                Q::zero()
+            } else {
+                Q::Nan
+            },
+            (Q::Number(x), Q::NegSat) => if x.is_zero() {
+                Q::zero()
+            } else {
+                Q::Nan
+            },
+            (Q::Number(_), Q::PosInf) => Q::zero(),
+            (Q::Number(_), Q::NegInf) => Q::zero(),
+            // --- a saturated numerator ---
+            (Q::PosSat, Q::Number(y)) => Q::sat_div_number(true, y),
+            (Q::NegSat, Q::Number(y)) => Q::sat_div_number(false, y),
+            // `Sat / Sat` spans `(0, ∞)` (or its mirror) — sign known, magnitude
+            // entirely unknown, which is the one thing this lattice cannot say.
+            (Q::PosSat, Q::PosSat) => Q::Nan,
+            (Q::PosSat, Q::NegSat) => Q::Nan,
+            (Q::NegSat, Q::PosSat) => Q::Nan,
+            (Q::NegSat, Q::NegSat) => Q::Nan,
+            // `Sat / Inf` — exact, see the doc comment.
+            (Q::PosSat, Q::PosInf) => Q::zero(),
+            (Q::PosSat, Q::NegInf) => Q::zero(),
+            (Q::NegSat, Q::PosInf) => Q::zero(),
+            (Q::NegSat, Q::NegInf) => Q::zero(),
+            // --- an infinite numerator ---
+            // Including `y == 0`: §4 makes `±∞/0` sign-preserving, not `Nan`.
+            (Q::PosInf, Q::Number(y)) => if y.signum() < 0 {
+                Q::NegInf
+            } else {
+                Q::PosInf
+            },
+            (Q::NegInf, Q::Number(y)) => if y.signum() < 0 {
+                Q::PosInf
+            } else {
+                Q::NegInf
+            },
+            (Q::PosInf, Q::PosSat) => Q::PosInf,
+            (Q::PosInf, Q::NegSat) => Q::NegInf,
+            (Q::NegInf, Q::PosSat) => Q::NegInf,
+            (Q::NegInf, Q::NegSat) => Q::PosInf,
+            // `∞/∞` is the classic indeterminate.
+            (Q::PosInf, Q::PosInf) => Q::Nan,
+            (Q::PosInf, Q::NegInf) => Q::Nan,
+            (Q::NegInf, Q::PosInf) => Q::Nan,
+            (Q::NegInf, Q::NegInf) => Q::Nan,
+        }
+    }
+
+    /// `1 / self`, total.
+    ///
+    /// **Defined as `div(one, self)` rather than as its own case analysis**, and
+    /// that is a deliberate correctness choice, not laziness. Issue #26 §4
+    /// records that an earlier draft of the design gave `recip(0)` and `x/0`
+    /// different answers, breaking `recip(x) == div(one, x)` at exactly the
+    /// point that matters. Deriving one from the other makes that class of
+    /// divergence unrepresentable instead of merely tested for — see
+    /// `theorem_recip_is_div_one`.
+    ///
+    /// On a nonzero `Number` this is exact: reciprocating swaps a canonical
+    /// pair, and both components were already inside the budget, so no rounding
+    /// and no saturation can occur.
+    ///
+    /// This replaces a kernel operation that returned `Rat { num: -1, den: 0 }`
+    /// for `recip(0)` — a value violating the type invariant.
+    pub fn recip(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            self.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        // The cell-by-cell behaviour — `recip(0) == PosInf`, `recip(±∞) == 0`,
+        // `recip` of a nonzero rational being exact and never saturating — is
+        // not stated here, because deriving it would require `div`'s
+        // postcondition to reproduce the whole propagation table in ghost form.
+        // A specification shaped exactly like the table it specifies is the
+        // circular kind that verifies with a mistake duplicated into both, so it
+        // would buy confidence it does not earn.
+        //
+        // The table is instead pinned *exhaustively* in `tests/extended_q.rs`:
+        // the state space is 6×6 cells, so the tests enumerate every one rather
+        // than sampling. That is a complete check of the table, and it runs
+        // against the compiled artifact.
+        Q::div(Q::one(), self)
+    }
+
+    /// `a / b` when the result is a representable rational, `None` otherwise.
+    ///
+    /// Sugar over [`Q::div`], and provably exactly that: the `Option` carries
+    /// precisely the information the discriminant already carries. Unlike the
+    /// kernel's `checked_div` this **does not panic** on a zero divisor — it
+    /// returns `None`, which is what `std` and `num-traits` do for this case.
+    pub fn checked_div(a: Q, b: Q) -> (r: Option<Rat>)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.is_some() ==> r.unwrap().wf(),
+            // `None` whenever no representable quotient can exist: a zero
+            // divisor, an operand carrying no information, or an infinite
+            // numerator. The remaining way to get `None` is overflow, which is
+            // the case the kernel's `checked_div` already reported — so this is
+            // a strict extension of it, not a change of meaning.
+            (b.spec_is_zero() || a.spec_is_nan() || b.spec_is_nan() || a.spec_is_infinite())
+                ==> r.is_none(),
+    {
+        match Q::div(a, b) {
+            Q::Number(f) => Some(f),
+            _ => None,
         }
     }
 }
@@ -627,8 +977,20 @@ pub proof fn theorem_order_total(a: Q, b: Q)
 {
 }
 
-/// The order is antisymmetric, and on representations `spec_eq` really is
-/// identity — which is what keeps derived `PartialEq`/`Hash` consistent with it.
+/// The order is antisymmetric **against structural equality**: two values each
+/// `<=` the other are the same value.
+///
+/// Stated as `a == b` rather than as `spec_eq(a, b)` on purpose. `spec_eq` is
+/// *defined* as `spec_le(a, b) && spec_le(b, a)`, so concluding it from those
+/// two hypotheses would restate the hypothesis and prove nothing. The content is
+/// that the order's notion of "equal" coincides with the derived `PartialEq`,
+/// which is exactly what makes deriving `PartialEq`/`Eq`/`Hash` alongside a
+/// hand-written `Ord` sound — `Ord` and `Eq` cannot disagree.
+///
+/// On the `Number` case this rests on the kernel's canonicality result: two
+/// well-formed `Rat` are mathematically equal exactly when they are structurally
+/// equal, so there is no pair of distinct representations the order would have
+/// to call equal.
 pub proof fn theorem_order_antisymmetric(a: Q, b: Q)
     requires
         a.wf(),
@@ -636,8 +998,36 @@ pub proof fn theorem_order_antisymmetric(a: Q, b: Q)
         Q::spec_le(a, b),
         Q::spec_le(b, a),
     ensures
-        Q::spec_eq(a, b),
+        a == b,
 {
+    match (a, b) {
+        (Q::Number(x), Q::Number(y)) => {
+            crate::laws::lemma_canonical_eq(x, y);
+        },
+        _ => {},
+    }
+}
+
+/// `spec_eq` and the derived `PartialEq` are the same relation.
+///
+/// The other direction of the theorem above, completing the equivalence that
+/// `Ord`/`Eq` consistency depends on.
+pub proof fn theorem_spec_eq_is_structural_eq(a: Q, b: Q)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        Q::spec_eq(a, b) <==> a == b,
+{
+    if Q::spec_eq(a, b) {
+        theorem_order_antisymmetric(a, b);
+    }
+    match (a, b) {
+        (Q::Number(x), Q::Number(y)) => {
+            crate::laws::lemma_canonical_eq(x, y);
+        },
+        _ => {},
+    }
 }
 
 /// The order is transitive.

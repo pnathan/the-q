@@ -726,6 +726,139 @@ fn new_is_total_where_rat_new_is_partial() {
 }
 
 #[test]
+fn new_does_not_saturate_a_tiny_value_with_an_oversized_denominator() {
+    // A regression test for a real bug. `Rat::new` returns `None` for two
+    // different reasons — the value is too big, or the reduced *denominator* is
+    // too big while the value is tiny — and an implementation that saturates on
+    // "Rat::new said None" conflates them.
+    //
+    // `1 / i64::MIN` is about -1.08e-19. Calling that `NegSat` would assert
+    // |value| > MAX_MAG of a value in (-1, 0): an unsound denotation, and
+    // precisely the silent-wrong-answer class this type exists to remove.
+    // It must round instead, which under R3 lands on zero.
+    assert!(
+        Rat::new(1, i64::MIN).is_none(),
+        "premise: Rat::new fails here"
+    );
+
+    for (n, d) in [
+        (1i64, i64::MIN),
+        (-1, i64::MIN),
+        (1, i64::MAX),
+        (-1, i64::MAX),
+    ] {
+        let q = Q::new(n, d);
+        assert!(
+            !q.is_saturated(),
+            "{n}/{d} is about {:.3e} and must not saturate, got {q}",
+            n as f64 / d as f64
+        );
+        assert!(q.is_number(), "{n}/{d} must round to a number, got {q}");
+        assert!(
+            q.in_unit_interval() || Q::lt(q, Q::zero()),
+            "{n}/{d} must land near zero, got {q}"
+        );
+    }
+}
+
+#[test]
+fn new_saturates_exactly_when_the_value_leaves_the_budget() {
+    // The boundary is the *value*, and MAX_MAG itself is representable, so the
+    // cut is strictly above it. This is what `magnitude_fits` encodes.
+    assert_eq!(Q::new(MAX_MAG, 1), Q::Number(Rat::new(MAX_MAG, 1).unwrap()));
+    assert_eq!(
+        Q::new(-MAX_MAG, 1),
+        Q::Number(Rat::new(-MAX_MAG, 1).unwrap())
+    );
+    assert_eq!(Q::new(MAX_MAG + 1, 1), Q::PosSat);
+    assert_eq!(Q::new(-MAX_MAG - 1, 1), Q::NegSat);
+
+    // Two large components whose *ratio* is small: never saturation.
+    assert_eq!(
+        Q::new(i64::MAX, i64::MAX),
+        Q::Number(Rat::new(1, 1).unwrap())
+    );
+    assert!(!Q::new(i64::MAX - 1, i64::MAX).is_saturated());
+    assert!(!Q::new(i64::MIN, i64::MAX).is_saturated());
+}
+
+#[test]
+fn new_agrees_with_rat_new_wherever_rat_new_succeeds() {
+    // Rounding a value that is already representable returns it unchanged (R1),
+    // so the total constructor must be a conservative extension of the partial
+    // one — never a different answer, only an answer where there was none.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0009);
+    let mut agreed = 0u32;
+    for _ in 0..20_000 {
+        let n = rng.next_u64() as i64;
+        let d = rng.next_u64() as i64;
+        if let Some(x) = Rat::new(n, d) {
+            assert_eq!(
+                Q::new(n, d),
+                Q::Number(x),
+                "Q::new({n}, {d}) disagrees with Rat::new"
+            );
+            agreed += 1;
+        }
+    }
+    assert!(
+        agreed > 1_000,
+        "only {agreed} cases exercised the agreement"
+    );
+}
+
+#[test]
+fn new_saturation_agrees_with_the_oracle_about_magnitude() {
+    // The independent check: saturation must mean |value| > MAX_MAG according to
+    // arbitrary-precision arithmetic, not according to this crate's own
+    // reduction code.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_000A);
+    let max = Rational::from_signeds(MAX_MAG as i128, 1i128);
+    let mut saturating = 0u32;
+    for i in 0..20_000 {
+        // Uniform i64 pairs almost never saturate: |n/d| > 2^62 needs a large
+        // numerator over a *small* denominator, and a random 64-bit denominator
+        // is overwhelmingly large. Half the draws therefore use a small
+        // denominator, so the saturating regime is actually reached. (Without
+        // this the test passes vacuously — which is how this was caught.)
+        let n = rng.next_u64() as i64;
+        let d = if i % 2 == 0 {
+            (rng.below(64) as i64) - 32
+        } else {
+            rng.next_u64() as i64
+        };
+        if d == 0 {
+            continue;
+        }
+        let exact = Rational::from_signeds(n as i128, d as i128);
+        let mag = if exact < oracle_zero() {
+            -exact.clone()
+        } else {
+            exact.clone()
+        };
+        let should_saturate = mag > max;
+        let q = Q::new(n, d);
+        assert_eq!(
+            q.is_saturated(),
+            should_saturate,
+            "Q::new({n}, {d}) = {q}, but |{n}/{d}| > MAX_MAG is {should_saturate}"
+        );
+        if should_saturate {
+            saturating += 1;
+            assert_eq!(
+                q == Q::PosSat,
+                exact > oracle_zero(),
+                "saturation sign wrong for {n}/{d}"
+            );
+        }
+    }
+    assert!(
+        saturating > 100,
+        "only {saturating} saturating cases drawn; the check is not exercised"
+    );
+}
+
+#[test]
 fn new_never_produces_a_malformed_value() {
     let mut rng = Rng::new(0x5EED_1234_ABCD_0008);
     for _ in 0..20_000 {
@@ -752,4 +885,396 @@ fn constructors_agree_with_their_predicates() {
     assert!(Q::zero().in_unit_interval());
     assert!(Q::one().in_unit_interval());
     assert!(!Q::neg_one().in_unit_interval());
+}
+
+// ===========================================================================
+// Stage 2 — total division (#26 §10.2)
+//
+// The state space here is 6×6 cells, which is small enough to enumerate
+// completely. These tests therefore *exhaust* the table rather than sampling
+// it, and the expected values are written out independently from the
+// denotations in #26 §2 — so a transcription slip in the implementation
+// disagrees with a table derived separately, instead of being copied into both.
+// ===========================================================================
+
+/// The three defects that open issue #26, each confirmed to reproduce on the
+/// kernel and to be gone from the extended type.
+#[test]
+fn the_motivating_defects_are_fixed() {
+    let zero = Rat::new(0, 1).unwrap();
+    let one = Rat::new(1, 1).unwrap();
+
+    // 1. `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }` — a value that
+    //    violates the type invariant (den must be > 0) and detonates later.
+    let broken = zero.recip();
+    assert_eq!(
+        (broken.numerator(), broken.denominator()),
+        (-1, 0),
+        "premise: the kernel defect still reproduces"
+    );
+    assert_eq!(
+        Q::Number(zero).recip(),
+        Q::PosInf,
+        "the extended type must report a state, not a malformed value"
+    );
+
+    // 2. and 3. `Rat::div(_, 0)` and `Rat::checked_div(_, 0)` both panic.
+    assert!(
+        std::panic::catch_unwind(|| Rat::div(one, zero)).is_err(),
+        "premise: kernel div by zero still panics"
+    );
+    assert!(
+        std::panic::catch_unwind(|| Rat::checked_div(one, zero)).is_err(),
+        "premise: kernel checked_div by zero still panics"
+    );
+    assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
+    assert_eq!(
+        Q::checked_div(Q::one(), Q::zero()),
+        None,
+        "checked_div must return None where std and num-traits do"
+    );
+}
+
+/// The 25 special-by-special cells, written out as a literal table.
+fn special_div_table() -> Vec<(Q, Q, Q)> {
+    use Q::{Nan, NegInf, NegSat, PosInf, PosSat};
+    let zero = Q::Number(Rat::new(0, 1).unwrap());
+    vec![
+        // Sat / Sat spans (0, ∞) or its mirror: sign known, magnitude entirely
+        // unknown, which is the one thing this lattice cannot express.
+        (PosSat, PosSat, Nan),
+        (PosSat, NegSat, Nan),
+        (NegSat, PosSat, Nan),
+        (NegSat, NegSat, Nan),
+        // Sat / Inf is EXACT: Sat denotes reals only, so the image is {s/±∞} = {0}.
+        (PosSat, PosInf, zero),
+        (PosSat, NegInf, zero),
+        (NegSat, PosInf, zero),
+        (NegSat, NegInf, zero),
+        // Inf / Sat is a signed infinity, for the same reason — dividing ±∞ by a
+        // finite real leaves it infinite.
+        (PosInf, PosSat, PosInf),
+        (PosInf, NegSat, NegInf),
+        (NegInf, PosSat, NegInf),
+        (NegInf, NegSat, PosInf),
+        // ∞/∞ is indeterminate.
+        (PosInf, PosInf, Nan),
+        (PosInf, NegInf, Nan),
+        (NegInf, PosInf, Nan),
+        (NegInf, NegInf, Nan),
+        // Nan absorbs on both sides.
+        (Nan, PosSat, Nan),
+        (Nan, NegSat, Nan),
+        (Nan, PosInf, Nan),
+        (Nan, NegInf, Nan),
+        (Nan, Nan, Nan),
+        (PosSat, Nan, Nan),
+        (NegSat, Nan, Nan),
+        (PosInf, Nan, Nan),
+        (NegInf, Nan, Nan),
+    ]
+}
+
+#[test]
+fn division_special_by_special_matches_the_derived_table() {
+    let table = special_div_table();
+    assert_eq!(table.len(), 25, "all 5x5 special cells must be covered");
+    for (a, b, want) in table {
+        assert_eq!(Q::div(a, b), want, "div({a}, {b}) is wrong");
+    }
+}
+
+#[test]
+fn division_number_by_special_matches_the_derived_table() {
+    let vals = [
+        Rat::new(0, 1).unwrap(),
+        Rat::new(1, 1).unwrap(),
+        Rat::new(-1, 1).unwrap(),
+        Rat::new(1, 2).unwrap(),
+        Rat::new(-3, 2).unwrap(),
+        Rat::new(MAX_MAG, 1).unwrap(),
+        Rat::new(-MAX_MAG, 1).unwrap(),
+    ];
+    let zero = Q::Number(Rat::new(0, 1).unwrap());
+    for x in vals {
+        let q = Q::Number(x);
+        // x / Sat: the image is (0, x/MAX_MAG), which straddles representable
+        // values — so only x == 0 has a sound answer, and there it is exact
+        // precisely because Sat cannot be infinite.
+        let want_sat = if x.is_zero() { zero } else { Q::Nan };
+        assert_eq!(Q::div(q, Q::PosSat), want_sat, "{x} / PosSat");
+        assert_eq!(Q::div(q, Q::NegSat), want_sat, "{x} / NegSat");
+        // x / Inf is exactly zero for every x, including x == 0.
+        assert_eq!(Q::div(q, Q::PosInf), zero, "{x} / PosInf");
+        assert_eq!(Q::div(q, Q::NegInf), zero, "{x} / NegInf");
+        assert_eq!(Q::div(q, Q::Nan), Q::Nan, "{x} / Nan");
+    }
+}
+
+#[test]
+fn division_special_by_number_matches_the_derived_table() {
+    // The unit boundary is INCLUSIVE: at |y| == 1 the image of (M,∞)/y is
+    // exactly (M,∞), so saturation is sound and minimal there. It is the open
+    // interval |y| > 1 that dips into representable territory.
+    let cases: [(i64, i64); 9] = [
+        (0, 1),
+        (1, 1),
+        (-1, 1),
+        (1, 2),
+        (-1, 2),
+        (2, 1),
+        (-2, 1),
+        (MAX_MAG, 1),
+        (-MAX_MAG, 1),
+    ];
+    for (n, d) in cases {
+        let y = Rat::new(n, d).unwrap();
+        let qy = Q::Number(y);
+        let is_zero = n == 0;
+        let within_unit = n.unsigned_abs() <= d.unsigned_abs();
+
+        let want_pos_sat = if is_zero {
+            Q::PosInf
+        } else if !within_unit {
+            Q::Nan
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        };
+        assert_eq!(Q::div(Q::PosSat, qy), want_pos_sat, "PosSat / {y}");
+
+        let want_neg_sat = match want_pos_sat {
+            Q::PosSat => Q::NegSat,
+            Q::NegSat => Q::PosSat,
+            Q::PosInf => Q::NegInf,
+            other => other,
+        };
+        assert_eq!(Q::div(Q::NegSat, qy), want_neg_sat, "NegSat / {y}");
+
+        // ±∞ / y is sign-preserving, including at y == 0 — §4 applies the IEEE
+        // rule uniformly rather than making this case Nan.
+        let want_pos_inf = if n < 0 { Q::NegInf } else { Q::PosInf };
+        assert_eq!(Q::div(Q::PosInf, qy), want_pos_inf, "PosInf / {y}");
+        assert_eq!(
+            Q::div(Q::NegInf, qy),
+            if n < 0 { Q::PosInf } else { Q::NegInf },
+            "NegInf / {y}"
+        );
+        assert_eq!(Q::div(Q::Nan, qy), Q::Nan, "Nan / {y}");
+    }
+}
+
+#[test]
+fn division_by_zero_follows_ieee_uniformly() {
+    // §4's decision, and the uniformity is the point: an earlier draft used the
+    // IEEE rule for x/0 but a limit-rigorous Nan for recip(0) and ±∞/0, which
+    // broke recip(x) == div(one, x) at exactly x = 0.
+    let z = Q::zero();
+    assert_eq!(Q::div(Q::one(), z), Q::PosInf);
+    assert_eq!(Q::div(Q::neg_one(), z), Q::NegInf);
+    assert_eq!(Q::div(z, z), Q::Nan, "0/0 carries no information");
+    assert_eq!(Q::div(Q::PosSat, z), Q::PosInf);
+    assert_eq!(Q::div(Q::NegSat, z), Q::NegInf);
+    assert_eq!(Q::div(Q::PosInf, z), Q::PosInf, "±∞/0 is sign-preserving");
+    assert_eq!(Q::div(Q::NegInf, z), Q::NegInf);
+    assert_eq!(Q::div(Q::Nan, z), Q::Nan);
+}
+
+#[test]
+fn recip_agrees_with_div_one_over_every_state() {
+    // True by construction — recip IS div(one, ·) — and checked anyway, because
+    // #26 §4 records these coming apart in an earlier draft of the design.
+    for q in representatives() {
+        assert_eq!(
+            q.recip(),
+            Q::div(Q::one(), q),
+            "recip and div(one, ·) disagree at {q}"
+        );
+    }
+    let mut rng = Rng::new(0x5EED_1234_ABCD_000B);
+    for _ in 0..20_000 {
+        let q = Q::Number(rng.q());
+        assert_eq!(q.recip(), Q::div(Q::one(), q));
+    }
+}
+
+#[test]
+fn recip_matches_the_derived_table() {
+    assert_eq!(Q::zero().recip(), Q::PosInf, "must match div(one, zero)");
+    assert_eq!(Q::PosInf.recip(), Q::zero());
+    assert_eq!(Q::NegInf.recip(), Q::zero());
+    assert_eq!(
+        Q::PosSat.recip(),
+        Q::Nan,
+        "image (0, 1/M) straddles the grid"
+    );
+    assert_eq!(Q::NegSat.recip(), Q::Nan);
+    assert_eq!(Q::Nan.recip(), Q::Nan);
+    assert_eq!(
+        Q::Number(Rat::new(2, 3).unwrap()).recip(),
+        Q::Number(Rat::new(3, 2).unwrap())
+    );
+}
+
+#[test]
+fn recip_is_exact_and_never_saturates_on_nonzero_numbers() {
+    // Reciprocating swaps a canonical pair whose components were both already
+    // inside the budget, so neither rounding nor overflow is reachable.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_000C);
+    for _ in 0..20_000 {
+        let x = rng.q_nonzero();
+        let r = Q::Number(x).recip();
+        assert!(r.is_number(), "recip({x}) saturated, which cannot happen");
+        // Exactness, against the oracle.
+        if let Q::Number(y) = r {
+            assert_eq!(
+                rat(y) * rat(x),
+                Rational::from_signeds(1i128, 1i128),
+                "recip({x}) = {y} is not exact"
+            );
+        }
+        // An involution on nonzero rationals.
+        assert_eq!(r.recip(), Q::Number(x), "recip is not an involution at {x}");
+    }
+}
+
+#[test]
+fn division_of_numbers_agrees_with_the_oracle() {
+    let mut rng = Rng::new(0x5EED_1234_ABCD_000D);
+    let max = Rational::from_signeds(MAX_MAG as i128, 1i128);
+    let mut saturated = 0u32;
+    for i in 0..20_000 {
+        // A quotient only overflows when a large value is divided by a tiny
+        // one, which random pairs essentially never produce. Half the draws are
+        // therefore built to overflow, so the saturating branch is actually
+        // exercised — without this the test passes without testing it, which is
+        // how the omission was caught.
+        let (x, y) = if i % 2 == 0 {
+            let sign = if rng.below(2) == 0 { 1i64 } else { -1i64 };
+            let big = Rat::new(sign * (MAX_MAG - rng.below(1000) as i64), 1).unwrap();
+            let tiny = Rat::new(1, rng.below(1_000_000) as i64 + 2).unwrap();
+            (big, tiny)
+        } else {
+            (rng.q(), rng.q_nonzero())
+        };
+        let exact = rat(x) / rat(y);
+        let mag = if exact < oracle_zero() {
+            -exact.clone()
+        } else {
+            exact.clone()
+        };
+        let q = Q::div(Q::Number(x), Q::Number(y));
+        if mag > max {
+            saturated += 1;
+            assert_eq!(
+                q,
+                if exact > oracle_zero() {
+                    Q::PosSat
+                } else {
+                    Q::NegSat
+                },
+                "{x} / {y} overflows and must saturate by sign, got {q}"
+            );
+        } else {
+            // Inside the budget the result is a number, and R3 bounds its error.
+            match q {
+                Q::Number(r) => common::assert_r3(r, &exact, "Q::div"),
+                other => panic!("{x} / {y} = {exact} fits but produced {other}"),
+            }
+        }
+    }
+    assert!(
+        saturated > 10,
+        "only {saturated} saturating quotients drawn; that path is untested"
+    );
+}
+
+#[test]
+fn division_never_silently_clamps() {
+    // The kernel clamps an overflowing quotient to ±MAX_MAG/1 and returns it as
+    // an ordinary value — a singleton denotation that does not contain the true
+    // result. The extended type must report the overflow instead.
+    let tiny = Q::Number(Rat::new(1, MAX_MAG).unwrap());
+    let big = Q::Number(Rat::new(MAX_MAG, 1).unwrap());
+    let q = Q::div(big, tiny);
+    assert_eq!(
+        q,
+        Q::PosSat,
+        "MAX_MAG / (1/MAX_MAG) overflows and must say so"
+    );
+    assert!(
+        q.is_saturated() && !q.is_infinite(),
+        "overflow is not infinity"
+    );
+    assert_eq!(Q::checked_div(big, tiny), None);
+}
+
+#[test]
+fn checked_div_is_exactly_the_number_case_of_div() {
+    for a in representatives() {
+        for b in representatives() {
+            let want = match Q::div(a, b) {
+                Q::Number(f) => Some(f),
+                _ => None,
+            };
+            assert_eq!(Q::checked_div(a, b), want, "checked_div({a}, {b})");
+        }
+    }
+}
+
+#[test]
+fn division_is_total_and_never_produces_a_malformed_value() {
+    // The headline property: no input panics, and every output satisfies the
+    // invariant. Verus proves both; this runs them against the artifact.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_000E);
+    let specials = representatives();
+    for i in 0..20_000 {
+        // Mix specials with numbers, and deliberately include zero divisors.
+        let a = if i % 7 == 0 {
+            specials[(i as usize) % specials.len()]
+        } else {
+            Q::Number(rng.q())
+        };
+        let b = if i % 5 == 0 {
+            Q::zero()
+        } else if i % 3 == 0 {
+            specials[(i as usize * 3) % specials.len()]
+        } else {
+            Q::Number(rng.q())
+        };
+        let q = Q::div(a, b);
+        if let Q::Number(x) = q {
+            common::assert_wf(x, "Q::div");
+        }
+        let c = [q.is_number(), q.is_saturated(), q.is_infinite(), q.is_nan()]
+            .iter()
+            .filter(|z| **z)
+            .count();
+        assert_eq!(c, 1, "div({a}, {b}) produced an unclassified value");
+        // checked_div must never panic either.
+        let _ = Q::checked_div(a, b);
+        let _ = a.recip();
+    }
+}
+
+#[test]
+fn an_infinity_in_the_quotient_always_points_at_a_zero_divisor() {
+    // What makes is_infinite() a usable diagnostic: infinity means division by
+    // zero, saturation means overflow, and the two never blur.
+    for a in representatives() {
+        for b in representatives() {
+            let q = Q::div(a, b);
+            if q.is_infinite() {
+                assert!(
+                    a.is_infinite() || b.is_zero(),
+                    "div({a}, {b}) = {q} is infinite without a zero divisor \
+                     or an infinite numerator"
+                );
+            }
+            if q.is_saturated() {
+                assert!(!b.is_zero(), "div({a}, {b}) overflowed on a zero divisor");
+            }
+        }
+    }
 }

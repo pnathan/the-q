@@ -621,15 +621,22 @@ impl core::str::FromStr for crate::ext::Q {
 
 /// `i64::from_str`, with the overflow case distinguished from the malformed one.
 ///
-/// `i64::from_str` rejects a leading `+` on no version this crate supports, so
-/// the two error kinds are told apart by re-parsing as `i128`: anything that
-/// parses there and not here overflowed.
+/// Worth separating: "your number is too big for this type" and "that is not a
+/// number" call for different fixes, and collapsing them into one error throws
+/// away the only information that distinguishes them.
+///
+/// The test is syntactic rather than a re-parse at a wider type. Re-parsing as
+/// `i128` would misreport anything above `i128::MAX` — a well-formed numeral —
+/// as malformed. A numeral is an optional sign followed by at least one ASCII
+/// digit; if the input is one and `i64` still rejected it, the only possible
+/// reason is range.
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 fn parse_i64(s: &str) -> Result<i64, ParseQError> {
     match s.parse::<i64>() {
         Ok(v) => Ok(v),
         Err(_) => {
-            if s.parse::<i128>().is_ok() {
+            let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+            if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
                 Err(ParseQError::IntOverflow)
             } else {
                 Err(ParseQError::Malformed)
