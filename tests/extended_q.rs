@@ -1819,3 +1819,43 @@ fn every_f64_has_an_image_in_the_extended_type() {
         assert_eq!(q.is_nan(), v.is_nan(), "NaN must map to Nan and only NaN");
     }
 }
+
+// ===========================================================================
+// Operator traits
+// ===========================================================================
+
+#[test]
+fn operators_delegate_to_the_verified_functions() {
+    for a in representatives() {
+        for b in representatives() {
+            assert_eq!(a + b, Q::add(a, b), "Add at ({a}, {b})");
+            assert_eq!(a - b, Q::sub(a, b), "Sub at ({a}, {b})");
+            assert_eq!(a * b, Q::mul(a, b), "Mul at ({a}, {b})");
+            assert_eq!(a / b, Q::div(a, b), "Div at ({a}, {b})");
+        }
+        assert_eq!(-a, a.neg(), "Neg at {a}");
+    }
+}
+
+#[test]
+fn the_division_operator_is_total() {
+    // `Rat` deliberately has no `Div`, because its division carries a
+    // precondition an operator cannot express, so `a / b` would be a panic
+    // waiting for a caller who forgot. `Q::div` is total, so the operator is
+    // safe to provide — including on the input that panics for `Rat`.
+    assert_eq!(Q::one() / Q::zero(), Q::PosInf);
+    assert_eq!(Q::zero() / Q::zero(), Q::Nan);
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0030);
+    for _ in 0..20_000 {
+        let (a, b) = (Q::Number(rng.q()), Q::Number(rng.q()));
+        // Neither of these may panic, including when b is zero.
+        let _ = a / b;
+        let _ = a / Q::zero();
+    }
+}
+
+#[test]
+fn default_is_zero() {
+    assert_eq!(Q::default(), Q::zero());
+    assert!(Q::default().is_zero());
+}

@@ -1650,3 +1650,71 @@ impl Ord for Q {
         Q::compare(*self, *other).cmp(&0)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Operator traits
+//
+// Thin, total delegations, following the same pattern as `Rat`'s: Verus does
+// not model the `core::ops` traits, so they are `external` and contribute no
+// assumptions to any proof.
+//
+// Unlike `Rat`, this type implements `Div`. The reason `Rat` deliberately does
+// not is that its division carries a precondition (`!b.is_zero()`) an operator
+// cannot express, so `a / b` would be a panic waiting for a caller who forgot.
+// `Q::div` is total, so the objection is gone: there is no input for which
+// `a / b` fails to produce a value.
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::ops::Add for Q {
+    type Output = Q;
+
+    fn add(self, rhs: Q) -> Q {
+        Q::add(self, rhs)
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::ops::Sub for Q {
+    type Output = Q;
+
+    fn sub(self, rhs: Q) -> Q {
+        Q::sub(self, rhs)
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::ops::Mul for Q {
+    type Output = Q;
+
+    fn mul(self, rhs: Q) -> Q {
+        Q::mul(self, rhs)
+    }
+}
+
+/// Total division. See the note above on why this exists here and not on `Rat`.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::ops::Div for Q {
+    type Output = Q;
+
+    fn div(self, rhs: Q) -> Q {
+        Q::div(self, rhs)
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::ops::Neg for Q {
+    type Output = Q;
+
+    fn neg(self) -> Q {
+        Q::neg(self)
+    }
+}
+
+/// `Q::zero()` — the additive identity, and the identity `Sum` folds from.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl Default for Q {
+    fn default() -> Q {
+        Q::zero()
+    }
+}

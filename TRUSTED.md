@@ -152,6 +152,8 @@ ergonomics at the crate boundary.
 | `impl Display for Q` | `num/den` for a number; the fixed spellings `nan`, `inf`, `-inf`, `>max`, `<-max` for the specials |
 | `impl FromStr for Q` | parses exactly what `Display` emits, plus a bare integer; rejects whitespace, a zero denominator, and out-of-budget values with distinct errors |
 | `impl Serialize/Deserialize for Q` (feature `serde`) | untagged: the `(num, den)` pair for a number, the `Display` spelling for a special. Decoding goes through the verified `Rat::new`. Uses `deserialize_any`, so it works only in **self-describing** formats — `bincode` and similar will fail at runtime |
+| `impl Add/Sub/Mul/Div/Neg for Q` | delegate to `Q::add`/`sub`/`mul`/`div`/`neg`. **`Div` exists here and not on `Rat`**: the reason `Rat` omits it is that its division carries a precondition (`!b.is_zero()`) an operator cannot express, and `Q::div` is total, so there is no input for which `a / b` fails to produce a value |
+| `impl Default for Q` | `Q::zero()` |
 | `convert::q_from_f64` | total `f64 → Q`. Splits on `is_nan`/`is_infinite`/`is_sign_negative` and delegates the value path to `from_f64_dir`. Adds no numeric assumption beyond `f64_decompose`'s: all it contributes is a three-way split on classes IEEE-754 defines unambiguously |
 
 `Q`'s arithmetic — `add`, `sub`, `mul`, `div`, `recip`, `pow_u32`, the four
