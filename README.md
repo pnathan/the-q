@@ -4,15 +4,15 @@ Exact-with-verified-rounding rational arithmetic in Rust, specified and proven
 in [Verus](https://github.com/verus-lang/verus).
 
 ```rust
-use the_q::Q;
+use the_q::Rat;
 
-let reliability = Q::from_decimal(85, 2).unwrap();   // 0.85, exactly — 17/20
-let weight      = Q::from_decimal(3, 1).unwrap();    // 0.3,  exactly — 3/10
-let combined    = Q::mul(reliability, weight);       // 51/200, exactly
+let reliability = Rat::from_decimal(85, 2).unwrap();   // 0.85, exactly — 17/20
+let weight      = Rat::from_decimal(3, 1).unwrap();    // 0.3,  exactly — 3/10
+let combined    = Rat::mul(reliability, weight);       // 51/200, exactly
 assert_eq!(combined.to_string(), "51/200");
 ```
 
-`Q` is a rational `num / den` in two `i64` fields, always canonical
+`Rat` is a rational `num / den` in two `i64` fields, always canonical
 (`den > 0`, `gcd(|num|, den) == 1`) and always bounded
 (`|num| <= 2^62 - 1`, `den <= 2^62 - 1`) — provided you build it with the
 constructors. It is `Copy`, 128 bits, no heap, no allocation, trivially
@@ -20,9 +20,74 @@ constructors. It is `Copy`, 128 bits, no heap, no allocation, trivially
 
 The fields are public because Verus cannot state a public invariant about a
 datatype whose fields it cannot see. Under Verus that costs nothing: every
-operation `requires` the invariant, so a hand-built `Q { num: 3, den: 0 }`
+operation `requires` the invariant, so a hand-built `Rat { num: 3, den: 0 }`
 cannot be passed to anything. In unverified Rust it is a footgun — use
-`Q::new`, `Q::from_decimal` or `Q::from_int`.
+`Rat::new`, `Rat::from_decimal` or `Rat::from_int`.
+
+## Two types: `Rat` and `Q`
+
+`Rat` above is the verified kernel — exact, canonical, bounded, and **partial**.
+`Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, `Rat::zero().recip()`
+returns a value that violates the type invariant, and
+`Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG` — wrong by a factor of
+two and indistinguishable from a real answer.
+
+`Q` layers explicit non-representable states over that kernel, so that "not a
+representable rational" becomes an observable state instead of something the
+caller is trusted to have ruled out:
+
+```rust
+pub enum Q {
+    Number(Rat),
+    PosSat, NegSat,   // magnitude exceeds the budget; sign known
+    PosInf, NegInf,   // exactly infinite
+    Nan,              // no information
+}
+```
+
+Arithmetic on `Q` is **total**: every operation on every input returns a value
+in the type, and nothing panics.
+
+```rust
+use the_q::{Q, Rat, MAX_MAG};
+
+assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);   // not a panic
+assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
+assert_eq!(Q::checked_div(Q::one(), Q::zero()), None); // what std does
+
+let m = Q::Number(Rat::new(MAX_MAG, 1).unwrap());
+assert!(Q::add(m, m).is_saturated());                  // reported, not clamped
+```
+
+Three things about the design are easy to get wrong and are worth stating up
+front:
+
+* **Saturation is not infinity.** `PosSat` denotes `(MAX_MAG, +∞)` — genuinely
+  finite reals above the budget — while `PosInf` denotes `{+∞}`. Keeping them
+  apart is what lets `is_saturated()` mean "an overflow happened" and
+  `is_infinite()` mean "a division by zero happened". It also makes
+  `Number(0) * PosSat` exactly `Number(0)`, where `0 * ∞` is genuinely
+  indeterminate. For the same reason there is deliberately **no `is_finite()`**:
+  a saturated value *is* finite, so that would be the wrong axis.
+
+* **The order is total, and that costs a second IEEE departure.** `Nan == Nan`
+  is true, and `Nan` sorts last. IEEE makes every ordered comparison involving
+  NaN false, which is exactly what forbids a total order — `f64` sidesteps this
+  by having no `Ord` at all. The trade here goes the other way, so `Q` can be a
+  `BTreeMap` key or be sorted directly. Outside `Number` the order is on
+  *representations*, not denoted values.
+
+* **`min`/`max`/`clamp` propagate `Nan` and therefore disagree with
+  `Ord`-based selection.** A fold of `Q::min` is **not** `slice.iter().min()`.
+  Deriving selection from the order would give `min(Nan, Number(5)) ==
+  Number(5)` — asserting the value is exactly 5 when it could be anything. IEEE
+  fought this out and withdrew `minNum`/`maxNum` in 754-2019 for the same
+  reason.
+
+The design, including the full propagation tables and the reasoning behind each
+cell, is issue #26. `Rat` keeps its invariant verbatim, so every proof
+obligation that existed before this layer still discharges with its exact
+original statement.
 
 ## Why
 
@@ -130,7 +195,7 @@ apply: such results **saturate** to `±(2^62 - 1)`, and `checked_add`,
 rather than leaving it asymmetric.
 
 The exclusion is a choice rather than a necessity: some unrepresentable values
-*do* have a `Q` inside the bound, and `saturation::lemma_saturation_is_a_choice`
+*do* have a `Rat` inside the bound, and `saturation::lemma_saturation_is_a_choice`
 proves it by exhibiting one. Scoping R3 below the ceiling keeps the contract on
 one clean side of a boundary; it is not that nothing could satisfy it.
 
@@ -139,9 +204,9 @@ evidence counts top out around 10⁵ — so the budget pressure is entirely in t
 *denominator*. This is a documented departure from a literal reading of the
 specification, which states R3 unconditionally.
 
-Relatedly, `Q::new` returns `None` for `i64` pairs above the budget
-(`Q::new(i64::MAX, 1)` does not fit), not only for a zero denominator.
-`Q::new_rounded` is the total variant: `None` **iff** the denominator is zero.
+Relatedly, `Rat::new` returns `None` for `i64` pairs above the budget
+(`Rat::new(i64::MAX, 1)` does not fit), not only for a zero denominator.
+`Rat::new_rounded` is the total variant: `None` **iff** the denominator is zero.
 
 ## Why the budget is `2^62`
 
@@ -183,7 +248,7 @@ bit better than the specification's `B >= 60` bar.
 actually satisfies `B = 62`. The uniform R3 contract stays at `B = 61` across
 all three directions — the directed modes genuinely achieve no better — but
 `Dir::Nearest` additionally carries the tighter bound as its own proved
-guarantee: `Q::add`, `Q::sub`, `Q::mul` and `Q::div` each `ensures`
+guarantee: `Rat::add`, `Rat::sub`, `Rat::mul` and `Rat::div` each `ensures`
 `within_error_bound_nearest` alongside the uniform `within_error_bound`. The
 proof is the half-step form of the grid-error lemma
 (`round::lemma_grid_error_step_nearest_half`, division-free:
@@ -251,7 +316,7 @@ and it is an order-of-magnitude larger verification project.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `691 verified, 0 errors`, no `assume`, no `admit`. The two
+design intention. `742 verified, 0 errors`, no `assume`, no `admit`. The three
 `external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
 are the only things taken on trust.
 
@@ -259,7 +324,7 @@ are the only things taken on trust.
 
 * I1: results are canonical — `den > 0` and `gcd(|num|, den) == 1`.
 * I2: results are in budget — `|num| ≤ 2^62 − 1` and `den ≤ 2^62 − 1`.
-* `Q::wf()` is `requires`d of every input and `ensures`d of every output, so the
+* `Rat::wf()` is `requires`d of every input and `ensures`d of every output, so the
   invariant is a precondition of the next call rather than a claim about it.
 * GCD correctness *and* termination, for the whole module.
 
@@ -340,13 +405,13 @@ property of the current code.
 
 Every entry point now pins its own value, which until recently none of them did:
 
-* `Q::new` says what it returns *and* that it returns something: any pair with
+* `Rat::new` says what it returns *and* that it returns something: any pair with
   both components inside the budget succeeds. Without that second half the
   contract was satisfied by an implementation returning `None` every time.
-* `Q::from_decimal` is exactly `mantissa / 10^dec_places`, and is `None` exactly
+* `Rat::from_decimal` is exactly `mantissa / 10^dec_places`, and is `None` exactly
   when `dec_places > 18` or `|mantissa| > MAX_MAG` — both checkable by the
   caller.
-* `Q::new_rounded` is pinned to `round_frac` of its input, with R2 and R3
+* `Rat::new_rounded` is pinned to `round_frac` of its input, with R2 and R3
   against that input under the usual `!saturated` scope.
 * `convert::from_parts_dir` — the verified core of `from_f64_dir` — is pinned to
   `round_frac` of the exact rational the IEEE-754 triple denotes, with R2, R3,
@@ -373,7 +438,7 @@ with `e >= -124` — say `2^-100` — still goes through the ordinary rounder.)
 
 `lemma_saturation_is_a_choice` proves that excluding the region above the
 magnitude ceiling from R3 is a *scoping decision, not a necessity*: it exhibits
-a value up there that a well-formed `Q` does satisfy R3 for. The tempting
+a value up there that a well-formed `Rat` does satisfy R3 for. The tempting
 opposite claim was written into this crate three times by two authors and
 corrected twice, so it is now a proof obligation instead of a comment.
 
@@ -412,7 +477,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `691 verified, 0 errors`,
+**Current status: every proof obligation discharges — `742 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
