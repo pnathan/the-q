@@ -489,3 +489,241 @@ impl<'de> serde::Deserialize<'de> for Rat {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// The extended `Q`: Display, FromStr and serde (issue #26 §8)
+//
+// One spelling, shared by all three, rather than two that can drift:
+//
+//     nan   inf   -inf   >max   <-max
+//
+// The saturation spellings are deliberately not readable as numbers. Rendering
+// `PosSat` as a numeral would be a lie in either direction: the value is
+// finite, so `inf` is wrong, and it is unknown, so `4611686018427387903` is
+// worse — it would claim an exact value the type explicitly does not have.
+// ---------------------------------------------------------------------------
+
+/// The spelling of `Q::PosSat` in `Display`, `FromStr` and serde.
+const POS_SAT_STR: &str = ">max";
+/// The spelling of `Q::NegSat`.
+const NEG_SAT_STR: &str = "<-max";
+/// The spelling of `Q::PosInf`.
+const POS_INF_STR: &str = "inf";
+/// The spelling of `Q::NegInf`.
+const NEG_INF_STR: &str = "-inf";
+/// The spelling of `Q::Nan`.
+const NAN_STR: &str = "nan";
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::fmt::Display for crate::ext::Q {
+    /// `"num/den"` for a number, and the fixed spelling above for each special.
+    ///
+    /// Every output round-trips through [`FromStr`](core::str::FromStr).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            crate::ext::Q::Number(x) => write!(f, "{}", x),
+            crate::ext::Q::PosSat => f.write_str(POS_SAT_STR),
+            crate::ext::Q::NegSat => f.write_str(NEG_SAT_STR),
+            crate::ext::Q::PosInf => f.write_str(POS_INF_STR),
+            crate::ext::Q::NegInf => f.write_str(NEG_INF_STR),
+            crate::ext::Q::Nan => f.write_str(NAN_STR),
+        }
+    }
+}
+
+/// Why a string could not be parsed as a [`Q`](crate::ext::Q).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ParseQError {
+    /// The input matched no special spelling and was not of the form
+    /// `int` or `int/int`.
+    Malformed,
+    /// A numeral did not fit an `i64`.
+    IntOverflow,
+    /// The denominator was zero.
+    ///
+    /// Rejected rather than mapped to a special. `Q::new(1, 0)` is `PosInf`
+    /// because *a computation* divided by zero and the result has to be some
+    /// value; but `"1/0"` in an input stream is a malformed numeral, and
+    /// silently accepting it would hide the typo that produced it. `Display`
+    /// never emits a zero denominator, so rejecting it costs no round-trip.
+    ZeroDenominator,
+    /// The pair does not reduce to a value inside the width budget.
+    OutOfBudget,
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::fmt::Display for ParseQError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            ParseQError::Malformed => "the-q: not a rational or a recognised special",
+            ParseQError::IntOverflow => "the-q: numeral does not fit an i64",
+            ParseQError::ZeroDenominator => "the-q: denominator is zero",
+            ParseQError::OutOfBudget => "the-q: value is outside the width budget",
+        })
+    }
+}
+
+impl std::error::Error for ParseQError {}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::str::FromStr for crate::ext::Q {
+    type Err = ParseQError;
+
+    /// Parses every spelling [`Display`](core::fmt::Display) produces, so the
+    /// round-trip is total over all six states.
+    ///
+    /// The specials are matched **case-insensitively**, following
+    /// `f64::from_str` — IEEE 754 is this type's reference model, and accepting
+    /// `"NaN"` alongside `"nan"` costs nothing. Surrounding whitespace is
+    /// **rejected**, following `i64::from_str`: a parser that silently trims is
+    /// a parser that silently accepts `"1 / 2"` in a data file.
+    ///
+    /// A bare integer (`"5"`) is accepted as well as a ratio (`"5/1"`), because
+    /// it is unambiguous and it is what a human writes.
+    fn from_str(s: &str) -> Result<Self, ParseQError> {
+        use crate::ext::Q;
+
+        if s.eq_ignore_ascii_case(NAN_STR) {
+            return Ok(Q::Nan);
+        }
+        if s.eq_ignore_ascii_case(POS_INF_STR) {
+            return Ok(Q::PosInf);
+        }
+        if s.eq_ignore_ascii_case(NEG_INF_STR) {
+            return Ok(Q::NegInf);
+        }
+        // The saturation spellings contain no letters, so the case-insensitive
+        // comparison is only for uniformity of treatment.
+        if s.eq_ignore_ascii_case(POS_SAT_STR) {
+            return Ok(Q::PosSat);
+        }
+        if s.eq_ignore_ascii_case(NEG_SAT_STR) {
+            return Ok(Q::NegSat);
+        }
+
+        let (num_str, den_str) = match s.split_once('/') {
+            Some((n, d)) => (n, d),
+            None => (s, "1"),
+        };
+        // `split_once` on `"//"` yields `("", "/")`, and on `"1/2/3"` yields
+        // `("1", "2/3")`; both fail here, which is the intent.
+        let num: i64 = parse_i64(num_str)?;
+        let den: i64 = parse_i64(den_str)?;
+        if den == 0 {
+            return Err(ParseQError::ZeroDenominator);
+        }
+        match crate::types::Rat::new(num, den) {
+            Some(x) => Ok(Q::Number(x)),
+            None => Err(ParseQError::OutOfBudget),
+        }
+    }
+}
+
+/// `i64::from_str`, with the overflow case distinguished from the malformed one.
+///
+/// `i64::from_str` rejects a leading `+` on no version this crate supports, so
+/// the two error kinds are told apart by re-parsing as `i128`: anything that
+/// parses there and not here overflowed.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+fn parse_i64(s: &str) -> Result<i64, ParseQError> {
+    match s.parse::<i64>() {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            if s.parse::<i128>().is_ok() {
+                Err(ParseQError::IntOverflow)
+            } else {
+                Err(ParseQError::Malformed)
+            }
+        }
+    }
+}
+
+/// Serialise a number as the `(num, den)` pair and a special as its string.
+///
+/// This is the untagged shape from issue #26 §8, and it carries that section's
+/// caveat: **it works only in self-describing formats.** The deserialiser has to
+/// ask the format what kind of value comes next, so `bincode` and other
+/// non-self-describing codecs will fail at runtime rather than at compile time.
+/// #26 §12 leaves the "is a wire break acceptable?" question open; if
+/// non-self-describing formats must keep working, this needs to become an
+/// externally tagged representation, which breaks the existing `Rat` wire format.
+///
+/// `Rat`'s own serde impl is untouched by this — a bare `Rat` still round-trips
+/// exactly as it did.
+#[cfg(feature = "serde")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl serde::Serialize for crate::ext::Q {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            crate::ext::Q::Number(x) => x.serialize(s),
+            crate::ext::Q::PosSat => s.serialize_str(POS_SAT_STR),
+            crate::ext::Q::NegSat => s.serialize_str(NEG_SAT_STR),
+            crate::ext::Q::PosInf => s.serialize_str(POS_INF_STR),
+            crate::ext::Q::NegInf => s.serialize_str(NEG_INF_STR),
+            crate::ext::Q::Nan => s.serialize_str(NAN_STR),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl<'de> serde::Deserialize<'de> for crate::ext::Q {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = crate::ext::Q;
+
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(
+                    "a [num, den] pair or one of \"nan\", \"inf\", \"-inf\", \">max\", \"<-max\"",
+                )
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                use crate::ext::Q;
+                // Exact match, not the case-insensitive `FromStr` spelling: a
+                // wire format is machine-written, so a case variant means an
+                // encoder disagreed with this one and should be caught, not
+                // absorbed.
+                match v {
+                    NAN_STR => Ok(Q::Nan),
+                    POS_INF_STR => Ok(Q::PosInf),
+                    NEG_INF_STR => Ok(Q::NegInf),
+                    POS_SAT_STR => Ok(Q::PosSat),
+                    NEG_SAT_STR => Ok(Q::NegSat),
+                    _ => Err(E::custom("the-q: unrecognised special-value string")),
+                }
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+                let num: i64 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("the-q: missing numerator"))?;
+                let den: i64 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("the-q: missing denominator"))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::custom("the-q: expected exactly two elements"));
+                }
+                // Re-canonicalises through `Rat::new`, exactly as `Rat`'s own
+                // deserialiser does, so `[2, 4]` is accepted as `1/2`. A payload
+                // that cannot be canonicalised is an error rather than a
+                // saturation: on the wire, an unrepresentable pair means the
+                // producer and this type disagree, which is worth surfacing.
+                crate::types::Rat::new(num, den)
+                    .map(crate::ext::Q::Number)
+                    .ok_or_else(|| {
+                        A::Error::custom("the-q: (num, den) pair is not a representable rational")
+                    })
+            }
+        }
+
+        // `deserialize_any` is what confines this to self-describing formats.
+        d.deserialize_any(V)
+    }
+}

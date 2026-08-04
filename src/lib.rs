@@ -90,11 +90,13 @@ pub mod saturation;
 pub mod q;
 
 pub mod convert;
+pub mod ext;
 pub mod interval;
 pub mod laws;
 pub mod lipschitz;
 pub mod nary;
 
-pub use convert::{from_f64_dir, to_f64};
+pub use convert::{from_f64_dir, to_f64, ParseQError};
+pub use ext::{Sign, Q};
 pub use interval::QI;
 pub use types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
