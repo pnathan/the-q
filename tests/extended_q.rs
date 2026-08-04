@@ -1859,3 +1859,263 @@ fn default_is_zero() {
     assert_eq!(Q::default(), Q::zero());
     assert!(Q::default().is_zero());
 }
+
+// ===========================================================================
+// The §2 soundness obligation, checked denotationally
+//
+// Everything above checks the propagation tables against a table written out by
+// hand. That catches transcription slips but not a wrong *derivation*: if I
+// reasoned incorrectly about a cell, both the implementation and the expected
+// table would be wrong together.
+//
+// This section checks the obligation the tables are supposed to satisfy, which
+// is independent of both:
+//
+//     { x (+) y : x in [[a]], y in [[b]] }  subset-of  [[op(a, b)]]
+//
+// Concrete members are drawn from each operand's denotation, the true result is
+// computed with arbitrary precision, and membership in the result's denotation
+// is checked. A cell that is unsound — one claiming a value it does not
+// contain — fails here even if the hand-written table agrees with the code.
+// ===========================================================================
+
+/// An extended rational: a value of `ℚ ∪ {±∞}`.
+///
+/// The denotations in §2 are over the reals, but every endpoint is rational and
+/// every denotation is an interval, so membership over `ℚ` is equivalent for
+/// this purpose — and `ℚ` is what an exact oracle can actually represent.
+#[derive(Clone, Debug, PartialEq)]
+enum Xr {
+    Fin(Rational),
+    PosInfinity,
+    NegInfinity,
+}
+
+fn max_mag_q() -> Rational {
+    Rational::from_signeds(MAX_MAG as i128, 1i128)
+}
+
+/// Is `v` a member of the denotation of `q`?
+fn denotes(q: Q, v: &Xr) -> bool {
+    match (q, v) {
+        (Q::Nan, _) => true, // denotes everything, so always sound
+        (Q::Number(x), Xr::Fin(r)) => rat(x) == *r,
+        (Q::Number(_), _) => false,
+        // Reals only, open at MAX_MAG — never an infinity.
+        (Q::PosSat, Xr::Fin(r)) => *r > max_mag_q(),
+        (Q::PosSat, _) => false,
+        (Q::NegSat, Xr::Fin(r)) => *r < -max_mag_q(),
+        (Q::NegSat, _) => false,
+        (Q::PosInf, Xr::PosInfinity) => true,
+        (Q::PosInf, _) => false,
+        (Q::NegInf, Xr::NegInfinity) => true,
+        (Q::NegInf, _) => false,
+    }
+}
+
+/// Members drawn from a state's denotation. `None` for `Nan`, which denotes
+/// everything and is therefore trivially sound — sampling it proves nothing.
+fn members(q: Q) -> Vec<Xr> {
+    let m = max_mag_q();
+    let half = Rational::from_signeds(1i128, 2i128);
+    match q {
+        Q::Number(x) => vec![Xr::Fin(rat(x))],
+        // Just above the open endpoint, a non-integer just above it, and far
+        // above it — the first two are what catch an off-by-one at MAX_MAG.
+        Q::PosSat => vec![
+            Xr::Fin(m.clone() + Rational::from_signeds(1i128, 1i128)),
+            Xr::Fin(m.clone() + half.clone()),
+            Xr::Fin(m.clone() * Rational::from_signeds(1000i128, 1i128)),
+        ],
+        Q::NegSat => vec![
+            Xr::Fin(-(m.clone() + Rational::from_signeds(1i128, 1i128))),
+            Xr::Fin(-(m.clone() + half)),
+            Xr::Fin(-(m * Rational::from_signeds(1000i128, 1i128))),
+        ],
+        Q::PosInf => vec![Xr::PosInfinity],
+        Q::NegInf => vec![Xr::NegInfinity],
+        Q::Nan => vec![],
+    }
+}
+
+/// Exact extended-rational arithmetic. `None` where the operation is genuinely
+/// undefined (`∞ − ∞`, `0 · ∞`, `∞ / ∞`, `x / 0`) — there is no image point, so
+/// the obligation does not constrain those cells and the design's IEEE
+/// conventions govern them instead. Those are pinned by the table tests above.
+fn xr_add(a: &Xr, b: &Xr) -> Option<Xr> {
+    match (a, b) {
+        (Xr::Fin(x), Xr::Fin(y)) => Some(Xr::Fin(x.clone() + y.clone())),
+        (Xr::PosInfinity, Xr::NegInfinity) | (Xr::NegInfinity, Xr::PosInfinity) => None,
+        (Xr::PosInfinity, _) | (_, Xr::PosInfinity) => Some(Xr::PosInfinity),
+        (Xr::NegInfinity, _) | (_, Xr::NegInfinity) => Some(Xr::NegInfinity),
+    }
+}
+
+fn xr_mul(a: &Xr, b: &Xr) -> Option<Xr> {
+    let z = oracle_zero();
+    match (a, b) {
+        (Xr::Fin(x), Xr::Fin(y)) => Some(Xr::Fin(x.clone() * y.clone())),
+        (Xr::Fin(x), inf) | (inf, Xr::Fin(x)) => {
+            if *x == z {
+                None // 0 * inf is indeterminate
+            } else {
+                let pos = (*x > z) == (*inf == Xr::PosInfinity);
+                Some(if pos {
+                    Xr::PosInfinity
+                } else {
+                    Xr::NegInfinity
+                })
+            }
+        }
+        (p, q2) => {
+            let pos = (*p == Xr::PosInfinity) == (*q2 == Xr::PosInfinity);
+            Some(if pos {
+                Xr::PosInfinity
+            } else {
+                Xr::NegInfinity
+            })
+        }
+    }
+}
+
+fn xr_div(a: &Xr, b: &Xr) -> Option<Xr> {
+    let z = oracle_zero();
+    match (a, b) {
+        (Xr::Fin(x), Xr::Fin(y)) => {
+            if *y == z {
+                None // x/0 is a convention, not a limit
+            } else {
+                Some(Xr::Fin(x.clone() / y.clone()))
+            }
+        }
+        // finite / infinite is exactly zero
+        (Xr::Fin(_), _) => Some(Xr::Fin(z)),
+        // infinite / finite
+        (inf, Xr::Fin(y)) => {
+            if *y == z {
+                None
+            } else {
+                let pos = (*y > z) == (*inf == Xr::PosInfinity);
+                Some(if pos {
+                    Xr::PosInfinity
+                } else {
+                    Xr::NegInfinity
+                })
+            }
+        }
+        _ => None, // inf / inf
+    }
+}
+
+/// The states to check soundness over, with several `Number` payloads chosen to
+/// straddle every boundary the tables branch on (zero, the unit boundary, and
+/// the budget edge).
+fn soundness_states() -> Vec<Q> {
+    let mut v = vec![
+        Q::Number(Rat::new(0, 1).unwrap()),
+        Q::Number(Rat::new(1, 1).unwrap()),
+        Q::Number(Rat::new(-1, 1).unwrap()),
+        Q::Number(Rat::new(1, 2).unwrap()),
+        Q::Number(Rat::new(-1, 2).unwrap()),
+        Q::Number(Rat::new(2, 1).unwrap()),
+        Q::Number(Rat::new(-2, 1).unwrap()),
+        Q::Number(Rat::new(MAX_MAG, 1).unwrap()),
+        Q::Number(Rat::new(-MAX_MAG, 1).unwrap()),
+        Q::Number(Rat::new(1, MAX_MAG).unwrap()),
+    ];
+    v.extend_from_slice(&SPECIALS);
+    v
+}
+
+/// Run the obligation for one operation over every state pair and every drawn
+/// member. `exact` is the partial arithmetic; `op` is the implementation.
+fn check_soundness(
+    name: &str,
+    exact: impl Fn(&Xr, &Xr) -> Option<Xr>,
+    op: impl Fn(Q, Q) -> Q,
+) -> u32 {
+    let mut checked = 0u32;
+    for a in soundness_states() {
+        for b in soundness_states() {
+            let got = op(a, b);
+            // `Number x Number` is governed by R1/R2/R3, not by exact-set
+            // soundness: the result rounds, so its singleton denotation need
+            // not contain the true value. §2's scoping note says so explicitly.
+            // That regime is checked against the oracle elsewhere.
+            let both_numbers = a.is_number() && b.is_number();
+            for va in members(a) {
+                for vb in members(b) {
+                    let Some(truth) = exact(&va, &vb) else {
+                        continue; // genuinely undefined: no image point
+                    };
+                    if both_numbers && got.is_number() {
+                        continue; // the rounded regime
+                    }
+                    checked += 1;
+                    assert!(
+                        denotes(got, &truth),
+                        "{name} UNSOUND at ({a}, {b}): true result {truth:?} \
+                         from ({va:?}, {vb:?}) is not in the denotation of {got}"
+                    );
+                }
+            }
+        }
+    }
+    checked
+}
+
+#[test]
+fn addition_satisfies_the_soundness_obligation() {
+    let n = check_soundness("add", xr_add, Q::add);
+    assert!(n > 200, "only {n} membership checks; coverage too thin");
+}
+
+#[test]
+fn multiplication_satisfies_the_soundness_obligation() {
+    let n = check_soundness("mul", xr_mul, Q::mul);
+    assert!(n > 200, "only {n} membership checks; coverage too thin");
+}
+
+#[test]
+fn division_satisfies_the_soundness_obligation() {
+    let n = check_soundness("div", xr_div, Q::div);
+    assert!(n > 200, "only {n} membership checks; coverage too thin");
+}
+
+#[test]
+fn subtraction_satisfies_the_soundness_obligation() {
+    let n = check_soundness(
+        "sub",
+        |a, b| {
+            let nb = match b {
+                Xr::Fin(y) => Xr::Fin(-y.clone()),
+                Xr::PosInfinity => Xr::NegInfinity,
+                Xr::NegInfinity => Xr::PosInfinity,
+            };
+            xr_add(a, &nb)
+        },
+        Q::sub,
+    );
+    assert!(n > 200, "only {n} membership checks; coverage too thin");
+}
+
+#[test]
+fn the_soundness_harness_would_catch_an_unsound_cell() {
+    // Guard on the harness. `Number(-1) + PosSat` denotes (MAX_MAG - 1, +inf),
+    // which reaches below MAX_MAG, so answering PosSat there would be unsound —
+    // and that is exactly the cliff the real implementation declines to take.
+    // Here is the wrong answer, confirmed to be caught.
+    let wrong = |a: Q, b: Q| {
+        if a == Q::Number(Rat::new(-1, 1).unwrap()) && b == Q::PosSat {
+            Q::PosSat // unsound: the image includes representable values
+        } else {
+            Q::add(a, b)
+        }
+    };
+    let caught = std::panic::catch_unwind(|| check_soundness("wrong-add", xr_add, wrong));
+    assert!(
+        caught.is_err(),
+        "the harness accepted a knowingly unsound cell, so it is not checking \
+         soundness"
+    );
+}
