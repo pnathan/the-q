@@ -1,6 +1,6 @@
 //! # `the-q` — verified bounded rational arithmetic
 //!
-//! `Q` is an exact rational number `num / den` held in two `i64` fields, kept in
+//! `Rat` is an exact rational number `num / den` held in two `i64` fields, kept in
 //! canonical form (`den > 0`, `gcd(|num|, den) == 1`) and bounded by a fixed
 //! width budget (`|num| <= 2^62 - 1`, `den <= 2^62 - 1`).
 //!
@@ -10,12 +10,12 @@
 //! intermediate can overflow (see [`crate::round`] and `docs/SPEC.md` §1).
 //!
 //! ```
-//! use the_q::{Dir, Q};
+//! use the_q::{Dir, Rat};
 //!
 //! // Short decimals — the engine's ingestion path — are exact, not approximate.
-//! let reliability = Q::from_decimal(85, 2).unwrap();   // 0.85 == 17/20
-//! let weight = Q::from_decimal(3, 1).unwrap();         // 0.3  == 3/10
-//! let combined = Q::mul(reliability, weight);
+//! let reliability = Rat::from_decimal(85, 2).unwrap();   // 0.85 == 17/20
+//! let weight = Rat::from_decimal(3, 1).unwrap();         // 0.3  == 3/10
+//! let combined = Rat::mul(reliability, weight);
 //! assert_eq!(combined.to_string(), "51/200");
 //!
 //! // The order is a total order: no NaN, so no incomparable pairs.
@@ -24,8 +24,8 @@
 //!
 //! // Directed modes bracket the exact value, which is what the interval layer
 //! // is built on.
-//! let a = Q::new(1, 3).unwrap();
-//! assert!(Q::le(Q::mul_dir(a, a, Dir::Down), Q::mul_dir(a, a, Dir::Up)));
+//! let a = Rat::new(1, 3).unwrap();
+//! assert!(Rat::le(Rat::mul_dir(a, a, Dir::Down), Rat::mul_dir(a, a, Dir::Up)));
 //! ```
 //!
 //! ## Design in one paragraph
@@ -41,7 +41,7 @@
 //!
 //! ## Honesty notes (read these)
 //!
-//! * With rounding, [`Q::add`] and [`Q::mul`] are **commutative** but **not
+//! * With rounding, [`Rat::add`] and [`Rat::mul`] are **commutative** but **not
 //!   associative in general**. Associativity and distributivity hold on the
 //!   *exact path* — i.e. whenever no intermediate rounds. See `README.md`.
 //! * The composed operation ("exact if it fits, else snap to the dyadic grid")
@@ -50,7 +50,7 @@
 //!   counterexample.
 //! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) is placed
 //!   **outside** the R3 contract by choice, not by necessity — some such values
-//!   do have a `Q` within the bound. Those results **saturate**, and the
+//!   do have a `Rat` within the bound. Those results **saturate**, and the
 //!   `checked_*` variants report them as `None`. No engine value comes near
 //!   this ceiling.
 //!
@@ -64,7 +64,7 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::comparison_chain)]
 // Verus's surface language does not accept compound-assignment operators or
-// `RangeInclusive::contains` in exec code, and the inherent `Q::add`/`Q::mul`
+// `RangeInclusive::contains` in exec code, and the inherent `Rat::add`/`Rat::mul`
 // names are deliberate (the operator traits delegate to them and are not
 // callable from verified code).
 #![allow(clippy::assign_op_pattern)]
@@ -97,4 +97,4 @@ pub mod nary;
 
 pub use convert::{from_f64_dir, to_f64};
 pub use interval::QI;
-pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
+pub use types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};

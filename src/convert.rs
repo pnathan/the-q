@@ -10,7 +10,7 @@
 //!   rounding it — is ordinary verified integer arithmetic. The *only* thing
 //!   assumed is that the triple denotes the float.
 //! * [`to_f64`] — display/DTO only. `external_body`. Never feed its output back
-//!   into `Q` arithmetic; that would silently reintroduce every `f64` problem
+//!   into `Rat` arithmetic; that would silently reintroduce every `f64` problem
 //!   this crate exists to remove.
 //!
 //! Both are enumerated in `TRUSTED.md` with their assumed specifications and
@@ -34,7 +34,7 @@ use vstd::prelude::*;
 use crate::model::*;
 #[allow(unused_imports)]
 use crate::round::*;
-use crate::types::{Dir, Q};
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -73,7 +73,7 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
     }
 }
 
-/// Convert an `f64` to a `Q`, rounding in direction `dir`.
+/// Convert an `f64` to a `Rat`, rounding in direction `dir`.
 ///
 /// `None` on NaN, on either infinity, and on `|v| > 2^61` (the specification
 /// explicitly permits restricting the magnitude).
@@ -90,7 +90,7 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
 /// decomposition, and that lives on [`from_parts_dir`], which this is a
 /// two-line composition of. A caller who wants the rounding contract should
 /// read it there and add [`f64_decompose`]'s assumption from `TRUSTED.md`.
-pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
+pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Rat>)
     ensures
         r.is_some() ==> r.unwrap().wf(),
 {
@@ -124,7 +124,7 @@ pub open spec fn parts_den(e: i32) -> int {
     }
 }
 
-/// The verified core of [`from_f64_dir`]: an IEEE-754 decomposition to a `Q`,
+/// The verified core of [`from_f64_dir`]: an IEEE-754 decomposition to a `Rat`,
 /// rounded in direction `dir`.
 ///
 /// **This is where the contract lives.** `from_f64_dir` cannot state one, because
@@ -156,7 +156,7 @@ pub open spec fn parts_den(e: i32) -> int {
 /// therefore re-check the same bounds and return `None`, which costs one
 /// comparison on a path that already branches and makes the function total for
 /// every caller rather than only for the ones Verus can see.
-pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
+pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>)
     requires
         mant <= 9007199254740992u64,
         -1074 <= e <= 971,
@@ -206,7 +206,7 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
             }
             lemma_r2_r3_directed(parts_num(neg, mant, e), parts_den(e), dir);
         }
-        return Some(Q::zero());
+        return Some(Rat::zero());
     }
     proof {
         lemma_pow2_61();
@@ -393,11 +393,11 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
 /// one postcondition covering this branch as well as the two that go through
 /// the rounder.
 ///
-/// Builds the pair directly rather than through `Q::new`. `Q::new` returns an
+/// Builds the pair directly rather than through `Rat::new`. `Rat::new` returns an
 /// `Option` and would need a canonical-form uniqueness argument to recover the
 /// exact representation from `q_is`; `gcd(1, 2^61) == 1` is a one-line
 /// discharge of I1 and there is nothing left to reduce.
-pub fn tiny(neg: bool, dir: Dir) -> (r: Q)
+pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
     ensures
         r.wf(),
         r == crate::round::subgrid_endpoint(!neg, dir),
@@ -412,36 +412,36 @@ pub fn tiny(neg: bool, dir: Dir) -> (r: Q)
         crate::gcd::lemma_gcd_le(1nat, 2305843009213693952nat);
     }
     match dir {
-        Dir::Nearest => Q::zero(),
+        Dir::Nearest => Rat::zero(),
         Dir::Down => {
             if neg {
-                Q { num: -1, den: eps_den }
+                Rat { num: -1, den: eps_den }
             } else {
-                Q::zero()
+                Rat::zero()
             }
         },
         Dir::Up => {
             if neg {
-                Q::zero()
+                Rat::zero()
             } else {
-                Q { num: 1, den: eps_den }
+                Rat { num: 1, den: eps_den }
             }
         },
     }
 }
 
-/// Convert a `Q` to the nearest `f64`.
+/// Convert a `Rat` to the nearest `f64`.
 ///
 /// **TRUSTED** (`external_body`), and **display/DTO only**. Proving float
 /// rounding inside Verus is not worth the effort for a function whose entire
 /// job is to hand a number to a JSON encoder. Never feed the result back into
-/// `Q` arithmetic.
+/// `Rat` arithmetic.
 ///
 /// Accuracy: three roundings (numerator, denominator, quotient), so the result
 /// is within about `3·2^-53` relative of the true value. The differential test
 /// suite pins this at 4 ulp against `malachite-q`.
 #[verifier::external_body]
-pub fn to_f64(q: Q) -> f64 {
+pub fn to_f64(q: Rat) -> f64 {
     (q.num as f64) / (q.den as f64)
 }
 
@@ -452,7 +452,7 @@ pub fn to_f64(q: Q) -> f64 {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::fmt::Display for Q {
+impl core::fmt::Display for Rat {
     /// `"num/den"`, always in canonical form — so the string is a faithful,
     /// unambiguous rendering of the value.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -463,12 +463,12 @@ impl core::fmt::Display for Q {
 /// Serialise as the `(num, den)` integer pair.
 ///
 /// This round-trips **exactly**, which no `f64` encoding does. The
-/// deserialiser re-canonicalises through [`Q::new`], so a hand-written or
-/// corrupted payload cannot produce a `Q` that violates the type invariant —
+/// deserialiser re-canonicalises through [`Rat::new`], so a hand-written or
+/// corrupted payload cannot produce a `Rat` that violates the type invariant —
 /// it produces an error instead.
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl serde::Serialize for Q {
+impl serde::Serialize for Rat {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
         let mut t = s.serialize_tuple(2)?;
@@ -480,11 +480,11 @@ impl serde::Serialize for Q {
 
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl<'de> serde::Deserialize<'de> for Q {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Q, D::Error> {
+impl<'de> serde::Deserialize<'de> for Rat {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Rat, D::Error> {
         use serde::de::Error;
         let (num, den) = <(i64, i64) as serde::Deserialize>::deserialize(d)?;
-        Q::new(num, den).ok_or_else(|| {
+        Rat::new(num, den).ok_or_else(|| {
             D::Error::custom("the-q: (num, den) pair is not a representable rational")
         })
     }

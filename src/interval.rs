@@ -24,7 +24,7 @@ use crate::model::*;
 use crate::q::*;
 #[allow(unused_imports)]
 use crate::types::MAX_MAG;
-use crate::types::{Dir, Q};
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -32,9 +32,9 @@ verus! {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct QI {
     /// The lower endpoint. Always computed with [`Dir::Down`].
-    pub lo: Q,
+    pub lo: Rat,
     /// The upper endpoint. Always computed with [`Dir::Up`].
-    pub hi: Q,
+    pub hi: Rat,
 }
 
 impl QI {
@@ -47,7 +47,7 @@ impl QI {
     }
 
     /// The degenerate interval `[a, a]`.
-    pub fn exact(a: Q) -> (r: QI)
+    pub fn exact(a: Rat) -> (r: QI)
         requires
             a.wf(),
         ensures
@@ -59,7 +59,7 @@ impl QI {
     }
 
     /// `[lo, hi]`, requiring the endpoints to be ordered.
-    pub fn new(lo: Q, hi: Q) -> (r: QI)
+    pub fn new(lo: Rat, hi: Rat) -> (r: QI)
         requires
             lo.wf(),
             hi.wf(),
@@ -73,19 +73,19 @@ impl QI {
     }
 
     /// Whether `x` lies inside the interval.
-    pub fn contains(&self, x: Q) -> (r: bool)
+    pub fn contains(&self, x: Rat) -> (r: bool)
         requires
             self.wf(),
             x.wf(),
         ensures
             r <==> (q_le(self.lo, x) && q_le(x, self.hi)),
     {
-        Q::le(self.lo, x) && Q::le(x, self.hi)
+        Rat::le(self.lo, x) && Rat::le(x, self.hi)
     }
 
     /// `hi - lo`: how much precision the computation actually lost. Zero means
     /// the whole computation stayed on the exact path.
-    pub fn width(&self) -> (r: Q)
+    pub fn width(&self) -> (r: Rat)
         requires
             self.wf(),
         ensures
@@ -96,7 +96,7 @@ impl QI {
                 prod_d(self.hi, self.lo),
             ),
     {
-        let r = Q::sub_dir(self.hi, self.lo, Dir::Up);
+        let r = Rat::sub_dir(self.hi, self.lo, Dir::Up);
         proof {
             crate::q::lemma_op_widths(self.hi, self.lo);
             if !crate::round::saturated(sub_n(self.hi, self.lo), prod_d(self.hi, self.lo)) {
@@ -129,8 +129,8 @@ impl QI {
                 prod_d(a.hi, b.hi),
             ),
     {
-        let lo = Q::add_dir(a.lo, b.lo, Dir::Down);
-        let hi = Q::add_dir(a.hi, b.hi, Dir::Up);
+        let lo = Rat::add_dir(a.lo, b.lo, Dir::Down);
+        let hi = Rat::add_dir(a.hi, b.hi, Dir::Up);
         proof {
             crate::q::lemma_op_widths(a.lo, b.lo);
             crate::q::lemma_op_widths(a.hi, b.hi);
@@ -185,8 +185,8 @@ impl QI {
                 prod_d(a.hi, b.lo),
             ),
     {
-        let lo = Q::sub_dir(a.lo, b.hi, Dir::Down);
-        let hi = Q::sub_dir(a.hi, b.lo, Dir::Up);
+        let lo = Rat::sub_dir(a.lo, b.hi, Dir::Down);
+        let hi = Rat::sub_dir(a.hi, b.lo, Dir::Up);
         proof {
             crate::q::lemma_op_widths(a.lo, b.hi);
             crate::q::lemma_op_widths(a.hi, b.lo);
@@ -271,20 +271,20 @@ impl QI {
         ensures
             r.wf(),
     {
-        let ll_lo = Q::mul_dir(a.lo, b.lo, Dir::Down);
-        let lh_lo = Q::mul_dir(a.lo, b.hi, Dir::Down);
-        let hl_lo = Q::mul_dir(a.hi, b.lo, Dir::Down);
-        let hh_lo = Q::mul_dir(a.hi, b.hi, Dir::Down);
-        let ll_hi = Q::mul_dir(a.lo, b.lo, Dir::Up);
-        let lh_hi = Q::mul_dir(a.lo, b.hi, Dir::Up);
-        let hl_hi = Q::mul_dir(a.hi, b.lo, Dir::Up);
-        let hh_hi = Q::mul_dir(a.hi, b.hi, Dir::Up);
-        let lo_m1 = Q::min(ll_lo, lh_lo);
-        let lo_m2 = Q::min(hl_lo, hh_lo);
-        let lo = Q::min(lo_m1, lo_m2);
-        let hi_m1 = Q::max(ll_hi, lh_hi);
-        let hi_m2 = Q::max(hl_hi, hh_hi);
-        let hi = Q::max(hi_m1, hi_m2);
+        let ll_lo = Rat::mul_dir(a.lo, b.lo, Dir::Down);
+        let lh_lo = Rat::mul_dir(a.lo, b.hi, Dir::Down);
+        let hl_lo = Rat::mul_dir(a.hi, b.lo, Dir::Down);
+        let hh_lo = Rat::mul_dir(a.hi, b.hi, Dir::Down);
+        let ll_hi = Rat::mul_dir(a.lo, b.lo, Dir::Up);
+        let lh_hi = Rat::mul_dir(a.lo, b.hi, Dir::Up);
+        let hl_hi = Rat::mul_dir(a.hi, b.lo, Dir::Up);
+        let hh_hi = Rat::mul_dir(a.hi, b.hi, Dir::Up);
+        let lo_m1 = Rat::min(ll_lo, lh_lo);
+        let lo_m2 = Rat::min(hl_lo, hh_lo);
+        let lo = Rat::min(lo_m1, lo_m2);
+        let hi_m1 = Rat::max(ll_hi, lh_hi);
+        let hi_m2 = Rat::max(hl_hi, hh_hi);
+        let hi = Rat::max(hi_m1, hi_m2);
         proof {
             crate::q::lemma_op_widths(a.lo, b.lo);
             lemma_le_trans(lo, lo_m1, ll_lo);
@@ -316,8 +316,8 @@ impl QI {
             q_le(a.hi, r.hi),
             q_le(b.hi, r.hi),
     {
-        let lo = Q::min(a.lo, b.lo);
-        let hi = Q::max(a.hi, b.hi);
+        let lo = Rat::min(a.lo, b.lo);
+        let hi = Rat::max(a.hi, b.hi);
         proof {
             crate::q::lemma_le_trans(lo, a.lo, a.hi);
             crate::q::lemma_le_trans(lo, a.hi, hi);
@@ -331,7 +331,7 @@ impl QI {
 ///
 /// This is a direct corollary of R2 — the point of having directed modes at
 /// all.
-pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Q, y: Q)
+pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -366,7 +366,7 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Q, y: Q)
 /// `a.lo - b.hi` is `a.lo + (-b.hi)`, so this is the same corollary of R2 as
 /// [`theorem_interval_add_contains`], applied to `a.lo`/`a.hi` and the
 /// negation of `b.hi`/`b.lo`.
-pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Q, y: Q)
+pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -485,9 +485,9 @@ pub proof fn lemma_add_endpoint_order(
 /// Chains three fraction comparisons across three different denominators:
 /// `rl <= n1/d1 <= n2/d2 <= rh` implies `rl <= rh`.
 ///
-/// This is [`crate::q::lemma_le_trans`] generalised off `Q`: the middle link
+/// This is [`crate::q::lemma_le_trans`] generalised off `Rat`: the middle link
 /// is a raw fraction inequality (as produced by [`lemma_add_endpoint_order`]),
-/// not another well-formed `Q`, so the cancellation has to be redone by hand.
+/// not another well-formed `Rat`, so the cancellation has to be redone by hand.
 pub proof fn lemma_frac_chain_le(
     rln: int,
     rld: int,
@@ -554,7 +554,7 @@ pub proof fn lemma_frac_chain_le(
 /// inputs" to "ordered rounded outputs" regardless of whether either side
 /// saturates.
 ///
-/// The saturated cases lean on I2 alone: every well-formed `Q` lies in
+/// The saturated cases lean on I2 alone: every well-formed `Rat` lies in
 /// `[-MAX_MAG, MAX_MAG]`, so a clamped endpoint is automatically on the right
 /// side of whatever the other endpoint rounds to.
 pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
@@ -572,7 +572,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     let rhi = crate::round::round_frac(n2, d2, Dir::Up);
     crate::round::lemma_round_frac_wf(n1, d1, Dir::Down);
     crate::round::lemma_round_frac_wf(n2, d2, Dir::Up);
-    // I2 alone: every well-formed `Q` lies in `[-MAX_MAG, MAX_MAG]`.
+    // I2 alone: every well-formed `Rat` lies in `[-MAX_MAG, MAX_MAG]`.
     assert(rlo.n() <= max_mag() * rlo.d()) by (nonlinear_arith)
         requires
             abs_int(rlo.n()) <= max_mag(),
@@ -592,8 +592,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
         assert(n1 != 0 && !magnitude_fits(n1, d1));
         if n1 < 0 {
             // `rlo` clamps to `-MAX_MAG`, a lower bound on every well-formed
-            // `Q` — in particular `rhi`.
-            assert(rlo == Q { num: (-(MAX_MAG as int)) as i64, den: 1 });
+            // `Rat` — in particular `rhi`.
+            assert(rlo == Rat { num: (-(MAX_MAG as int)) as i64, den: 1 });
             assert(rlo.n() == 0 - max_mag() && rlo.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
                 requires
@@ -606,7 +606,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
             // `rlo` clamps to `MAX_MAG`. Since `n1/d1 <= n2/d2` and `n1/d1`
             // already exceeds `MAX_MAG`, so does `n2/d2` — `n2` saturates the
             // same way, so `rhi` clamps to the same value.
-            assert(rlo == Q { num: MAX_MAG, den: 1 });
+            assert(rlo == Rat { num: MAX_MAG, den: 1 });
             assert(n2 > max_mag() * d2) by (nonlinear_arith)
                 requires
                     n1 > max_mag() * d1,
@@ -615,7 +615,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
                     d2 > 0,
             ;
             assert(n2 != 0 && !magnitude_fits(n2, d2));
-            assert(rhi == Q { num: MAX_MAG, den: 1 });
+            assert(rhi == Rat { num: MAX_MAG, den: 1 });
             assert(rlo.n() == max_mag() && rlo.d() == 1);
             assert(rhi.n() == max_mag() && rhi.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
@@ -631,8 +631,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
         assert(n2 != 0 && !magnitude_fits(n2, d2));
         if n2 > 0 {
             // `rhi` clamps to `MAX_MAG`, an upper bound on every well-formed
-            // `Q` — in particular `rlo`.
-            assert(rhi == Q { num: MAX_MAG, den: 1 });
+            // `Rat` — in particular `rlo`.
+            assert(rhi == Rat { num: MAX_MAG, den: 1 });
             assert(rhi.n() == max_mag() && rhi.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
                 requires
@@ -810,7 +810,7 @@ pub proof fn lemma_frac_max4_ge(n1: int, d1: int, n2: int, d2: int, n3: int, d3:
 /// of `c`. This is the one-variable fact underlying the corner rule: `x*y` is
 /// affine in `x` for fixed `y` (and vice versa), so it is extremal at an
 /// endpoint of whichever variable is held free.
-pub proof fn lemma_mul_scale_order(lo: Q, hi: Q, x: Q, c: Q)
+pub proof fn lemma_mul_scale_order(lo: Rat, hi: Rat, x: Rat, c: Rat)
     requires
         lo.wf(),
         hi.wf(),
@@ -880,7 +880,7 @@ pub proof fn lemma_mul_scale_order(lo: Q, hi: Q, x: Q, c: Q)
 /// sign of `y`, then the `b`-endpoint by the sign of that `a`-endpoint — two
 /// applications of [`lemma_mul_scale_order`] chained through
 /// [`lemma_frac_le_trans`].
-pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Q, y: Q)
+pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -989,7 +989,7 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Q, y: Q)
 
 /// One of the four corners is an upper bound on the exact product `x*y`. The
 /// mirror image of [`lemma_mul_corner_lower`].
-pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Q, y: Q)
+pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -1104,7 +1104,7 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Q, y: Q)
 /// [`frac_max`] of all four corners are themselves bounds on every corner
 /// (`lemma_frac_min4_le` / `lemma_frac_max4_ge`), the one handed back is
 /// enough to chain through to the global min/max.
-pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Q, y: Q)
+pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),

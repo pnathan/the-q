@@ -1,4 +1,4 @@
-//! The public `Q` API: constructors, arithmetic, comparison, predicates.
+//! The public `Rat` API: constructors, arithmetic, comparison, predicates.
 //!
 //! Every operation here computes its exact result in `i128` and hands it to
 //! [`crate::round::round_frac_exec`], which canonicalises and — only if the
@@ -32,7 +32,7 @@ use crate::gcd::*;
 use crate::model::*;
 #[allow(unused_imports)]
 use crate::round::*;
-use crate::types::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
+use crate::types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
 
 verus! {
 
@@ -41,28 +41,28 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// The exact numerator of `a + b`.
-pub open spec fn add_n(a: Q, b: Q) -> int {
+pub open spec fn add_n(a: Rat, b: Rat) -> int {
     a.n() * b.d() + b.n() * a.d()
 }
 
 /// The exact numerator of `a - b`.
-pub open spec fn sub_n(a: Q, b: Q) -> int {
+pub open spec fn sub_n(a: Rat, b: Rat) -> int {
     a.n() * b.d() - b.n() * a.d()
 }
 
 /// The exact numerator of `a * b`.
-pub open spec fn mul_n(a: Q, b: Q) -> int {
+pub open spec fn mul_n(a: Rat, b: Rat) -> int {
     a.n() * b.n()
 }
 
 /// The common denominator of `a + b`, `a - b` and `a * b`.
-pub open spec fn prod_d(a: Q, b: Q) -> int {
+pub open spec fn prod_d(a: Rat, b: Rat) -> int {
     a.d() * b.d()
 }
 
 /// The exact numerator of `a / b`, sign-normalised so the denominator is
 /// positive.
-pub open spec fn div_n(a: Q, b: Q) -> int {
+pub open spec fn div_n(a: Rat, b: Rat) -> int {
     if b.n() > 0 {
         a.n() * b.d()
     } else {
@@ -71,7 +71,7 @@ pub open spec fn div_n(a: Q, b: Q) -> int {
 }
 
 /// The exact denominator of `a / b`, always positive.
-pub open spec fn div_d(a: Q, b: Q) -> int {
+pub open spec fn div_d(a: Rat, b: Rat) -> int {
     if b.n() > 0 {
         a.d() * b.n()
     } else {
@@ -81,7 +81,7 @@ pub open spec fn div_d(a: Q, b: Q) -> int {
 
 /// `num` with the sign of a negative `den` folded onto it.
 ///
-/// `round_frac` takes a positive denominator, so [`Q::new_rounded`] normalises
+/// `round_frac` takes a positive denominator, so [`Rat::new_rounded`] normalises
 /// the sign before rounding. The pair it actually rounds is therefore
 /// `(signed_den_num(num, den), abs_int(den))`, and that is the pair its
 /// postconditions are stated over — the same *value* as `num / den`, but
@@ -99,9 +99,9 @@ pub open spec fn signed_den_num(num: int, den: int) -> int {
 // Constructors
 // ---------------------------------------------------------------------------
 
-impl Q {
+impl Rat {
     /// `0`.
-    pub fn zero() -> (r: Q)
+    pub fn zero() -> (r: Rat)
         ensures
             r.wf(),
             r.n() == 0,
@@ -111,11 +111,11 @@ impl Q {
             crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
-        Q { num: 0, den: 1 }
+        Rat { num: 0, den: 1 }
     }
 
     /// `1`.
-    pub fn one() -> (r: Q)
+    pub fn one() -> (r: Rat)
         ensures
             r.wf(),
             r.n() == 1,
@@ -125,24 +125,24 @@ impl Q {
             crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
-        Q { num: 1, den: 1 }
+        Rat { num: 1, den: 1 }
     }
 
     /// `-1`.
-    pub fn neg_one() -> (r: Q)
+    pub fn neg_one() -> (r: Rat)
         ensures
             r.wf(),
             r.n() == -1,
             r.d() == 1,
     {
-        Q::one().neg()
+        Rat::one().neg()
     }
 
     /// The integer `i` as a rational.
     ///
     /// `None` when `|i| > MAX_MAG` — in particular for `i64::MIN`, whose
     /// absolute value is not an `i64` at all.
-    pub fn from_int(i: i64) -> (r: Option<Q>)
+    pub fn from_int(i: i64) -> (r: Option<Rat>)
         ensures
             r.is_some() ==> {
                 &&& r.unwrap().wf()
@@ -158,7 +158,7 @@ impl Q {
                 crate::round::lemma_gcd_one();
                 lemma_max_mag_pow2();
             }
-            Some(Q { num: i, den: 1 })
+            Some(Rat { num: i, den: 1 })
         }
     }
 
@@ -168,9 +168,9 @@ impl Q {
     /// budget (which can only happen for `|num|` or `|den|` above `2^62 - 1`,
     /// i.e. for the top bit of the `i64` range). This is a deliberate departure
     /// from a literal reading of the specification, which claims every `i64`
-    /// pair fits after reduction — `Q::new(i64::MAX, 1)` shows it does not.
-    /// [`Q::new_rounded`] is the total variant that rounds instead of failing.
-    pub fn new(num: i64, den: i64) -> (r: Option<Q>)
+    /// pair fits after reduction — `Rat::new(i64::MAX, 1)` shows it does not.
+    /// [`Rat::new_rounded`] is the total variant that rounds instead of failing.
+    pub fn new(num: i64, den: i64) -> (r: Option<Rat>)
         ensures
             den == 0 ==> r.is_none(),
             r.is_some() ==> {
@@ -248,7 +248,7 @@ impl Q {
                 // for the general phenomenon).
                 assert(rn == 0 ==> rd == 1);
             }
-            Some(Q { num: rn as i64, den: rd as i64 })
+            Some(Rat { num: rn as i64, den: rd as i64 })
         } else {
             proof {
                 // Completeness, discharged contrapositively and *only on this
@@ -276,7 +276,7 @@ impl Q {
     /// `den` rounds the same value in the same direction rather than the
     /// mirrored one. `signed_den_num` carries that convention, and the
     /// postconditions below are stated over it.
-    pub fn new_rounded(num: i64, den: i64, dir: Dir) -> (r: Option<Q>)
+    pub fn new_rounded(num: i64, den: i64, dir: Dir) -> (r: Option<Rat>)
         ensures
             r.is_none() <==> den == 0,
             r.is_some() ==> r.unwrap().wf(),
@@ -346,7 +346,7 @@ impl Q {
     ///
     /// `None` when `dec_places > 18` (the scale factor would leave the budget)
     /// or `|mantissa| > MAX_MAG`.
-    pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Q>)
+    pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Rat>)
         ensures
             r.is_some() ==> r.unwrap().wf(),
             dec_places > MAX_DEC_PLACES ==> r.is_none(),
@@ -357,7 +357,7 @@ impl Q {
             // `from_decimal(85, 2)` was pinned to no value at all.
             r.is_some() ==> q_is(r.unwrap(), mantissa as int, pow10(dec_places as nat)),
             // **When it exists.** Both guards are checkable by the caller, and
-            // together they are exactly the failure set: past them, `Q::new`
+            // together they are exactly the failure set: past them, `Rat::new`
             // cannot fail, which is what its new completeness clause buys.
             r.is_some() <==> (dec_places <= MAX_DEC_PLACES && abs_int(mantissa as int)
                 <= max_mag()),
@@ -372,10 +372,10 @@ impl Q {
         proof {
             // `scale` is in `[1, 10^18]` and `max_mag()` is `2^62 - 1`, about
             // `4.6 · 10^18`, so the scale factor is always inside the budget
-            // and `Q::new`'s completeness precondition is met.
+            // and `Rat::new`'s completeness precondition is met.
             lemma_max_mag_pow2();
         }
-        Q::new(mantissa, scale)
+        Rat::new(mantissa, scale)
     }
 }
 
@@ -426,9 +426,9 @@ pub fn pow10_i64(n: u8) -> (r: i64)
 // Arithmetic
 // ---------------------------------------------------------------------------
 
-impl Q {
+impl Rat {
     /// `a + b`, rounded in direction `dir`.
-    pub fn add_dir(a: Q, b: Q, dir: Dir) -> (r: Q)
+    pub fn add_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -460,7 +460,7 @@ impl Q {
     }
 
     /// `a - b`, rounded in direction `dir`.
-    pub fn sub_dir(a: Q, b: Q, dir: Dir) -> (r: Q)
+    pub fn sub_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -492,7 +492,7 @@ impl Q {
     }
 
     /// `a * b`, rounded in direction `dir`.
-    pub fn mul_dir(a: Q, b: Q, dir: Dir) -> (r: Q)
+    pub fn mul_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -528,7 +528,7 @@ impl Q {
     /// Division by zero is a **precondition**, not a runtime error: the caller
     /// discharges `!b.is_zero()` statically, so there is no panic path here at
     /// all.
-    pub fn div_dir(a: Q, b: Q, dir: Dir) -> (r: Q)
+    pub fn div_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -581,7 +581,7 @@ impl Q {
     /// A half grid step, not a whole one, so this achieves `B = 62` — one bit
     /// better than the `B = 61` the directed modes are limited to (see
     /// `round::lemma_r3_error_nearest`).
-    pub fn add(a: Q, b: Q) -> (r: Q)
+    pub fn add(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -595,7 +595,7 @@ impl Q {
                 prod_d(a, b),
             ),
     {
-        let r = Q::add_dir(a, b, Dir::Nearest);
+        let r = Rat::add_dir(a, b, Dir::Nearest);
         proof {
             lemma_op_widths(a, b);
             if !saturated(add_n(a, b), prod_d(a, b)) {
@@ -607,7 +607,7 @@ impl Q {
 
     /// `a - b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
     /// does.
-    pub fn sub(a: Q, b: Q) -> (r: Q)
+    pub fn sub(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -621,7 +621,7 @@ impl Q {
                 prod_d(a, b),
             ),
     {
-        let r = Q::sub_dir(a, b, Dir::Nearest);
+        let r = Rat::sub_dir(a, b, Dir::Nearest);
         proof {
             lemma_op_widths(a, b);
             if !saturated(sub_n(a, b), prod_d(a, b)) {
@@ -633,7 +633,7 @@ impl Q {
 
     /// `a * b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
     /// does.
-    pub fn mul(a: Q, b: Q) -> (r: Q)
+    pub fn mul(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -647,7 +647,7 @@ impl Q {
                 prod_d(a, b),
             ),
     {
-        let r = Q::mul_dir(a, b, Dir::Nearest);
+        let r = Rat::mul_dir(a, b, Dir::Nearest);
         proof {
             lemma_op_widths(a, b);
             if !saturated(mul_n(a, b), prod_d(a, b)) {
@@ -659,7 +659,7 @@ impl Q {
 
     /// `a / b`, round to nearest (ties to even). Requires `!b.is_zero()`.
     /// Achieves `B = 62`, as `add` does.
-    pub fn div(a: Q, b: Q) -> (r: Q)
+    pub fn div(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -674,7 +674,7 @@ impl Q {
                 div_d(a, b),
             ),
     {
-        let r = Q::div_dir(a, b, Dir::Nearest);
+        let r = Rat::div_dir(a, b, Dir::Nearest);
         proof {
             lemma_op_widths(a, b);
             assert(b.n() > 0 ==> a.d() * b.n() > 0) by (nonlinear_arith)
@@ -694,7 +694,7 @@ impl Q {
 
     /// `a + b`, or `None` if the exact sum is too large in magnitude to be
     /// represented at all (`|a + b| > MAX_MAG`).
-    pub fn checked_add(a: Q, b: Q) -> (r: Option<Q>)
+    pub fn checked_add(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
@@ -708,14 +708,14 @@ impl Q {
             crate::model::lemma_pow2_126();
         }
         if magnitude_fits_exec(add_n_exec(a, b), prod_d_exec(a, b)) {
-            Some(Q::add(a, b))
+            Some(Rat::add(a, b))
         } else {
             None
         }
     }
 
     /// `a * b`, or `None` if the exact product is too large in magnitude.
-    pub fn checked_mul(a: Q, b: Q) -> (r: Option<Q>)
+    pub fn checked_mul(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
@@ -729,14 +729,14 @@ impl Q {
             crate::model::lemma_pow2_126();
         }
         if magnitude_fits_exec(mul_n_exec(a, b), prod_d_exec(a, b)) {
-            Some(Q::mul(a, b))
+            Some(Rat::mul(a, b))
         } else {
             None
         }
     }
 
     /// `a - b`, or `None` if the exact difference is too large in magnitude.
-    pub fn checked_sub(a: Q, b: Q) -> (r: Option<Q>)
+    pub fn checked_sub(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
@@ -750,7 +750,7 @@ impl Q {
             crate::model::lemma_pow2_126();
         }
         if magnitude_fits_exec(sub_n_exec(a, b), prod_d_exec(a, b)) {
-            Some(Q::sub(a, b))
+            Some(Rat::sub(a, b))
         } else {
             None
         }
@@ -762,7 +762,7 @@ impl Q {
     /// Division saturates on the same magnitude ceiling as `add`, `sub` and
     /// `mul` — `(MAX_MAG/1) / (1/MAX_MAG)` is well past it — so this closes
     /// the `checked_*` family rather than leaving it asymmetric.
-    pub fn checked_div(a: Q, b: Q) -> (r: Option<Q>)
+    pub fn checked_div(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
@@ -777,14 +777,14 @@ impl Q {
             crate::model::lemma_pow2_126();
         }
         if magnitude_fits_exec(div_n_exec(a, b), div_d_exec(a, b)) {
-            Some(Q::div(a, b))
+            Some(Rat::div(a, b))
         } else {
             None
         }
     }
 
     /// `-a`. Always exact: the budget is symmetric in sign.
-    pub fn neg(self) -> (r: Q)
+    pub fn neg(self) -> (r: Rat)
         requires
             self.wf(),
         ensures
@@ -796,11 +796,11 @@ impl Q {
             lemma_max_mag_pow2();
             assert(gcd_int(-self.n(), self.d()) == gcd_int(self.n(), self.d()));
         }
-        Q { num: 0 - self.num, den: self.den }
+        Rat { num: 0 - self.num, den: self.den }
     }
 
     /// `|a|`. Always exact.
-    pub fn abs(self) -> (r: Q)
+    pub fn abs(self) -> (r: Rat)
         requires
             self.wf(),
         ensures
@@ -817,7 +817,7 @@ impl Q {
 
     /// `1 / a`. Always exact — it swaps numerator and denominator, and I2 is
     /// symmetric between them.
-    pub fn recip(self) -> (r: Q)
+    pub fn recip(self) -> (r: Rat)
         requires
             self.wf(),
             self.n() != 0,
@@ -840,7 +840,7 @@ impl Q {
                         self.n() > 0,
                 ;
             }
-            Q { num: self.den, den: self.num }
+            Rat { num: self.den, den: self.num }
         } else {
             proof {
                 assert(gcd_int(-self.d(), -self.n()) == gcd_int(self.n(), self.d())) by {
@@ -853,20 +853,20 @@ impl Q {
                 ;
                 assert((-self.d()) * self.n() == self.d() * (-self.n())) by (nonlinear_arith);
             }
-            Q { num: 0 - self.den, den: 0 - self.num }
+            Rat { num: 0 - self.den, den: 0 - self.num }
         }
     }
 
     /// `a^e` by repeated multiplication (left fold). Included only because it
     /// is trivially cheap; there is no rational-exponent power here and never
     /// will be.
-    pub fn pow_u32(self, e: u32) -> (r: Q)
+    pub fn pow_u32(self, e: u32) -> (r: Rat)
         requires
             self.wf(),
         ensures
             r.wf(),
     {
-        let mut acc = Q::one();
+        let mut acc = Rat::one();
         let mut i: u32 = 0;
         while i < e
             invariant
@@ -875,7 +875,7 @@ impl Q {
                 i <= e,
             decreases e - i,
         {
-            acc = Q::mul(acc, self);
+            acc = Rat::mul(acc, self);
             i = i + 1;
         }
         acc
@@ -883,7 +883,7 @@ impl Q {
 }
 
 /// `r == 1 / q`, division-free.
-pub open spec fn q_is_recip(r: Q, q: Q) -> bool {
+pub open spec fn q_is_recip(r: Rat, q: Rat) -> bool {
     r.n() * q.n() == q.d() * r.d()
 }
 
@@ -912,7 +912,7 @@ pub proof fn lemma_gcd_sym(a: nat, b: nat)
 
 /// All four operations' intermediates are inside the `i128` range, and inside
 /// the input bounds `round_frac_exec` requires.
-pub proof fn lemma_op_widths(a: Q, b: Q)
+pub proof fn lemma_op_widths(a: Rat, b: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -1002,7 +1002,7 @@ pub proof fn lemma_new_value(
 }
 
 /// Exec mirrors of the ghost numerators, used by the `checked_*` variants.
-pub fn add_n_exec(a: Q, b: Q) -> (r: i128)
+pub fn add_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1017,7 +1017,7 @@ pub fn add_n_exec(a: Q, b: Q) -> (r: i128)
 }
 
 /// Exec mirror of `sub_n`.
-pub fn sub_n_exec(a: Q, b: Q) -> (r: i128)
+pub fn sub_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1032,7 +1032,7 @@ pub fn sub_n_exec(a: Q, b: Q) -> (r: i128)
 }
 
 /// Exec mirror of `mul_n`.
-pub fn mul_n_exec(a: Q, b: Q) -> (r: i128)
+pub fn mul_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1047,7 +1047,7 @@ pub fn mul_n_exec(a: Q, b: Q) -> (r: i128)
 }
 
 /// Exec mirror of `prod_d`.
-pub fn prod_d_exec(a: Q, b: Q) -> (r: i128)
+pub fn prod_d_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1062,9 +1062,9 @@ pub fn prod_d_exec(a: Q, b: Q) -> (r: i128)
     (a.den as i128) * (b.den as i128)
 }
 
-/// Exec mirror of `div_n`: sign-normalised the same way [`Q::div_dir`]
+/// Exec mirror of `div_n`: sign-normalised the same way [`Rat::div_dir`]
 /// computes it, so it pairs with [`div_d_exec`].
-pub fn div_n_exec(a: Q, b: Q) -> (r: i128)
+pub fn div_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1094,7 +1094,7 @@ pub fn div_n_exec(a: Q, b: Q) -> (r: i128)
 
 /// Exec mirror of `div_d`: always positive, the denominator [`div_n_exec`]
 /// pairs with.
-pub fn div_d_exec(a: Q, b: Q) -> (r: i128)
+pub fn div_d_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
         b.wf(),
@@ -1152,14 +1152,14 @@ pub fn magnitude_fits_exec(n: i128, d: i128) -> (r: bool)
 // Comparison and predicates — all exact, no epsilon, total
 // ---------------------------------------------------------------------------
 
-impl Q {
+impl Rat {
     /// Three-way comparison: `-1`, `0`, `1`.
     ///
     /// Exact, by `i128` cross-multiplication. `ℚ` is totally ordered, which is
     /// a genuine upgrade over `f64`'s `PartialOrd`: there is no `NaN`, so there
     /// are no incomparable pairs and no need for `partial_cmp` to return
     /// `None`.
-    pub fn compare(a: Q, b: Q) -> (r: i32)
+    pub fn compare(a: Rat, b: Rat) -> (r: i32)
         requires
             a.wf(),
             b.wf(),
@@ -1182,59 +1182,59 @@ impl Q {
         }
     }
 
-    /// `a == b`. Because `Q` is canonical this is also structural equality.
-    pub fn eq_q(a: Q, b: Q) -> (r: bool)
+    /// `a == b`. Because `Rat` is canonical this is also structural equality.
+    pub fn eq_q(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
             b.wf(),
         ensures
             r <==> q_eq(a, b),
     {
-        Q::compare(a, b) == 0
+        Rat::compare(a, b) == 0
     }
 
     /// `a < b`.
-    pub fn lt(a: Q, b: Q) -> (r: bool)
+    pub fn lt(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
             b.wf(),
         ensures
             r <==> q_lt(a, b),
     {
-        Q::compare(a, b) < 0
+        Rat::compare(a, b) < 0
     }
 
     /// `a <= b`.
-    pub fn le(a: Q, b: Q) -> (r: bool)
+    pub fn le(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
             b.wf(),
         ensures
             r <==> q_le(a, b),
     {
-        Q::compare(a, b) <= 0
+        Rat::compare(a, b) <= 0
     }
 
     /// `a > b`.
-    pub fn gt(a: Q, b: Q) -> (r: bool)
+    pub fn gt(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
             b.wf(),
         ensures
             r <==> q_lt(b, a),
     {
-        Q::compare(a, b) > 0
+        Rat::compare(a, b) > 0
     }
 
     /// `a >= b`.
-    pub fn ge(a: Q, b: Q) -> (r: bool)
+    pub fn ge(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
             b.wf(),
         ensures
             r <==> q_le(b, a),
     {
-        Q::compare(a, b) >= 0
+        Rat::compare(a, b) >= 0
     }
 
     /// `a == 0`.
@@ -1303,7 +1303,7 @@ impl Q {
     }
 
     /// The smaller of `a` and `b`. Exact.
-    pub fn min(a: Q, b: Q) -> (r: Q)
+    pub fn min(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -1313,7 +1313,7 @@ impl Q {
             q_le(r, a),
             q_le(r, b),
     {
-        if Q::le(a, b) {
+        if Rat::le(a, b) {
             a
         } else {
             b
@@ -1321,7 +1321,7 @@ impl Q {
     }
 
     /// The larger of `a` and `b`. Exact.
-    pub fn max(a: Q, b: Q) -> (r: Q)
+    pub fn max(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
             b.wf(),
@@ -1331,7 +1331,7 @@ impl Q {
             q_le(a, r),
             q_le(b, r),
     {
-        if Q::le(a, b) {
+        if Rat::le(a, b) {
             b
         } else {
             a
@@ -1339,7 +1339,7 @@ impl Q {
     }
 
     /// `a` clamped into `[lo, hi]`. Exact. Requires `lo <= hi`.
-    pub fn clamp(a: Q, lo: Q, hi: Q) -> (r: Q)
+    pub fn clamp(a: Rat, lo: Rat, hi: Rat) -> (r: Rat)
         requires
             a.wf(),
             lo.wf(),
@@ -1354,9 +1354,9 @@ impl Q {
         proof {
             lemma_le_trans(lo, hi, a);
         }
-        if Q::lt(a, lo) {
+        if Rat::lt(a, lo) {
             lo
-        } else if Q::lt(hi, a) {
+        } else if Rat::lt(hi, a) {
             hi
         } else {
             a
@@ -1364,8 +1364,8 @@ impl Q {
     }
 }
 
-/// `<=` is transitive on well-formed `Q`.
-pub proof fn lemma_le_trans(a: Q, b: Q, c: Q)
+/// `<=` is transitive on well-formed `Rat`.
+pub proof fn lemma_le_trans(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -1397,55 +1397,55 @@ pub proof fn lemma_le_trans(a: Q, b: Q, c: Q)
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl PartialOrd for Q {
-    fn partial_cmp(&self, other: &Q) -> Option<core::cmp::Ordering> {
-        Some(<Q as Ord>::cmp(self, other))
+impl PartialOrd for Rat {
+    fn partial_cmp(&self, other: &Rat) -> Option<core::cmp::Ordering> {
+        Some(<Rat as Ord>::cmp(self, other))
     }
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl Ord for Q {
-    fn cmp(&self, other: &Q) -> core::cmp::Ordering {
-        // Delegate to the verified `Q::compare` (proven against the ghost
+impl Ord for Rat {
+    fn cmp(&self, other: &Rat) -> core::cmp::Ordering {
+        // Delegate to the verified `Rat::compare` (proven against the ghost
         // order in `verus!` above) rather than reimplementing the
         // cross-multiplication here. This impl only maps its `-1`/`0`/`1`
         // onto `Ordering`.
-        Q::compare(*self, *other).cmp(&0)
+        Rat::compare(*self, *other).cmp(&0)
     }
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::ops::Add for Q {
-    type Output = Q;
+impl core::ops::Add for Rat {
+    type Output = Rat;
 
-    fn add(self, rhs: Q) -> Q {
-        Q::add(self, rhs)
+    fn add(self, rhs: Rat) -> Rat {
+        Rat::add(self, rhs)
     }
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::ops::Sub for Q {
-    type Output = Q;
+impl core::ops::Sub for Rat {
+    type Output = Rat;
 
-    fn sub(self, rhs: Q) -> Q {
-        Q::sub(self, rhs)
+    fn sub(self, rhs: Rat) -> Rat {
+        Rat::sub(self, rhs)
     }
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::ops::Mul for Q {
-    type Output = Q;
+impl core::ops::Mul for Rat {
+    type Output = Rat;
 
-    fn mul(self, rhs: Q) -> Q {
-        Q::mul(self, rhs)
+    fn mul(self, rhs: Rat) -> Rat {
+        Rat::mul(self, rhs)
     }
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::ops::Neg for Q {
-    type Output = Q;
+impl core::ops::Neg for Rat {
+    type Output = Rat;
 
-    fn neg(self) -> Q {
-        Q::neg(self)
+    fn neg(self) -> Rat {
+        Rat::neg(self)
     }
 }

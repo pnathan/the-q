@@ -35,7 +35,7 @@ use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::model::*;
 #[allow(unused_imports)]
-use crate::types::Q;
+use crate::types::Rat;
 
 verus! {
 
@@ -831,7 +831,7 @@ pub proof fn lemma_frac_triangle(
 ///   addition untouched because addition is exactly 1-Lipschitz. That step is
 ///   the `bd^2` scaling below: adding the same `next` to both the accumulator
 ///   and the exact partial sum cancels out of the difference entirely.
-pub proof fn lemma_abs_error_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: nat, m: int)
+pub proof fn lemma_abs_error_step(prev: Rat, pn: int, pd: int, next: Rat, r: Rat, k: nat, m: int)
     requires
         prev.wf(),
         next.wf(),
@@ -925,7 +925,7 @@ pub open spec fn unit_error() -> int {
 }
 
 /// A single-step bound implies the `k`-step bound for `k >= 1`.
-pub proof fn lemma_bound_1_implies_k(r: Q, n: int, d: int, k: nat)
+pub proof fn lemma_bound_1_implies_k(r: Rat, n: int, d: int, k: nat)
     requires
         d > 0,
         r.wf(),

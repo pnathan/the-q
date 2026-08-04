@@ -2,7 +2,7 @@
 //! arbitrary-precision rational (`malachite-q`, the crate's differential oracle).
 //!
 //! The interesting number is not the single-operation cost — it is what happens
-//! to that cost as a computation gets longer. `Q` and `f64` are both fixed-width,
+//! to that cost as a computation gets longer. `Rat` and `f64` are both fixed-width,
 //! so their per-operation cost is flat in the length of the chain. An exact
 //! rational's denominators multiply, so its per-operation cost grows without
 //! bound. `chain` below measures exactly that, and it is the reason a bounded
@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use malachite_q::Rational;
-use the_q::{nary, Q};
+use the_q::{nary, Rat};
 
 /// splitmix64. Fixed seed: the point is repeatability, not statistics.
 struct Rng(u64);
@@ -92,9 +92,9 @@ fn main() {
     let mut rng = Rng(0x1234_5678);
 
     let raw: Vec<(i64, i64)> = (0..2 * n).map(|_| rng.next_frac()).collect();
-    let qs: Vec<Q> = raw
+    let qs: Vec<Rat> = raw
         .iter()
-        .map(|&(a, b)| Q::new(a, b).expect("den != 0 and both fit"))
+        .map(|&(a, b)| Rat::new(a, b).expect("den != 0 and both fit"))
         .collect();
     let fs: Vec<f64> = raw.iter().map(|&(a, b)| a as f64 / b as f64).collect();
     let rs: Vec<Rational> = raw
@@ -113,7 +113,7 @@ fn main() {
         "add",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::add(qs[a], qs[b])
+            Rat::add(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -129,7 +129,7 @@ fn main() {
         "sub",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::sub(qs[a], qs[b])
+            Rat::sub(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -145,7 +145,7 @@ fn main() {
         "mul",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::mul(qs[a], qs[b])
+            Rat::mul(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -161,7 +161,7 @@ fn main() {
         "div",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::div(qs[a], qs[b])
+            Rat::div(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -177,7 +177,7 @@ fn main() {
         "compare",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::lt(qs[a], qs[b])
+            Rat::lt(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -190,7 +190,7 @@ fn main() {
     );
 
     // The point of the whole exercise. `acc = (acc + x) * y`, k steps, measured
-    // per step. `Q` and `f64` are 16 and 8 bytes at every depth; the exact
+    // per step. `Rat` and `f64` are 16 and 8 bytes at every depth; the exact
     // backend's operands grow, so its per-step cost has to grow with them. The
     // last column is the size of the exact result, which is what is growing.
     println!("\n### Chained fusion, cost per step at depth k\n");
@@ -210,7 +210,7 @@ fn main() {
         let q = time_ns(iters, |i| {
             let mut acc = qs[i % n];
             for j in 0..k {
-                acc = Q::mul(Q::add(acc, qs[(i + j) % n]), qs[(i + j + 1) % n]);
+                acc = Rat::mul(Rat::add(acc, qs[(i + j) % n]), qs[(i + j + 1) % n]);
             }
             acc
         }) / k as f64;
@@ -232,7 +232,7 @@ fn main() {
         }) / k as f64;
 
         // How big the exact answer actually got, as decimal characters of
-        // "num/den". `Q` is 16 bytes here regardless, and `f64` is 8.
+        // "num/den". `Rat` is 16 bytes here regardless, and `f64` is 8.
         let mut acc = rs[0].clone();
         for j in 0..k {
             acc = (acc + &rs[j % n]) * &rs[(j + 1) % n];
@@ -255,9 +255,9 @@ fn main() {
 
     let w = 8usize;
     // Built once, outside the timed region: `weighted_mean` takes a slice, and
-    // timing a `Vec` allocation for `Q` that the other two backends do not pay
+    // timing a `Vec` allocation for `Rat` that the other two backends do not pay
     // would be measuring the harness rather than the arithmetic.
-    let qpairs: Vec<(Q, Q)> = (0..n + w).map(|j| (qs[j % n], qs[(j + 1) % n])).collect();
+    let qpairs: Vec<(Rat, Rat)> = (0..n + w).map(|j| (qs[j % n], qs[(j + 1) % n])).collect();
     let q = time_ns(n / w, |i| {
         let start = (i * w) % n;
         nary::weighted_mean(&qpairs[start..start + w])

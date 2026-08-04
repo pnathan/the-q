@@ -1,4 +1,4 @@
-//! The ghost model: the mathematics that `Q` is specified against.
+//! The ghost model: the mathematics that `Rat` is specified against.
 //!
 //! Everything here is `spec`/`proof` code — it is erased by plain rustc and
 //! consumed by Verus. Two disciplines are enforced throughout:
@@ -23,7 +23,7 @@ use verus_builtin::*;
 use vstd::prelude::*;
 
 #[allow(unused_imports)]
-use crate::types::{MAX_MAG, Q};
+use crate::types::{Rat, MAX_MAG};
 
 verus! {
 
@@ -89,7 +89,7 @@ pub open spec fn gcd_nat(a: nat, b: nat) -> nat
     }
 }
 
-/// `gcd` lifted to integers via absolute values; the value `Q` canonicality
+/// `gcd` lifted to integers via absolute values; the value `Rat` canonicality
 /// talks about.
 pub open spec fn gcd_int(a: int, b: int) -> int {
     gcd_nat(abs_int(a) as nat, abs_int(b) as nat) as int
@@ -129,7 +129,7 @@ pub open spec fn fits_budget(n: int, d: int) -> bool {
 /// `checked_*` variants return `None`.
 ///
 /// Note this is a choice, not a forced move. Some unrepresentable values do
-/// have a `Q` inside the R3 bound — `n/d = MAX_MAG + 1/2` is within `2^-61` of
+/// have a `Rat` inside the R3 bound — `n/d = MAX_MAG + 1/2` is within `2^-61` of
 /// `MAX_MAG/1` — so the exclusion is by fiat, to keep the contract on a single
 /// clean side of a boundary, rather than because nothing could satisfy it.
 pub open spec fn magnitude_fits(n: int, d: int) -> bool {
@@ -140,7 +140,7 @@ pub open spec fn magnitude_fits(n: int, d: int) -> bool {
 // The type invariant (V1)
 // ---------------------------------------------------------------------------
 
-impl Q {
+impl Rat {
     /// The full type invariant: I1 (canonical) and I2 (bounded).
     ///
     /// Every public function `requires` this of its inputs and `ensures` it of
@@ -168,19 +168,19 @@ impl Q {
 // The relational model: order and equality, division-free
 // ---------------------------------------------------------------------------
 
-/// Mathematical equality of two rationals. For canonical `Q` this coincides
+/// Mathematical equality of two rationals. For canonical `Rat` this coincides
 /// with structural equality (proved as `lemma_canonical_eq` in [`crate::laws`]).
-pub open spec fn q_eq(a: Q, b: Q) -> bool {
+pub open spec fn q_eq(a: Rat, b: Rat) -> bool {
     a.n() * b.d() == b.n() * a.d()
 }
 
 /// `a <= b`. Valid as written because both denominators are positive.
-pub open spec fn q_le(a: Q, b: Q) -> bool {
+pub open spec fn q_le(a: Rat, b: Rat) -> bool {
     a.n() * b.d() <= b.n() * a.d()
 }
 
 /// `a < b`.
-pub open spec fn q_lt(a: Q, b: Q) -> bool {
+pub open spec fn q_lt(a: Rat, b: Rat) -> bool {
     a.n() * b.d() < b.n() * a.d()
 }
 
@@ -188,17 +188,17 @@ pub open spec fn q_lt(a: Q, b: Q) -> bool {
 ///
 /// This is *the* value-correctness predicate: division-free cross-
 /// multiplication, as promised in the module header.
-pub open spec fn q_is(r: Q, n: int, d: int) -> bool {
+pub open spec fn q_is(r: Rat, n: int, d: int) -> bool {
     r.n() * d == n * r.d()
 }
 
 /// `r <= n / d`.
-pub open spec fn q_le_frac(r: Q, n: int, d: int) -> bool {
+pub open spec fn q_le_frac(r: Rat, n: int, d: int) -> bool {
     r.n() * d <= n * r.d()
 }
 
 /// `r >= n / d`.
-pub open spec fn q_ge_frac(r: Q, n: int, d: int) -> bool {
+pub open spec fn q_ge_frac(r: Rat, n: int, d: int) -> bool {
     r.n() * d >= n * r.d()
 }
 
@@ -224,7 +224,7 @@ pub open spec fn precision_b() -> nat {
 /// through by `r.den · d · 2^61` (both denominators positive) gives
 /// `|r.num·d - n·r.den| · 2^61 <= r.den · max(d, |n|)`, which is what is
 /// written here — no division anywhere.
-pub open spec fn within_error_bound(r: Q, n: int, d: int) -> bool {
+pub open spec fn within_error_bound(r: Rat, n: int, d: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= r.d() * max_int(d, abs_int(n))
 }
 
@@ -236,7 +236,7 @@ pub open spec fn within_error_bound(r: Q, n: int, d: int) -> bool {
 /// This is **not** the crate-wide R3 contract — `precision_b` stays at `61`
 /// because the directed modes (`Dir::Down`, `Dir::Up`) genuinely achieve no
 /// better than that. It is the tighter bound available specifically on the
-/// path every default operation (`Q::add`/`sub`/`mul`/`div`) takes, proved as
+/// path every default operation (`Rat::add`/`sub`/`mul`/`div`) takes, proved as
 /// an additional guarantee alongside the uniform one rather than in place of
 /// it.
 pub open spec fn precision_b_nearest() -> nat {
@@ -245,7 +245,7 @@ pub open spec fn precision_b_nearest() -> nat {
 
 /// R3 at `Dir::Nearest`'s tighter bound, division-free. Same shape as
 /// `within_error_bound`, at `B = 62` instead of `61`.
-pub open spec fn within_error_bound_nearest(r: Q, n: int, d: int) -> bool {
+pub open spec fn within_error_bound_nearest(r: Rat, n: int, d: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b_nearest()) <= r.d() * max_int(
         d,
         abs_int(n),
@@ -254,7 +254,7 @@ pub open spec fn within_error_bound_nearest(r: Q, n: int, d: int) -> bool {
 
 /// The accumulated bound after `k` operations: `k · 2^-B · max(1, |exact|)`.
 /// Used by the n-ary helpers (V8).
-pub open spec fn within_error_bound_k(r: Q, n: int, d: int, k: nat) -> bool {
+pub open spec fn within_error_bound_k(r: Rat, n: int, d: int, k: nat) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= (k as int) * r.d() * max_int(
         d,
         abs_int(n),
@@ -274,7 +274,7 @@ pub open spec fn within_error_bound_k(r: Q, n: int, d: int, k: nat) -> bool {
 /// exactly 1-Lipschitz. And for this crate's actual domain the two coincide:
 /// every engine value lives in `[0, 1]`, so `max(1, |exact|) == 1` throughout
 /// and `m == 1`, making the bound `k · 2^-61` outright.
-pub open spec fn within_abs_error(r: Q, n: int, d: int, k: nat, m: int) -> bool {
+pub open spec fn within_abs_error(r: Rat, n: int, d: int, k: nat, m: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= (k as int) * m * (r.d() * d)
 }
 

@@ -13,7 +13,7 @@ use common::*;
 use malachite_base::num::arithmetic::traits::Pow;
 use malachite_q::Rational;
 use the_q::convert::{from_f64_dir, from_parts_dir};
-use the_q::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
+use the_q::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
 
 // ---------------------------------------------------------------------------
 // The budget edge
@@ -23,8 +23,8 @@ use the_q::{Dir, MAX_DEC_PLACES, MAX_MAG, Q};
 fn values_at_the_budget_edge_are_constructible_and_sound() {
     // MAX_MAG is 2^62 - 1, which is odd, so MAX_MAG/MAX_MAG reduces to 1/1 and
     // MAX_MAG/(MAX_MAG - 1) is already in lowest terms.
-    let edge = Q::new(MAX_MAG, MAX_MAG).unwrap();
-    assert_eq!(edge, Q::one());
+    let edge = Rat::new(MAX_MAG, MAX_MAG).unwrap();
+    assert_eq!(edge, Rat::one());
 
     for &n in &[
         MAX_MAG,
@@ -37,7 +37,7 @@ fn values_at_the_budget_edge_are_constructible_and_sound() {
         -MAX_MAG,
     ] {
         for &d in &[MAX_MAG, MAX_MAG - 1, MAX_MAG - 2, 1, 2] {
-            let q = Q::new(n, d).unwrap();
+            let q = Rat::new(n, d).unwrap();
             assert_wf(q, "budget-edge construction");
             assert_eq!(rat(q), rat_of(n as i128, d as i128));
         }
@@ -46,7 +46,7 @@ fn values_at_the_budget_edge_are_constructible_and_sound() {
 
 #[test]
 fn arithmetic_at_the_budget_edge_stays_sound() {
-    let candidates: Vec<Q> = [
+    let candidates: Vec<Rat> = [
         (MAX_MAG, 1),
         (-MAX_MAG, 1),
         (MAX_MAG, MAX_MAG - 1),
@@ -60,16 +60,16 @@ fn arithmetic_at_the_budget_edge_stays_sound() {
         (-1, 1),
     ]
     .iter()
-    .map(|&(n, d)| Q::new(n, d).unwrap())
+    .map(|&(n, d)| Rat::new(n, d).unwrap())
     .collect();
 
     for &a in &candidates {
         for &b in &candidates {
             for dir in DIRS {
                 for (name, exact, got) in [
-                    ("add", rat(a) + rat(b), Q::add_dir(a, b, dir)),
-                    ("sub", rat(a) - rat(b), Q::sub_dir(a, b, dir)),
-                    ("mul", rat(a) * rat(b), Q::mul_dir(a, b, dir)),
+                    ("add", rat(a) + rat(b), Rat::add_dir(a, b, dir)),
+                    ("sub", rat(a) - rat(b), Rat::sub_dir(a, b, dir)),
+                    ("mul", rat(a) * rat(b), Rat::mul_dir(a, b, dir)),
                 ] {
                     assert_wf(got, name);
                     if magnitude_fits(&exact) {
@@ -79,7 +79,7 @@ fn arithmetic_at_the_budget_edge_stays_sound() {
                 }
                 if !b.is_zero() {
                     let exact = rat(a) / rat(b);
-                    let got = Q::div_dir(a, b, dir);
+                    let got = Rat::div_dir(a, b, dir);
                     assert_wf(got, "div");
                     if magnitude_fits(&exact) {
                         assert_r3(got, &exact, "div");
@@ -94,14 +94,14 @@ fn arithmetic_at_the_budget_edge_stays_sound() {
 #[test]
 fn the_finest_grid_step_is_representable() {
     // The dyadic snap's finest grid is 2^-61; that value must itself be a legal
-    // Q, otherwise the rounding target does not exist.
-    let eps = Q::new(1, 1i64 << 61).unwrap();
+    // Rat, otherwise the rounding target does not exist.
+    let eps = Rat::new(1, 1i64 << 61).unwrap();
     assert_wf(eps, "2^-61");
     assert_eq!(eps.denominator(), 1i64 << 61);
     assert!(eps.denominator() <= MAX_MAG);
     // And 2^62 is *not* representable — that is the budget doing its job.
-    assert!(Q::new(1, 1i64 << 62).is_none());
-    assert!(Q::new(1i64 << 62, 1).is_none());
+    assert!(Rat::new(1, 1i64 << 62).is_none());
+    assert!(Rat::new(1i64 << 62, 1).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -112,31 +112,33 @@ fn the_finest_grid_step_is_representable() {
 fn i64_min_is_rejected_everywhere() {
     // |i64::MIN| is not an i64 at all, and it is outside I2 regardless. Every
     // entry point must reject it rather than wrap.
-    assert!(Q::from_int(i64::MIN).is_none());
-    assert!(Q::new(i64::MIN, 1).is_none());
-    assert!(Q::new(1, i64::MIN).is_none());
-    assert!(Q::new(i64::MIN, i64::MIN).is_none() || Q::new(i64::MIN, i64::MIN) == Some(Q::one()));
-    assert!(Q::from_decimal(i64::MIN, 0).is_none());
+    assert!(Rat::from_int(i64::MIN).is_none());
+    assert!(Rat::new(i64::MIN, 1).is_none());
+    assert!(Rat::new(1, i64::MIN).is_none());
+    assert!(
+        Rat::new(i64::MIN, i64::MIN).is_none() || Rat::new(i64::MIN, i64::MIN) == Some(Rat::one())
+    );
+    assert!(Rat::from_decimal(i64::MIN, 0).is_none());
     // The rounding constructor is total for a non-zero denominator, and still
     // returns something well-formed.
     for dir in DIRS {
-        let q = Q::new_rounded(i64::MIN, 1, dir).unwrap();
+        let q = Rat::new_rounded(i64::MIN, 1, dir).unwrap();
         assert_wf(q, "new_rounded(i64::MIN, 1)");
-        let q = Q::new_rounded(1, i64::MIN, dir).unwrap();
+        let q = Rat::new_rounded(1, i64::MIN, dir).unwrap();
         assert_wf(q, "new_rounded(1, i64::MIN)");
-        assert!(Q::new_rounded(1, 0, dir).is_none());
+        assert!(Rat::new_rounded(1, 0, dir).is_none());
     }
     // i64::MAX is above MAX_MAG too.
-    assert!(Q::from_int(i64::MAX).is_none());
-    assert!(Q::from_int(MAX_MAG).is_some());
-    assert!(Q::from_int(-MAX_MAG).is_some());
-    assert!(Q::from_int(MAX_MAG + 1).is_none());
+    assert!(Rat::from_int(i64::MAX).is_none());
+    assert!(Rat::from_int(MAX_MAG).is_some());
+    assert!(Rat::from_int(-MAX_MAG).is_some());
+    assert!(Rat::from_int(MAX_MAG + 1).is_none());
 }
 
 #[test]
 fn negative_denominators_are_normalised() {
     for &(n, d) in &[(1i64, -2i64), (-1, -2), (-1, 2), (0, -7), (-6, -8), (6, -8)] {
-        let q = Q::new(n, d).unwrap();
+        let q = Rat::new(n, d).unwrap();
         assert!(
             q.denominator() > 0,
             "denominator not normalised for {n}/{d}"
@@ -146,25 +148,25 @@ fn negative_denominators_are_normalised() {
     }
     // Zero has exactly one representation.
     for d in [-9i64, -1, 1, 9, MAX_MAG, -MAX_MAG] {
-        assert_eq!(Q::new(0, d).unwrap(), Q::zero());
-        assert_eq!(Q::new(0, d).unwrap().denominator(), 1);
+        assert_eq!(Rat::new(0, d).unwrap(), Rat::zero());
+        assert_eq!(Rat::new(0, d).unwrap().denominator(), 1);
     }
 }
 
 #[test]
 fn signum_and_predicates_at_the_edges() {
-    assert_eq!(Q::zero().signum(), 0);
-    assert_eq!(Q::one().signum(), 1);
-    assert_eq!(Q::one().neg().signum(), -1);
-    assert_eq!(Q::new(-1, MAX_MAG).unwrap().signum(), -1);
-    assert!(Q::zero().in_unit_interval());
-    assert!(Q::one().in_unit_interval());
-    assert!(Q::new(1, MAX_MAG).unwrap().in_unit_interval());
-    assert!(!Q::new(-1, MAX_MAG).unwrap().in_unit_interval());
-    assert!(!Q::new(MAX_MAG, MAX_MAG - 1).unwrap().in_unit_interval());
-    assert!(Q::one().is_one());
-    assert!(Q::new(2, 2).unwrap().is_one()); // 2/2 canonicalises to 1/1
-    assert!(Q::zero().is_zero());
+    assert_eq!(Rat::zero().signum(), 0);
+    assert_eq!(Rat::one().signum(), 1);
+    assert_eq!(Rat::one().neg().signum(), -1);
+    assert_eq!(Rat::new(-1, MAX_MAG).unwrap().signum(), -1);
+    assert!(Rat::zero().in_unit_interval());
+    assert!(Rat::one().in_unit_interval());
+    assert!(Rat::new(1, MAX_MAG).unwrap().in_unit_interval());
+    assert!(!Rat::new(-1, MAX_MAG).unwrap().in_unit_interval());
+    assert!(!Rat::new(MAX_MAG, MAX_MAG - 1).unwrap().in_unit_interval());
+    assert!(Rat::one().is_one());
+    assert!(Rat::new(2, 2).unwrap().is_one()); // 2/2 canonicalises to 1/1
+    assert!(Rat::zero().is_zero());
 }
 
 // ---------------------------------------------------------------------------
@@ -173,38 +175,38 @@ fn signum_and_predicates_at_the_edges() {
 
 #[test]
 fn magnitude_overflow_saturates_and_checked_reports_it() {
-    let big = Q::from_int(MAX_MAG).unwrap();
+    let big = Rat::from_int(MAX_MAG).unwrap();
 
-    // MAX_MAG + MAX_MAG is not representable: no Q has that magnitude.
+    // MAX_MAG + MAX_MAG is not representable: no Rat has that magnitude.
     let exact = rat(big) + rat(big);
     assert!(!magnitude_fits(&exact));
-    assert!(Q::checked_add(big, big).is_none());
-    let sat = Q::add(big, big);
+    assert!(Rat::checked_add(big, big).is_none());
+    let sat = Rat::add(big, big);
     assert_wf(sat, "saturated add");
     assert_eq!(sat, big, "saturation should clamp to +MAX_MAG");
 
     // And on the negative side.
     let nbig = big.neg();
-    assert!(Q::checked_add(nbig, nbig).is_none());
-    assert_eq!(Q::add(nbig, nbig), nbig);
+    assert!(Rat::checked_add(nbig, nbig).is_none());
+    assert_eq!(Rat::add(nbig, nbig), nbig);
 
     // MAX_MAG * MAX_MAG likewise.
-    assert!(Q::checked_mul(big, big).is_none());
-    assert_eq!(Q::mul(big, big), big);
-    assert!(Q::checked_sub(nbig, big).is_none());
+    assert!(Rat::checked_mul(big, big).is_none());
+    assert_eq!(Rat::mul(big, big), big);
+    assert!(Rat::checked_sub(nbig, big).is_none());
 
     // Anything that *does* fit is reported as Some and agrees with the plain op.
-    let half = Q::new(1, 2).unwrap();
-    assert_eq!(Q::checked_add(half, half), Some(Q::one()));
-    assert_eq!(Q::checked_mul(half, half), Some(Q::new(1, 4).unwrap()));
-    assert_eq!(Q::checked_sub(half, half), Some(Q::zero()));
+    let half = Rat::new(1, 2).unwrap();
+    assert_eq!(Rat::checked_add(half, half), Some(Rat::one()));
+    assert_eq!(Rat::checked_mul(half, half), Some(Rat::new(1, 4).unwrap()));
+    assert_eq!(Rat::checked_sub(half, half), Some(Rat::zero()));
 
     // Division by a tiny value is the other way to leave the budget.
-    let tiny = Q::new(1, MAX_MAG).unwrap();
-    let q = Q::div(Q::one(), tiny);
+    let tiny = Rat::new(1, MAX_MAG).unwrap();
+    let q = Rat::div(Rat::one(), tiny);
     assert_wf(q, "div by 1/MAX_MAG");
     assert_eq!(q, big);
-    let q = Q::div(big, tiny);
+    let q = Rat::div(big, tiny);
     assert_wf(q, "saturating div");
     assert_eq!(q, big, "should saturate, not wrap");
 
@@ -212,19 +214,19 @@ fn magnitude_overflow_saturates_and_checked_reports_it() {
     // in-budget quotients as Some, agreeing with the plain op — the same
     // contract checked_add/checked_sub/checked_mul already carry.
     // `MAX_MAG / (1/MAX_MAG) == MAX_MAG^2`, well past the ceiling.
-    assert!(Q::checked_div(big, tiny).is_none());
+    assert!(Rat::checked_div(big, tiny).is_none());
     // `1 / (1/MAX_MAG) == MAX_MAG` exactly — right at the ceiling, not over
     // it, so this one is `Some`.
-    assert_eq!(Q::checked_div(Q::one(), tiny), Some(big));
-    assert_eq!(Q::checked_div(half, half), Some(Q::one()));
-    assert_eq!(Q::checked_div(big, big), Some(Q::one()));
+    assert_eq!(Rat::checked_div(Rat::one(), tiny), Some(big));
+    assert_eq!(Rat::checked_div(half, half), Some(Rat::one()));
+    assert_eq!(Rat::checked_div(big, big), Some(Rat::one()));
 }
 
 #[test]
 fn saturation_never_produces_an_invalid_value() {
     // Hammer the saturation path from every direction and sign.
     let mut rng = Rng::new(0x5A7);
-    let bigs: Vec<Q> = [
+    let bigs: Vec<Rat> = [
         (MAX_MAG, 1),
         (-MAX_MAG, 1),
         (MAX_MAG, 2),
@@ -232,17 +234,17 @@ fn saturation_never_produces_an_invalid_value() {
         (MAX_MAG - 1, 1),
     ]
     .iter()
-    .map(|&(n, d)| Q::new(n, d).unwrap())
+    .map(|&(n, d)| Rat::new(n, d).unwrap())
     .collect();
     for _ in 0..5_000 {
         let a = bigs[rng.below(bigs.len() as u64) as usize];
         let b = bigs[rng.below(bigs.len() as u64) as usize];
         for dir in DIRS {
-            assert_wf(Q::add_dir(a, b, dir), "sat add");
-            assert_wf(Q::sub_dir(a, b, dir), "sat sub");
-            assert_wf(Q::mul_dir(a, b, dir), "sat mul");
+            assert_wf(Rat::add_dir(a, b, dir), "sat add");
+            assert_wf(Rat::sub_dir(a, b, dir), "sat sub");
+            assert_wf(Rat::mul_dir(a, b, dir), "sat mul");
             if !b.is_zero() {
-                assert_wf(Q::div_dir(a, b, dir), "sat div");
+                assert_wf(Rat::div_dir(a, b, dir), "sat div");
             }
         }
     }
@@ -254,21 +256,21 @@ fn saturation_never_produces_an_invalid_value() {
 
 #[test]
 fn from_decimal_edges() {
-    assert_eq!(Q::from_decimal(1, 0).unwrap(), Q::one());
-    assert!(Q::from_decimal(1, MAX_DEC_PLACES).is_some());
-    assert!(Q::from_decimal(1, MAX_DEC_PLACES + 1).is_none());
-    assert!(Q::from_decimal(1, 255).is_none());
-    assert!(Q::from_decimal(MAX_MAG, 0).is_some());
-    assert!(Q::from_decimal(MAX_MAG + 1, 0).is_none());
+    assert_eq!(Rat::from_decimal(1, 0).unwrap(), Rat::one());
+    assert!(Rat::from_decimal(1, MAX_DEC_PLACES).is_some());
+    assert!(Rat::from_decimal(1, MAX_DEC_PLACES + 1).is_none());
+    assert!(Rat::from_decimal(1, 255).is_none());
+    assert!(Rat::from_decimal(MAX_MAG, 0).is_some());
+    assert!(Rat::from_decimal(MAX_MAG + 1, 0).is_none());
     // 10^18 is representable; the resulting value is 1/10^18 exactly.
-    let tiny = Q::from_decimal(1, 18).unwrap();
+    let tiny = Rat::from_decimal(1, 18).unwrap();
     assert_eq!(tiny.denominator(), 1_000_000_000_000_000_000);
     assert_eq!(tiny.numerator(), 1);
     // Reduction happens: 0.50 is 1/2, not 50/100.
-    assert_eq!(Q::from_decimal(50, 2).unwrap(), Q::new(1, 2).unwrap());
+    assert_eq!(Rat::from_decimal(50, 2).unwrap(), Rat::new(1, 2).unwrap());
     // Every 4-place decimal is exact.
     for m in -20000i64..=20000 {
-        let q = Q::from_decimal(m, 4).unwrap();
+        let q = Rat::from_decimal(m, 4).unwrap();
         assert_eq!(rat(q), rat_of(m as i128, 10_000i128));
     }
 }
@@ -281,8 +283,8 @@ fn from_decimal_edges() {
 fn f64_boundary_edges() {
     use the_q::convert::from_f64_dir;
     // Zero, both signs.
-    assert_eq!(from_f64_dir(0.0, Dir::Nearest).unwrap(), Q::zero());
-    assert_eq!(from_f64_dir(-0.0, Dir::Nearest).unwrap(), Q::zero());
+    assert_eq!(from_f64_dir(0.0, Dir::Nearest).unwrap(), Rat::zero());
+    assert_eq!(from_f64_dir(-0.0, Dir::Nearest).unwrap(), Rat::zero());
     // Exact powers of two round-trip exactly.
     for e in -60i32..=61 {
         let v = 2.0f64.powi(e);
@@ -299,14 +301,14 @@ fn f64_boundary_edges() {
     // Values below the finest grid: Nearest gives zero, the directed modes stay
     // on their side of the value.
     for v in [5e-324f64, 1e-300, 2.0f64.powi(-100)] {
-        assert_eq!(from_f64_dir(v, Dir::Nearest).unwrap(), Q::zero());
+        assert_eq!(from_f64_dir(v, Dir::Nearest).unwrap(), Rat::zero());
         assert!(
             rat(from_f64_dir(v, Dir::Down).unwrap()) <= malachite_q::Rational::try_from(v).unwrap()
         );
         assert!(
             rat(from_f64_dir(v, Dir::Up).unwrap()) >= malachite_q::Rational::try_from(v).unwrap()
         );
-        assert_eq!(from_f64_dir(-v, Dir::Nearest).unwrap(), Q::zero());
+        assert_eq!(from_f64_dir(-v, Dir::Nearest).unwrap(), Rat::zero());
         assert!(
             rat(from_f64_dir(-v, Dir::Down).unwrap())
                 <= malachite_q::Rational::try_from(-v).unwrap()
@@ -326,9 +328,9 @@ fn f64_boundary_edges() {
     // 0.1 is not a decimal in binary; the conversion is of the *double*, not of
     // the literal a human typed.
     let q = from_f64_dir(0.1, Dir::Nearest).unwrap();
-    assert_ne!(q, Q::from_decimal(1, 1).unwrap());
+    assert_ne!(q, Rat::from_decimal(1, 1).unwrap());
     // ...which is exactly why from_decimal exists.
-    assert_eq!(Q::from_decimal(1, 1).unwrap(), Q::new(1, 10).unwrap());
+    assert_eq!(Rat::from_decimal(1, 1).unwrap(), Rat::new(1, 10).unwrap());
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +347,7 @@ fn associativity_can_fail_when_rounding_bites() {
     let mut found = false;
     for _ in 0..200_000 {
         let (a, b, c) = (rng.q(), rng.q(), rng.q());
-        if Q::add(Q::add(a, b), c) != Q::add(a, Q::add(b, c)) {
+        if Rat::add(Rat::add(a, b), c) != Rat::add(a, Rat::add(b, c)) {
             found = true;
             break;
         }
@@ -368,15 +370,15 @@ fn associativity_defect_for_add_is_quantitatively_bounded() {
     let mut checked_a_failure = false;
     for _ in 0..200_000 {
         let (a, b, c) = (rng.q(), rng.q(), rng.q());
-        let left = Q::add(Q::add(a, b), c);
-        let right = Q::add(a, Q::add(b, c));
+        let left = Rat::add(Rat::add(a, b), c);
+        let right = Rat::add(a, Rat::add(b, c));
         if left == right {
             continue;
         }
         checked_a_failure = true;
 
-        let ab = Q::add(a, b);
-        let bc = Q::add(b, c);
+        let ab = Rat::add(a, b);
+        let bc = Rat::add(b, c);
         let ab_exact = rat(a) + rat(b);
         let bc_exact = rat(b) + rat(c);
         let left_inner_exact = rat(ab) + rat(c);
@@ -417,7 +419,7 @@ fn associativity_defect_for_mul_is_quantitatively_bounded_on_unit_interval() {
     let wide01 = |r: &mut Rng| loop {
         let d = MAX_MAG - r.below(1024) as i64;
         let n = r.below((d as u64) + 1) as i64;
-        if let Some(q) = Q::new(n, d) {
+        if let Some(q) = Rat::new(n, d) {
             return q;
         }
     };
@@ -425,8 +427,8 @@ fn associativity_defect_for_mul_is_quantitatively_bounded_on_unit_interval() {
     for _ in 0..200_000 {
         let (a, b, c) = (wide01(&mut rng), wide01(&mut rng), wide01(&mut rng));
         assert!(a.in_unit_interval() && b.in_unit_interval() && c.in_unit_interval());
-        let left = Q::mul(Q::mul(a, b), c);
-        let right = Q::mul(a, Q::mul(b, c));
+        let left = Rat::mul(Rat::mul(a, b), c);
+        let right = Rat::mul(a, Rat::mul(b, c));
         if left == right {
             continue;
         }
@@ -457,18 +459,18 @@ fn the_composed_operation_is_not_globally_monotone() {
     // *not* representable, so it snaps down to the bottom of that same cell —
     // which is below `u`. Rounding down has inverted the order.
     let g: i64 = 1i64 << 61;
-    let u = Q::new(2, g + 1).unwrap();
-    let scale = Q::new(MAX_MAG, MAX_MAG - 1).unwrap(); // 1 + 1/(MAX_MAG-1)
+    let u = Rat::new(2, g + 1).unwrap();
+    let scale = Rat::new(MAX_MAG, MAX_MAG - 1).unwrap(); // 1 + 1/(MAX_MAG-1)
     let v_exact = rat(u) * rat(scale);
-    let v = Q::mul_dir(u, scale, Dir::Down);
+    let v = Rat::mul_dir(u, scale, Dir::Down);
     assert!(rat(u) < v_exact, "setup: u must be strictly below v");
     assert!(
-        Q::lt(v, u),
+        Rat::lt(v, u),
         "expected round_down to invert the order; the monotonicity note may be stale"
     );
     assert_eq!(
         v,
-        Q::new(1, g).unwrap(),
+        Rat::new(1, g).unwrap(),
         "v should snap to the cell floor 2^-61"
     );
 }
@@ -484,7 +486,7 @@ fn rounding_is_monotone_within_one_grid() {
     let wide = |r: &mut Rng| loop {
         let d = MAX_MAG - r.below(1024) as i64;
         let n = r.below(d as u64) as i64;
-        if let Some(q) = Q::new(n, d) {
+        if let Some(q) = Rat::new(n, d) {
             return q;
         }
     };
@@ -503,10 +505,10 @@ fn rounding_is_monotone_within_one_grid() {
             ((c, d), (a, b))
         };
         for dir in DIRS {
-            let lo = Q::mul_dir(lo_pair.0, lo_pair.1, dir);
-            let hi = Q::mul_dir(hi_pair.0, hi_pair.1, dir);
+            let lo = Rat::mul_dir(lo_pair.0, lo_pair.1, dir);
+            let hi = Rat::mul_dir(hi_pair.0, hi_pair.1, dir);
             assert!(
-                Q::le(lo, hi),
+                Rat::le(lo, hi),
                 "grid rounding inverted order under {dir:?}: {lo} > {hi}"
             );
         }
@@ -527,19 +529,19 @@ fn ten_thousand_op_chain_at_the_budget_edge() {
     // Denominators deliberately pushed against the budget on every step, so
     // essentially every operation takes the rounding path.
     let mut rng = Rng::new(0xE_D_9_E);
-    let mut acc = Q::new(MAX_MAG - 1, MAX_MAG).unwrap();
+    let mut acc = Rat::new(MAX_MAG - 1, MAX_MAG).unwrap();
     let mut oracle = rat(acc);
     for i in 0..10_000u32 {
-        let x = Q::new(
+        let x = Rat::new(
             (rng.next_u64() % (MAX_MAG as u64)) as i64,
             (rng.next_u64() % (MAX_MAG as u64)) as i64 + 1,
         )
         .unwrap();
         if i % 2 == 0 {
-            acc = Q::mul(acc, x);
+            acc = Rat::mul(acc, x);
             oracle *= rat(x);
         } else {
-            acc = Q::sub(Q::max(acc, x), Q::min(acc, x));
+            acc = Rat::sub(Rat::max(acc, x), Rat::min(acc, x));
             oracle = rabs(oracle - rat(x));
         }
         assert_wf(acc, "edge chain");
@@ -579,7 +581,7 @@ fn deep_reciprocal_chain_is_exact() {
 fn rounding_carry_reduces_back_into_budget() {
     let n = 3 * (1i64 << 61) - 1;
 
-    let up = Q::new_rounded(n, 3, Dir::Up).expect("representable after reduction");
+    let up = Rat::new_rounded(n, 3, Dir::Up).expect("representable after reduction");
     assert_eq!(
         (up.numerator(), up.denominator()),
         (1i64 << 61, 1),
@@ -588,7 +590,7 @@ fn rounding_carry_reduces_back_into_budget() {
     assert_wf(up, "carry (Up)");
 
     // The mirror image: rounding a negative value away from zero.
-    let down = Q::new_rounded(-n, 3, Dir::Down).expect("representable after reduction");
+    let down = Rat::new_rounded(-n, 3, Dir::Down).expect("representable after reduction");
     assert_eq!(
         (down.numerator(), down.denominator()),
         (-(1i64 << 61), 1),
@@ -599,7 +601,7 @@ fn rounding_carry_reduces_back_into_budget() {
     // Rounding the other way lands on the last grid point below, `2^62 - 1`
     // over `2^1`. That numerator is odd, so nothing reduces and it sits exactly
     // on `MAX_MAG` — in budget, and the boundary the carry steps one past.
-    let no_carry = Q::new_rounded(n, 3, Dir::Down).expect("representable");
+    let no_carry = Rat::new_rounded(n, 3, Dir::Down).expect("representable");
     assert_eq!(
         (no_carry.numerator(), no_carry.denominator()),
         (MAX_MAG, 2),
@@ -617,7 +619,7 @@ fn rounding_carry_reduces_back_into_budget() {
 // thing, and these pin the arithmetic a reader would actually expect.
 // ---------------------------------------------------------------------------
 
-/// `Q::new`'s completeness direction: in-budget inputs always produce a value.
+/// `Rat::new`'s completeness direction: in-budget inputs always produce a value.
 ///
 /// The old contract said only what the answer *is* when there is one, which an
 /// implementation returning `None` for every nonzero denominator satisfies.
@@ -634,9 +636,9 @@ fn new_succeeds_for_every_in_budget_pair() {
         } else {
             -den_mag
         };
-        let q = Q::new(num, den)
-            .unwrap_or_else(|| panic!("Q::new({num}, {den}) returned None but both fit"));
-        assert_wf(q, "Q::new in budget");
+        let q = Rat::new(num, den)
+            .unwrap_or_else(|| panic!("Rat::new({num}, {den}) returned None but both fit"));
+        assert_wf(q, "Rat::new in budget");
     }
     for (num, den) in [
         (MAX_MAG, MAX_MAG),
@@ -647,13 +649,13 @@ fn new_succeeds_for_every_in_budget_pair() {
         (MAX_MAG, 1),
     ] {
         assert!(
-            Q::new(num, den).is_some(),
-            "Q::new({num}, {den}) is in budget and must succeed"
+            Rat::new(num, den).is_some(),
+            "Rat::new({num}, {den}) is in budget and must succeed"
         );
     }
     // And the boundary is genuinely a boundary, so the clause is not vacuous.
     assert!(
-        Q::new(i64::MAX, 1).is_none(),
+        Rat::new(i64::MAX, 1).is_none(),
         "i64::MAX is one past the budget"
     );
 }
@@ -666,7 +668,7 @@ fn from_decimal_is_the_exact_decimal_it_claims() {
     for _ in 0..20_000 {
         let dec_places = (rng.next_u64() % 19) as u8;
         let mantissa = (rng.next_u64() % (2 * MAX_MAG as u64 + 1)) as i64 - MAX_MAG;
-        let q = Q::from_decimal(mantissa, dec_places)
+        let q = Rat::from_decimal(mantissa, dec_places)
             .unwrap_or_else(|| panic!("from_decimal({mantissa}, {dec_places}) must succeed"));
         let scale = 10i128.pow(dec_places as u32);
         assert_eq!(
@@ -677,18 +679,18 @@ fn from_decimal_is_the_exact_decimal_it_claims() {
         assert_wf(q, "from_decimal");
     }
     // The doc comment's own example, which had no verified meaning before.
-    assert_eq!(Q::from_decimal(85, 2).unwrap().to_string(), "17/20");
+    assert_eq!(Rat::from_decimal(85, 2).unwrap().to_string(), "17/20");
     // Both failure guards, and nothing else.
     assert!(
-        Q::from_decimal(1, 19).is_none(),
+        Rat::from_decimal(1, 19).is_none(),
         "19 decimal places is out of range"
     );
     assert!(
-        Q::from_decimal(i64::MAX, 0).is_none(),
+        Rat::from_decimal(i64::MAX, 0).is_none(),
         "mantissa past MAX_MAG"
     );
     assert!(
-        Q::from_decimal(MAX_MAG, 18).is_some(),
+        Rat::from_decimal(MAX_MAG, 18).is_some(),
         "both guards satisfied"
     );
 }
@@ -699,13 +701,13 @@ fn from_decimal_is_the_exact_decimal_it_claims() {
 #[test]
 fn new_rounded_direction_is_about_the_value_not_the_numerator() {
     // 1/3 is not representable, so both directions actually round.
-    let a_down = Q::new_rounded(1, 3, Dir::Down).unwrap();
-    let a_up = Q::new_rounded(1, 3, Dir::Up).unwrap();
+    let a_down = Rat::new_rounded(1, 3, Dir::Down).unwrap();
+    let a_up = Rat::new_rounded(1, 3, Dir::Up).unwrap();
     assert_r2(a_down, a_up, &rat_of(1, 3), "1/3");
 
     // Same value, both signs flipped. Down must still be the lower of the two.
-    let b_down = Q::new_rounded(-1, -3, Dir::Down).unwrap();
-    let b_up = Q::new_rounded(-1, -3, Dir::Up).unwrap();
+    let b_down = Rat::new_rounded(-1, -3, Dir::Down).unwrap();
+    let b_up = Rat::new_rounded(-1, -3, Dir::Up).unwrap();
     assert_r2(b_down, b_up, &rat_of(1, 3), "-1/-3");
     assert_eq!(
         rat(a_down),
@@ -715,8 +717,8 @@ fn new_rounded_direction_is_about_the_value_not_the_numerator() {
     assert_eq!(rat(a_up), rat(b_up), "1/3 and -1/-3 must round identically");
 
     // A genuinely negative value brackets on the other side of zero.
-    let c_down = Q::new_rounded(1, -3, Dir::Down).unwrap();
-    let c_up = Q::new_rounded(1, -3, Dir::Up).unwrap();
+    let c_down = Rat::new_rounded(1, -3, Dir::Down).unwrap();
+    let c_up = Rat::new_rounded(1, -3, Dir::Up).unwrap();
     assert_r2(c_down, c_up, &rat_of(-1, 3), "1/-3");
 
     // R3 across a random sweep, including the saturating inputs where the
@@ -726,11 +728,11 @@ fn new_rounded_direction_is_about_the_value_not_the_numerator() {
         let num = rng.next_u64() as i64;
         let den = rng.next_u64() as i64;
         if den == 0 {
-            assert!(Q::new_rounded(num, den, Dir::Nearest).is_none());
+            assert!(Rat::new_rounded(num, den, Dir::Nearest).is_none());
             continue;
         }
         let exact = rat_of(num as i128, den as i128);
-        let r = Q::new_rounded(num, den, Dir::Nearest).unwrap();
+        let r = Rat::new_rounded(num, den, Dir::Nearest).unwrap();
         assert_wf(r, "new_rounded");
         if magnitude_fits(&exact) {
             assert_r3(r, &exact, "new_rounded");
@@ -829,7 +831,7 @@ fn from_parts_dir_matches_the_rational_its_arguments_denote() {
 /// `u64::MAX` and `e == 64` that is about `2^127`, which overflows. This crate
 /// builds with `overflow-checks` on in both profiles, so the old code panicked
 /// here; a dependent crate's default release profile would have wrapped instead
-/// and returned a well-formed `Q` bearing no relation to the input.
+/// and returned a well-formed `Rat` bearing no relation to the input.
 #[test]
 fn from_parts_dir_is_total_outside_its_documented_domain() {
     // `mant` past 2^53, at the exact exponent where the product overflows.

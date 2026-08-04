@@ -10,7 +10,7 @@
 mod common;
 
 use common::*;
-use the_q::{Dir, Q};
+use the_q::{Dir, Rat};
 
 // ---------------------------------------------------------------------------
 // The type invariant
@@ -22,11 +22,11 @@ fn every_operation_preserves_the_invariant() {
     for _ in 0..30_000 {
         let (a, b) = (rng.q(), rng.q());
         for dir in DIRS {
-            assert_wf(Q::add_dir(a, b, dir), "add");
-            assert_wf(Q::sub_dir(a, b, dir), "sub");
-            assert_wf(Q::mul_dir(a, b, dir), "mul");
+            assert_wf(Rat::add_dir(a, b, dir), "add");
+            assert_wf(Rat::sub_dir(a, b, dir), "sub");
+            assert_wf(Rat::mul_dir(a, b, dir), "mul");
             if !b.is_zero() {
-                assert_wf(Q::div_dir(a, b, dir), "div");
+                assert_wf(Rat::div_dir(a, b, dir), "div");
             }
         }
         assert_wf(a.neg(), "neg");
@@ -34,10 +34,10 @@ fn every_operation_preserves_the_invariant() {
         if !a.is_zero() {
             assert_wf(a.recip(), "recip");
         }
-        assert_wf(Q::min(a, b), "min");
-        assert_wf(Q::max(a, b), "max");
-        let (lo, hi) = if Q::le(a, b) { (a, b) } else { (b, a) };
-        assert_wf(Q::clamp(rng.q(), lo, hi), "clamp");
+        assert_wf(Rat::min(a, b), "min");
+        assert_wf(Rat::max(a, b), "max");
+        let (lo, hi) = if Rat::le(a, b) { (a, b) } else { (b, a) };
+        assert_wf(Rat::clamp(rng.q(), lo, hi), "clamp");
     }
 }
 
@@ -52,13 +52,13 @@ fn add_and_mul_are_commutative_bit_for_bit() {
         let (a, b) = (rng.q(), rng.q());
         for dir in DIRS {
             assert_eq!(
-                Q::add_dir(a, b, dir),
-                Q::add_dir(b, a, dir),
+                Rat::add_dir(a, b, dir),
+                Rat::add_dir(b, a, dir),
                 "add is not commutative at {a}, {b}, {dir:?}"
             );
             assert_eq!(
-                Q::mul_dir(a, b, dir),
-                Q::mul_dir(b, a, dir),
+                Rat::mul_dir(a, b, dir),
+                Rat::mul_dir(b, a, dir),
                 "mul is not commutative at {a}, {b}, {dir:?}"
             );
         }
@@ -72,17 +72,17 @@ fn associativity_holds_on_the_exact_path() {
     let mut rng = Rng::new(0xA550C);
     for _ in 0..20_000 {
         let small =
-            |r: &mut Rng| Q::new(r.below(2001) as i64 - 1000, r.below(1000) as i64 + 1).unwrap();
+            |r: &mut Rng| Rat::new(r.below(2001) as i64 - 1000, r.below(1000) as i64 + 1).unwrap();
         let (a, b, c) = (small(&mut rng), small(&mut rng), small(&mut rng));
-        let lhs = Q::add(Q::add(a, b), c);
-        let rhs = Q::add(a, Q::add(b, c));
+        let lhs = Rat::add(Rat::add(a, b), c);
+        let rhs = Rat::add(a, Rat::add(b, c));
         assert_eq!(lhs, rhs, "add not associative on small values");
-        let lhs = Q::mul(Q::mul(a, b), c);
-        let rhs = Q::mul(a, Q::mul(b, c));
+        let lhs = Rat::mul(Rat::mul(a, b), c);
+        let rhs = Rat::mul(a, Rat::mul(b, c));
         assert_eq!(lhs, rhs, "mul not associative on small values");
         // Distributivity too.
-        let lhs = Q::mul(a, Q::add(b, c));
-        let rhs = Q::add(Q::mul(a, b), Q::mul(a, c));
+        let lhs = Rat::mul(a, Rat::add(b, c));
+        let rhs = Rat::add(Rat::mul(a, b), Rat::mul(a, c));
         assert_eq!(lhs, rhs, "distributivity fails on small values");
     }
 }
@@ -97,16 +97,16 @@ fn ord_is_a_total_order_agreeing_with_the_value_order() {
     for _ in 0..20_000 {
         let (a, b, c) = (rng.q(), rng.q(), rng.q());
         // Reflexive, antisymmetric, transitive, total.
-        assert!(Q::le(a, a));
-        assert!(Q::le(a, b) || Q::le(b, a));
-        if Q::le(a, b) && Q::le(b, a) {
+        assert!(Rat::le(a, a));
+        assert!(Rat::le(a, b) || Rat::le(b, a));
+        if Rat::le(a, b) && Rat::le(b, a) {
             assert_eq!(a, b, "antisymmetry: {a} and {b} compare equal but differ");
         }
-        if Q::le(a, b) && Q::le(b, c) {
-            assert!(Q::le(a, c), "transitivity failed on {a}, {b}, {c}");
+        if Rat::le(a, b) && Rat::le(b, c) {
+            assert!(Rat::le(a, c), "transitivity failed on {a}, {b}, {c}");
         }
         // Agreement with the oracle order and with `Ord`.
-        assert_eq!(Q::le(a, b), rat(a) <= rat(b));
+        assert_eq!(Rat::le(a, b), rat(a) <= rat(b));
         assert_eq!(a.cmp(&b), rat(a).cmp(&rat(b)));
         assert_eq!(
             a == b,
@@ -114,11 +114,11 @@ fn ord_is_a_total_order_agreeing_with_the_value_order() {
             "canonicality: eq must be value eq"
         );
         // min/max/clamp agree with the order.
-        assert_eq!(Q::min(a, b), if Q::le(a, b) { a } else { b });
-        assert_eq!(Q::max(a, b), if Q::le(a, b) { b } else { a });
-        let (lo, hi) = if Q::le(a, b) { (a, b) } else { (b, a) };
-        let cl = Q::clamp(c, lo, hi);
-        assert!(Q::le(lo, cl) && Q::le(cl, hi));
+        assert_eq!(Rat::min(a, b), if Rat::le(a, b) { a } else { b });
+        assert_eq!(Rat::max(a, b), if Rat::le(a, b) { b } else { a });
+        let (lo, hi) = if Rat::le(a, b) { (a, b) } else { (b, a) };
+        let cl = Rat::clamp(c, lo, hi);
+        assert!(Rat::le(lo, cl) && Rat::le(cl, hi));
     }
 }
 
@@ -126,18 +126,18 @@ fn ord_is_a_total_order_agreeing_with_the_value_order() {
 fn hash_agrees_with_eq() {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    let h = |q: Q| {
+    let h = |q: Rat| {
         let mut s = DefaultHasher::new();
         q.hash(&mut s);
         s.finish()
     };
     // Canonicality means equal values are structurally identical, so equal
     // values must hash identically — and 6/8 must *be* 3/4, not merely equal.
-    assert_eq!(Q::new(6, 8).unwrap(), Q::new(3, 4).unwrap());
-    assert_eq!(h(Q::new(6, 8).unwrap()), h(Q::new(3, 4).unwrap()));
-    assert_eq!(Q::new(-2, -4).unwrap(), Q::new(1, 2).unwrap());
-    assert_eq!(h(Q::new(2, -4).unwrap()), h(Q::new(-1, 2).unwrap()));
-    assert_eq!(h(Q::new(0, 5).unwrap()), h(Q::zero()));
+    assert_eq!(Rat::new(6, 8).unwrap(), Rat::new(3, 4).unwrap());
+    assert_eq!(h(Rat::new(6, 8).unwrap()), h(Rat::new(3, 4).unwrap()));
+    assert_eq!(Rat::new(-2, -4).unwrap(), Rat::new(1, 2).unwrap());
+    assert_eq!(h(Rat::new(2, -4).unwrap()), h(Rat::new(-1, 2).unwrap()));
+    assert_eq!(h(Rat::new(0, 5).unwrap()), h(Rat::zero()));
 }
 
 // ---------------------------------------------------------------------------
@@ -150,18 +150,21 @@ fn short_decimals_are_exact_end_to_end() {
     // decimals. Everything about them should be exact, all the way through.
     let mut rng = Rng::new(0xDEC1_1A1);
     for _ in 0..20_000 {
-        let a = Q::from_decimal(rng.below(20001) as i64 - 10000, 4).unwrap();
-        let b = Q::from_decimal(rng.below(20001) as i64 - 10000, 4).unwrap();
-        assert_eq!(rat(Q::add(a, b)), rat(a) + rat(b));
-        assert_eq!(rat(Q::sub(a, b)), rat(a) - rat(b));
-        assert_eq!(rat(Q::mul(a, b)), rat(a) * rat(b));
+        let a = Rat::from_decimal(rng.below(20001) as i64 - 10000, 4).unwrap();
+        let b = Rat::from_decimal(rng.below(20001) as i64 - 10000, 4).unwrap();
+        assert_eq!(rat(Rat::add(a, b)), rat(a) + rat(b));
+        assert_eq!(rat(Rat::sub(a, b)), rat(a) - rat(b));
+        assert_eq!(rat(Rat::mul(a, b)), rat(a) * rat(b));
         if !b.is_zero() {
-            assert_eq!(rat(Q::div(a, b)), rat(a) / rat(b));
+            assert_eq!(rat(Rat::div(a, b)), rat(a) / rat(b));
         }
     }
-    assert_eq!(Q::from_decimal(85, 2).unwrap(), Q::new(17, 20).unwrap());
-    assert_eq!(Q::from_decimal(-125, 3).unwrap(), Q::new(-1, 8).unwrap());
-    assert_eq!(Q::from_decimal(0, 4).unwrap(), Q::zero());
+    assert_eq!(Rat::from_decimal(85, 2).unwrap(), Rat::new(17, 20).unwrap());
+    assert_eq!(
+        Rat::from_decimal(-125, 3).unwrap(),
+        Rat::new(-1, 8).unwrap()
+    );
+    assert_eq!(Rat::from_decimal(0, 4).unwrap(), Rat::zero());
 }
 
 #[test]
@@ -169,19 +172,19 @@ fn identities_and_involutions() {
     let mut rng = Rng::new(0x1D3_7);
     for _ in 0..20_000 {
         let a = rng.q();
-        assert_eq!(Q::add(a, Q::zero()), a);
-        assert_eq!(Q::mul(a, Q::one()), a);
-        assert_eq!(Q::mul(a, Q::zero()), Q::zero());
-        assert_eq!(Q::sub(a, a), Q::zero());
+        assert_eq!(Rat::add(a, Rat::zero()), a);
+        assert_eq!(Rat::mul(a, Rat::one()), a);
+        assert_eq!(Rat::mul(a, Rat::zero()), Rat::zero());
+        assert_eq!(Rat::sub(a, a), Rat::zero());
         assert_eq!(a.neg().neg(), a);
         assert_eq!(a.abs().abs(), a.abs());
         assert_eq!(a.neg().abs(), a.abs());
         if !a.is_zero() {
             assert_eq!(a.recip().recip(), a);
-            assert_eq!(Q::div(a, a), Q::one());
-            assert_eq!(Q::mul(a, a.recip()), Q::one());
+            assert_eq!(Rat::div(a, a), Rat::one());
+            assert_eq!(Rat::mul(a, a.recip()), Rat::one());
         }
-        assert_eq!(Q::sub(Q::zero(), a), a.neg());
+        assert_eq!(Rat::sub(Rat::zero(), a), a.neg());
     }
 }
 
@@ -193,19 +196,19 @@ fn identities_and_involutions() {
 fn results_are_byte_identical_across_runs_and_threads() {
     fn workload(seed: u64) -> Vec<(i64, i64)> {
         let mut rng = Rng::new(seed);
-        let mut acc = Q::from_decimal(1, 1).unwrap();
+        let mut acc = Rat::from_decimal(1, 1).unwrap();
         let mut out = Vec::with_capacity(2000);
         for i in 0..2000 {
             let x = rng.q_unit();
             acc = match i % 4 {
-                0 => Q::add(acc, x),
-                1 => Q::mul(acc, x),
-                2 => Q::sub(acc, x),
+                0 => Rat::add(acc, x),
+                1 => Rat::mul(acc, x),
+                2 => Rat::sub(acc, x),
                 _ => {
                     if x.is_zero() {
                         acc
                     } else {
-                        Q::div(acc, x)
+                        Rat::div(acc, x)
                     }
                 }
             };
@@ -236,10 +239,10 @@ fn results_are_byte_identical_across_runs_and_threads() {
 
 #[test]
 fn display_is_canonical() {
-    assert_eq!(Q::new(6, 8).unwrap().to_string(), "3/4");
-    assert_eq!(Q::new(2, -4).unwrap().to_string(), "-1/2");
-    assert_eq!(Q::zero().to_string(), "0/1");
-    assert_eq!(Q::from_decimal(85, 2).unwrap().to_string(), "17/20");
+    assert_eq!(Rat::new(6, 8).unwrap().to_string(), "3/4");
+    assert_eq!(Rat::new(2, -4).unwrap().to_string(), "-1/2");
+    assert_eq!(Rat::zero().to_string(), "0/1");
+    assert_eq!(Rat::from_decimal(85, 2).unwrap().to_string(), "17/20");
 }
 
 #[cfg(feature = "serde")]
@@ -249,21 +252,21 @@ fn serde_round_trips_exactly() {
     for _ in 0..20_000 {
         let a = rng.q();
         let s = serde_json::to_string(&a).unwrap();
-        let back: Q = serde_json::from_str(&s).unwrap();
+        let back: Rat = serde_json::from_str(&s).unwrap();
         assert_eq!(a, back, "serde round-trip changed {a} (encoded as {s})");
     }
     // The encoding is the integer pair, not a float.
     assert_eq!(
-        serde_json::to_string(&Q::new(17, 20).unwrap()).unwrap(),
+        serde_json::to_string(&Rat::new(17, 20).unwrap()).unwrap(),
         "[17,20]"
     );
     // A non-canonical or out-of-budget payload is rejected, not silently fixed
     // into an invariant-violating value.
-    assert!(serde_json::from_str::<Q>("[1,0]").is_err());
-    assert!(serde_json::from_str::<Q>("[9223372036854775807,1]").is_err());
+    assert!(serde_json::from_str::<Rat>("[1,0]").is_err());
+    assert!(serde_json::from_str::<Rat>("[9223372036854775807,1]").is_err());
     // A non-reduced payload is accepted and canonicalised.
-    let q: Q = serde_json::from_str("[6,8]").unwrap();
-    assert_eq!(q, Q::new(3, 4).unwrap());
+    let q: Rat = serde_json::from_str("[6,8]").unwrap();
+    assert_eq!(q, Rat::new(3, 4).unwrap());
 }
 
 // ---------------------------------------------------------------------------
@@ -275,22 +278,22 @@ fn nary_helpers_are_left_folds() {
     let mut rng = Rng::new(0x4A12_0);
     for _ in 0..2_000 {
         let n = (rng.below(8) + 1) as usize;
-        let xs: Vec<Q> = (0..n).map(|_| rng.q_unit()).collect();
+        let xs: Vec<Rat> = (0..n).map(|_| rng.q_unit()).collect();
 
-        let mut expect = Q::zero();
+        let mut expect = Rat::zero();
         for &x in &xs {
-            expect = Q::add(expect, x);
+            expect = Rat::add(expect, x);
         }
         assert_eq!(the_q::nary::sum(&xs), expect);
 
-        let mut expect = Q::one();
+        let mut expect = Rat::one();
         for &x in &xs {
-            expect = Q::mul(expect, x);
+            expect = Rat::mul(expect, x);
         }
         assert_eq!(the_q::nary::product(&xs), expect);
     }
-    assert_eq!(the_q::nary::sum(&[]), Q::zero());
-    assert_eq!(the_q::nary::product(&[]), Q::one());
+    assert_eq!(the_q::nary::sum(&[]), Rat::zero());
+    assert_eq!(the_q::nary::product(&[]), Rat::one());
 }
 
 #[test]
@@ -298,23 +301,23 @@ fn weighted_mean_matches_its_definition() {
     let mut rng = Rng::new(0x3EA9_0);
     for _ in 0..2_000 {
         let n = (rng.below(6) + 1) as usize;
-        let pairs: Vec<(Q, Q)> = (0..n).map(|_| (rng.q_unit(), rng.q_unit())).collect();
+        let pairs: Vec<(Rat, Rat)> = (0..n).map(|_| (rng.q_unit(), rng.q_unit())).collect();
         let got = the_q::nary::weighted_mean(&pairs);
-        let mut num = Q::zero();
-        let mut den = Q::zero();
+        let mut num = Rat::zero();
+        let mut den = Rat::zero();
         for &(w, x) in &pairs {
-            num = Q::add(num, Q::mul(w, x));
-            den = Q::add(den, w);
+            num = Rat::add(num, Rat::mul(w, x));
+            den = Rat::add(den, w);
         }
         if den.is_zero() {
             assert!(got.is_none());
         } else {
-            assert_eq!(got.unwrap(), Q::div(num, den));
+            assert_eq!(got.unwrap(), Rat::div(num, den));
         }
     }
     // Zero total weight has no mean, and the crate says so rather than
     // inventing one.
-    assert!(the_q::nary::weighted_mean(&[(Q::zero(), Q::one())]).is_none());
+    assert!(the_q::nary::weighted_mean(&[(Rat::zero(), Rat::one())]).is_none());
     assert!(the_q::nary::weighted_mean(&[]).is_none());
 }
 
@@ -358,11 +361,11 @@ fn intervals_bracket_the_exact_result() {
 #[test]
 fn interval_width_is_zero_on_the_exact_path() {
     use the_q::interval::QI;
-    let a = QI::exact(Q::from_decimal(85, 2).unwrap());
-    let b = QI::exact(Q::from_decimal(15, 2).unwrap());
+    let a = QI::exact(Rat::from_decimal(85, 2).unwrap());
+    let b = QI::exact(Rat::from_decimal(15, 2).unwrap());
     assert!(QI::add(a, b).width().is_zero());
     assert!(QI::mul(a, b).width().is_zero());
-    assert_eq!(QI::add(a, b).lo, Q::one());
+    assert_eq!(QI::add(a, b).lo, Rat::one());
 }
 
 /// Non-degenerate, arbitrary-sign intervals bracket the exact result of every
@@ -387,7 +390,7 @@ fn signed_intervals_bracket_arbitrary_interior_points() {
         let y = interior_point(&mut rng, b_lo, b_hi);
 
         let s = QI::add(ia, ib);
-        assert!(Q::le(s.lo, s.hi), "sum interval not well-formed");
+        assert!(Rat::le(s.lo, s.hi), "sum interval not well-formed");
         let exact = rat(x) + rat(y);
         assert!(
             rat(s.lo) <= exact && exact <= rat(s.hi),
@@ -397,7 +400,7 @@ fn signed_intervals_bracket_arbitrary_interior_points() {
         );
 
         let d = QI::sub(ia, ib);
-        assert!(Q::le(d.lo, d.hi), "difference interval not well-formed");
+        assert!(Rat::le(d.lo, d.hi), "difference interval not well-formed");
         let exact = rat(x) - rat(y);
         assert!(
             rat(d.lo) <= exact && exact <= rat(d.hi),
@@ -407,7 +410,7 @@ fn signed_intervals_bracket_arbitrary_interior_points() {
         );
 
         let m = QI::mul(ia, ib);
-        assert!(Q::le(m.lo, m.hi), "product interval not well-formed");
+        assert!(Rat::le(m.lo, m.hi), "product interval not well-formed");
         let exact = rat(x) * rat(y);
         assert!(
             rat(m.lo) <= exact && exact <= rat(m.hi),
@@ -440,7 +443,7 @@ fn interval_ops_chain_without_reestablishing_wf() {
         let prod = QI::mul(sum, ic);
         let diff = QI::sub(prod, ia);
         assert!(
-            Q::le(diff.lo, diff.hi),
+            Rat::le(diff.lo, diff.hi),
             "chained interval lost well-formedness"
         );
 
@@ -460,22 +463,22 @@ fn interval_ops_chain_without_reestablishing_wf() {
 /// A uniformly-flavoured pair `(lo, hi)` with `lo <= hi`, drawn from the same
 /// mixture of magnitude classes as `Rng::q` — signed, so both endpoints can
 /// land on either side of zero.
-fn ordered_pair(rng: &mut Rng) -> (Q, Q) {
+fn ordered_pair(rng: &mut Rng) -> (Rat, Rat) {
     let (p, q) = (rng.q(), rng.q());
-    if Q::le(p, q) {
+    if Rat::le(p, q) {
         (p, q)
     } else {
         (q, p)
     }
 }
 
-/// A `Q` in `[lo, hi]`, biased toward the endpoints themselves so the corner
+/// A `Rat` in `[lo, hi]`, biased toward the endpoints themselves so the corner
 /// rule's boundary is exercised as often as its interior.
-fn interior_point(rng: &mut Rng, lo: Q, hi: Q) -> Q {
+fn interior_point(rng: &mut Rng, lo: Rat, hi: Rat) -> Rat {
     match rng.below(4) {
         0 => lo,
         1 => hi,
-        _ => Q::clamp(rng.q(), lo, hi),
+        _ => Rat::clamp(rng.q(), lo, hi),
     }
 }
 
@@ -489,14 +492,14 @@ fn pow_is_repeated_multiplication() {
     for _ in 0..2_000 {
         let a = rng.q_unit();
         let e = rng.below(8) as u32;
-        let mut expect = Q::one();
+        let mut expect = Rat::one();
         for _ in 0..e {
-            expect = Q::mul(expect, a);
+            expect = Rat::mul(expect, a);
         }
         assert_eq!(a.pow_u32(e), expect);
     }
-    assert_eq!(Q::new(2, 3).unwrap().pow_u32(0), Q::one());
-    assert_eq!(Q::new(2, 3).unwrap().pow_u32(3), Q::new(8, 27).unwrap());
+    assert_eq!(Rat::new(2, 3).unwrap().pow_u32(0), Rat::one());
+    assert_eq!(Rat::new(2, 3).unwrap().pow_u32(3), Rat::new(8, 27).unwrap());
 }
 
 // ---------------------------------------------------------------------------
@@ -510,19 +513,19 @@ fn down_never_exceeds_up() {
         let (a, b) = (rng.q(), rng.q());
         for (lo, hi, mid) in [
             (
-                Q::add_dir(a, b, Dir::Down),
-                Q::add_dir(a, b, Dir::Up),
-                Q::add_dir(a, b, Dir::Nearest),
+                Rat::add_dir(a, b, Dir::Down),
+                Rat::add_dir(a, b, Dir::Up),
+                Rat::add_dir(a, b, Dir::Nearest),
             ),
             (
-                Q::mul_dir(a, b, Dir::Down),
-                Q::mul_dir(a, b, Dir::Up),
-                Q::mul_dir(a, b, Dir::Nearest),
+                Rat::mul_dir(a, b, Dir::Down),
+                Rat::mul_dir(a, b, Dir::Up),
+                Rat::mul_dir(a, b, Dir::Nearest),
             ),
         ] {
-            assert!(Q::le(lo, hi), "Down > Up for {a}, {b}");
+            assert!(Rat::le(lo, hi), "Down > Up for {a}, {b}");
             assert!(
-                Q::le(lo, mid) && Q::le(mid, hi),
+                Rat::le(lo, mid) && Rat::le(mid, hi),
                 "Nearest outside [Down, Up]"
             );
         }

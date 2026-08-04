@@ -9,10 +9,10 @@
 #![allow(dead_code)]
 
 use malachite_q::Rational;
-use the_q::{Dir, MAX_MAG, Q};
+use the_q::{Dir, Rat, MAX_MAG};
 
-/// `Q` as an exact oracle rational.
-pub fn rat(q: Q) -> Rational {
+/// `Rat` as an exact oracle rational.
+pub fn rat(q: Rat) -> Rational {
     Rational::from_signeds(q.numerator() as i128, q.denominator() as i128)
 }
 
@@ -68,7 +68,7 @@ pub fn magnitude_fits(r: &Rational) -> bool {
 }
 
 /// Assert the R3 error bound: `|result - exact| * 2^61 <= max(1, |exact|)`.
-pub fn assert_r3(result: Q, exact: &Rational, what: &str) {
+pub fn assert_r3(result: Rat, exact: &Rational, what: &str) {
     let got = rat(result);
     let err = rabs(got.clone() - exact.clone());
     let bound = if rabs(exact.clone()) > one() {
@@ -83,7 +83,7 @@ pub fn assert_r3(result: Q, exact: &Rational, what: &str) {
 }
 
 /// Assert R1: on the exact path the operation must be bit-exact.
-pub fn assert_exact_if_representable(result: Q, exact: &Rational, what: &str) {
+pub fn assert_exact_if_representable(result: Rat, exact: &Rational, what: &str) {
     if fits_budget(exact) {
         assert_eq!(
             rat(result),
@@ -95,7 +95,7 @@ pub fn assert_exact_if_representable(result: Q, exact: &Rational, what: &str) {
 }
 
 /// Assert R2: `Down <= exact <= Up`.
-pub fn assert_r2(down: Q, up: Q, exact: &Rational, what: &str) {
+pub fn assert_r2(down: Rat, up: Rat, exact: &Rational, what: &str) {
     assert!(
         rat(down) <= *exact,
         "R2 (Down) violated for {what}: {} > {exact}",
@@ -112,7 +112,7 @@ pub fn assert_r2(down: Q, up: Q, exact: &Rational, what: &str) {
 ///
 /// The library's own proofs say this always holds; the test checks it anyway,
 /// because a proof that has not been run is a hypothesis.
-pub fn assert_wf(q: Q, what: &str) {
+pub fn assert_wf(q: Rat, what: &str) {
     let (n, d) = (q.numerator(), q.denominator());
     assert!(d > 0, "I1 violated ({what}): den {d} <= 0");
     assert!(d <= MAX_MAG, "I2 violated ({what}): den {d} > MAX_MAG");
@@ -166,10 +166,10 @@ impl Rng {
         self.next_u64() % n
     }
 
-    /// A `Q` drawn from a mixture of magnitude classes: tiny denominators
+    /// A `Rat` drawn from a mixture of magnitude classes: tiny denominators
     /// (the engine's usual case), short decimals, mid-range, and values right
     /// at the budget edge.
-    pub fn q(&mut self) -> Q {
+    pub fn q(&mut self) -> Rat {
         loop {
             let class = self.below(6);
             let (n, d): (i64, i64) = match class {
@@ -192,14 +192,14 @@ impl Rng {
                     MAX_MAG - self.below(4) as i64,
                 ),
             };
-            if let Some(q) = Q::new(n, d) {
+            if let Some(q) = Rat::new(n, d) {
                 return q;
             }
         }
     }
 
-    /// A non-zero `Q`, for division and reciprocal tests.
-    pub fn q_nonzero(&mut self) -> Q {
+    /// A non-zero `Rat`, for division and reciprocal tests.
+    pub fn q_nonzero(&mut self) -> Rat {
         loop {
             let q = self.q();
             if !q.is_zero() {
@@ -208,12 +208,12 @@ impl Rng {
         }
     }
 
-    /// A `Q` in `[0, 1]` — the engine's actual working domain.
-    pub fn q_unit(&mut self) -> Q {
+    /// A `Rat` in `[0, 1]` — the engine's actual working domain.
+    pub fn q_unit(&mut self) -> Rat {
         loop {
             let d = self.below(1 << 30) as i64 + 1;
             let n = self.below(d as u64 + 1) as i64;
-            if let Some(q) = Q::new(n, d) {
+            if let Some(q) = Rat::new(n, d) {
                 return q;
             }
         }

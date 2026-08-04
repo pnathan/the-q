@@ -1,10 +1,10 @@
-//! The `Q` value type, the rounding-direction enum, and the width budget.
+//! The `Rat` value type, the rounding-direction enum, and the width budget.
 //!
 //! The fields are public — Verus cannot state a public invariant about a
-//! datatype whose fields it cannot see (see the note on [`Q`]). The invariant
+//! datatype whose fields it cannot see (see the note on [`Rat`]). The invariant
 //! is established by every constructor and preserved by every operation, and
 //! under Verus it is a precondition of all of them, so a hand-built value is
-//! inert. [`Q::numerator`] and [`Q::denominator`] are the intended accessors.
+//! inert. [`Rat::numerator`] and [`Rat::denominator`] are the intended accessors.
 
 use verus_builtin_macros::verus;
 
@@ -24,7 +24,7 @@ verus! {
 /// `2^127`, overflowing `i128::MAX = 2^127 - 1`.
 pub const MAX_MAG: i64 = 4611686018427387903;  // 2^62 - 1
 
-/// The largest decimal exponent accepted by `crate::q::Q::from_decimal`.
+/// The largest decimal exponent accepted by `crate::q::Rat::from_decimal`.
 ///
 /// `10^18 < 2^62 - 1 <= 10^19`, so eighteen places is the last one whose scale
 /// factor is itself representable.
@@ -66,27 +66,27 @@ pub enum Dir {
 ///
 /// Verus treats a datatype as *opaque* wherever any of its fields is invisible,
 /// and a public specification must be well-formed everywhere it is visible. With
-/// `pub(crate)` fields, `Q::wf` could not so much as mention `self.num` — the
+/// `pub(crate)` fields, `Rat::wf` could not so much as mention `self.num` — the
 /// type invariant would be unstatable in the crate's public API.
 ///
-/// The practical consequence is that `Q { num: 3, den: 0 }` compiles. It is
-/// still not usable: **every** operation in this crate `requires` `Q::wf`, so
+/// The practical consequence is that `Rat { num: 3, den: 0 }` compiles. It is
+/// still not usable: **every** operation in this crate `requires` `Rat::wf`, so
 /// under Verus a hand-built value cannot be passed to anything until the caller
 /// discharges the invariant — which a malformed one cannot do. In unverified
-/// Rust it is an ordinary footgun. Build values with [`Q::new`],
-/// [`Q::from_decimal`] or [`Q::from_int`], which canonicalise and establish the
+/// Rust it is an ordinary footgun. Build values with [`Rat::new`],
+/// [`Rat::from_decimal`] or [`Rat::from_int`], which canonicalise and establish the
 /// invariant for you.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Q {
+pub struct Rat {
     /// The numerator. Coprime to `den`; `|num| <= MAX_MAG`.
     pub num: i64,
     /// The denominator. Strictly positive; `den <= MAX_MAG`.
     pub den: i64,
 }
 
-impl Q {
+impl Rat {
     /// The numerator of the canonical representation. Always coprime to
-    /// [`Q::denominator`].
+    /// [`Rat::denominator`].
     pub fn numerator(&self) -> (r: i64)
         ensures r == self.num,
     {

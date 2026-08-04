@@ -45,7 +45,7 @@ use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::model::*;
 #[allow(unused_imports)]
-use crate::types::{Dir, Q};
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -54,7 +54,7 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// Numerator of the exact left-fold sum of `s`.
-pub open spec fn sum_num(s: Seq<Q>) -> int
+pub open spec fn sum_num(s: Seq<Rat>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -67,7 +67,7 @@ pub open spec fn sum_num(s: Seq<Q>) -> int
 }
 
 /// Denominator of the exact left-fold sum of `s`.
-pub open spec fn sum_den(s: Seq<Q>) -> int
+pub open spec fn sum_den(s: Seq<Rat>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -80,7 +80,7 @@ pub open spec fn sum_den(s: Seq<Q>) -> int
 }
 
 /// Numerator of the exact left-fold product of `s`.
-pub open spec fn prod_num(s: Seq<Q>) -> int
+pub open spec fn prod_num(s: Seq<Rat>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -92,7 +92,7 @@ pub open spec fn prod_num(s: Seq<Q>) -> int
 }
 
 /// Denominator of the exact left-fold product of `s`.
-pub open spec fn prod_den(s: Seq<Q>) -> int
+pub open spec fn prod_den(s: Seq<Rat>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -104,7 +104,7 @@ pub open spec fn prod_den(s: Seq<Q>) -> int
 }
 
 /// Every element of a slice satisfies the type invariant.
-pub open spec fn all_wf(s: Seq<Q>) -> bool {
+pub open spec fn all_wf(s: Seq<Rat>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).wf()
 }
 
@@ -112,7 +112,7 @@ pub open spec fn all_wf(s: Seq<Q>) -> bool {
 ///
 /// This is the hypothesis `product`'s accumulated-error bound needs and
 /// `sum`'s does not: see `theorem_product_error_accumulation` for why.
-pub open spec fn all_unit(s: Seq<Q>) -> bool {
+pub open spec fn all_unit(s: Seq<Rat>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> abs_int((#[trigger] s[i]).n()) <= s[i].d()
 }
 
@@ -121,7 +121,7 @@ pub open spec fn all_unit(s: Seq<Q>) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `xs[0] + xs[1] + ... `, left to right. Empty slice gives `0`.
-pub fn sum(xs: &[Q]) -> (r: Q)
+pub fn sum(xs: &[Rat]) -> (r: Rat)
     requires
         all_wf(xs@),
     ensures
@@ -131,10 +131,10 @@ pub fn sum(xs: &[Q]) -> (r: Q)
         // bound (`theorem_sum_error_accumulation`) over to the real code.
         r == fold_val(xs@),
 {
-    let mut acc = Q::zero();
+    let mut acc = Rat::zero();
     let mut i: usize = 0;
     proof {
-        assert(xs@.subrange(0, 0) =~= Seq::<Q>::empty());
+        assert(xs@.subrange(0, 0) =~= Seq::<Rat>::empty());
     }
     while i < xs.len()
         invariant
@@ -147,7 +147,7 @@ pub fn sum(xs: &[Q]) -> (r: Q)
         proof {
             lemma_fold_snoc(xs@, i as int);
         }
-        acc = Q::add(acc, xs[i]);
+        acc = Rat::add(acc, xs[i]);
         i = i + 1;
     }
     proof {
@@ -157,7 +157,7 @@ pub fn sum(xs: &[Q]) -> (r: Q)
 }
 
 /// Extending a prefix by one element extends the fold by one step.
-pub proof fn lemma_fold_snoc(s: Seq<Q>, i: int)
+pub proof fn lemma_fold_snoc(s: Seq<Rat>, i: int)
     requires
         0 <= i < s.len(),
     ensures
@@ -174,7 +174,7 @@ pub proof fn lemma_fold_snoc(s: Seq<Q>, i: int)
 }
 
 /// `xs[0] * xs[1] * ... `, left to right. Empty slice gives `1`.
-pub fn product(xs: &[Q]) -> (r: Q)
+pub fn product(xs: &[Rat]) -> (r: Rat)
     requires
         all_wf(xs@),
     ensures
@@ -184,10 +184,10 @@ pub fn product(xs: &[Q]) -> (r: Q)
         // the real code.
         r == prod_fold_val(xs@),
 {
-    let mut acc = Q::one();
+    let mut acc = Rat::one();
     let mut i: usize = 0;
     proof {
-        assert(xs@.subrange(0, 0) =~= Seq::<Q>::empty());
+        assert(xs@.subrange(0, 0) =~= Seq::<Rat>::empty());
     }
     while i < xs.len()
         invariant
@@ -200,7 +200,7 @@ pub fn product(xs: &[Q]) -> (r: Q)
         proof {
             lemma_prod_fold_snoc(xs@, i as int);
         }
-        acc = Q::mul(acc, xs[i]);
+        acc = Rat::mul(acc, xs[i]);
         i = i + 1;
     }
     proof {
@@ -210,7 +210,7 @@ pub fn product(xs: &[Q]) -> (r: Q)
 }
 
 /// Extending a prefix by one element extends the product fold by one step.
-pub proof fn lemma_prod_fold_snoc(s: Seq<Q>, i: int)
+pub proof fn lemma_prod_fold_snoc(s: Seq<Rat>, i: int)
     requires
         0 <= i < s.len(),
     ensures
@@ -227,7 +227,7 @@ pub proof fn lemma_prod_fold_snoc(s: Seq<Q>, i: int)
 }
 
 /// Every element of a slice of `(weight, value)` pairs is well-formed.
-pub open spec fn all_wf_pairs(s: Seq<(Q, Q)>) -> bool {
+pub open spec fn all_wf_pairs(s: Seq<(Rat, Rat)>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).0.wf() && s[i].1.wf()
 }
 
@@ -241,7 +241,7 @@ pub open spec fn all_wf_pairs(s: Seq<(Q, Q)>) -> bool {
 /// `-1/(MAX_MAG - 2)` sums to about `-2^-123` and is refused). The mean is
 /// undefined in the first case and unrepresentable in the second, and this crate
 /// invents a value for neither.
-pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
+pub fn weighted_mean(pairs: &[(Rat, Rat)]) -> (r: Option<Rat>)
     requires
         all_wf_pairs(pairs@),
     ensures
@@ -257,11 +257,11 @@ pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
             Dir::Nearest,
         ),
 {
-    let mut acc_num = Q::zero();
-    let mut acc_w = Q::zero();
+    let mut acc_num = Rat::zero();
+    let mut acc_w = Rat::zero();
     let mut i: usize = 0;
     proof {
-        assert(pairs@.subrange(0, 0) =~= Seq::<(Q, Q)>::empty());
+        assert(pairs@.subrange(0, 0) =~= Seq::<(Rat, Rat)>::empty());
     }
     while i < pairs.len()
         invariant
@@ -277,8 +277,8 @@ pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
             lemma_wm_fold_snoc(pairs@, i as int);
         }
         let (w, x) = pairs[i];
-        acc_num = Q::add(acc_num, Q::mul(w, x));
-        acc_w = Q::add(acc_w, w);
+        acc_num = Rat::add(acc_num, Rat::mul(w, x));
+        acc_w = Rat::add(acc_w, w);
         i = i + 1;
     }
     proof {
@@ -287,13 +287,13 @@ pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Option<Q>)
     if acc_w.is_zero() {
         None
     } else {
-        Some(Q::div(acc_num, acc_w))
+        Some(Rat::div(acc_num, acc_w))
     }
 }
 
 /// Extending a prefix by one pair extends both `weighted_mean` folds — the
 /// numerator accumulator and the weight accumulator — by one step.
-pub proof fn lemma_wm_fold_snoc(s: Seq<(Q, Q)>, i: int)
+pub proof fn lemma_wm_fold_snoc(s: Seq<(Rat, Rat)>, i: int)
     requires
         0 <= i < s.len(),
     ensures
@@ -338,11 +338,11 @@ pub proof fn lemma_wm_fold_snoc(s: Seq<(Q, Q)>, i: int)
 /// unfold this at every step, and an existential would force the solver to
 /// guess a witness each time. Being a function also makes the exec `sum`'s
 /// postcondition an equality, which is what pins determinism.
-pub open spec fn fold_val(s: Seq<Q>) -> Q
+pub open spec fn fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Q { num: 0, den: 1 }
+        Rat { num: 0, den: 1 }
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -356,11 +356,11 @@ pub open spec fn fold_val(s: Seq<Q>) -> Q
 
 /// The value the left fold of `s` produces under multiplication, as a
 /// function — the `product` analogue of `fold_val`.
-pub open spec fn prod_fold_val(s: Seq<Q>) -> Q
+pub open spec fn prod_fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Q { num: 1, den: 1 }
+        Rat { num: 1, den: 1 }
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -379,7 +379,7 @@ pub open spec fn prod_fold_val(s: Seq<Q>) -> Q
 ///
 /// For this crate's actual domain it is trivially satisfiable — opinions live
 /// in `[0, 1]`, so `m == 1`.
-pub open spec fn fold_bounded(s: Seq<Q>, m: int) -> bool
+pub open spec fn fold_bounded(s: Seq<Rat>, m: int) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -400,7 +400,7 @@ pub open spec fn fold_bounded(s: Seq<Q>, m: int) -> bool
 }
 
 /// The exact fold denominator is positive, and the fold result is well-formed.
-pub proof fn lemma_fold_wf(s: Seq<Q>)
+pub proof fn lemma_fold_wf(s: Seq<Rat>)
     requires
         all_wf(s),
     ensures
@@ -436,7 +436,7 @@ pub proof fn lemma_fold_wf(s: Seq<Q>)
 /// Every prefix of the product fold has step values bounded by `m`, and
 /// stays on a non-saturating path — the multiplicative analogue of
 /// `fold_bounded`.
-pub open spec fn prod_fold_bounded(s: Seq<Q>, m: int) -> bool
+pub open spec fn prod_fold_bounded(s: Seq<Rat>, m: int) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -458,7 +458,7 @@ pub open spec fn prod_fold_bounded(s: Seq<Q>, m: int) -> bool
 
 /// The exact product-fold denominator is positive, and the fold result is
 /// well-formed.
-pub proof fn lemma_prod_fold_wf(s: Seq<Q>)
+pub proof fn lemma_prod_fold_wf(s: Seq<Rat>)
     requires
         all_wf(s),
     ensures
@@ -507,7 +507,7 @@ pub proof fn lemma_prod_fold_wf(s: Seq<Q>)
 /// geometrically, not additively, and no per-step "one more unit" law would
 /// exist. That is why `theorem_product_error_accumulation` carries the extra
 /// `all_unit` hypothesis that `theorem_sum_error_accumulation` does not need.
-pub proof fn lemma_abs_error_mul_step(prev: Q, pn: int, pd: int, next: Q, r: Q, k: nat, m: int)
+pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r: Rat, k: nat, m: int)
     requires
         prev.wf(),
         next.wf(),
@@ -615,7 +615,7 @@ pub proof fn lemma_abs_error_mul_step(prev: Q, pn: int, pd: int, next: Q, r: Q, 
 /// trivially satisfiable in this crate's actual domain — every opinion
 /// component lives in `[0, 1]` — where it coincides with `fold_bounded`'s own
 /// `m == 1` case, exactly as documented in `docs/SPEC.md` §9.
-pub proof fn theorem_product_error_accumulation(s: Seq<Q>, m: int)
+pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
         all_unit(s),
@@ -691,7 +691,7 @@ pub proof fn theorem_product_error_accumulation(s: Seq<Q>, m: int)
 /// `m == 1` this is `2·10⁴ · 2^-61 ≈ 2^-46.7 ≈ 1·10^-14` — the same precision
 /// class as `f64` accumulation, but deterministic and proven rather than
 /// assumed.
-pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)
+pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
         m >= 1,
@@ -754,7 +754,7 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Q>, m: int)
 
 /// **The exact-path corollary.** If no step of the fold ever leaves the budget,
 /// the whole fold is exact — the k-element lift of R1.
-pub proof fn theorem_exact_fold_is_exact(s: Seq<Q>)
+pub proof fn theorem_exact_fold_is_exact(s: Seq<Rat>)
     requires
         all_wf(s),
         fold_exact(s),
@@ -788,7 +788,7 @@ pub proof fn theorem_exact_fold_is_exact(s: Seq<Q>)
 }
 
 /// Every step of the fold stays on the exact path.
-pub open spec fn fold_exact(s: Seq<Q>) -> bool
+pub open spec fn fold_exact(s: Seq<Rat>) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -814,7 +814,7 @@ pub open spec fn fold_exact(s: Seq<Q>) -> bool
 /// `crate::lipschitz` (`lemma_triangle`, `lemma_mul_lipschitz`,
 /// `lemma_div_lipschitz`).
 #[verifier::rlimit(20)]
-pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int, td: int)
+pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn: int, td: int)
     requires
         prev.wf(),
         last.wf(),
@@ -884,7 +884,7 @@ pub proof fn lemma_exact_step(prev: Q, last: Q, r: Q, pn: int, pd: int, tn: int,
 // for why that composition is intentionally NOT attempted here).
 
 /// Numerator of the exact left-fold sum of just the weights in `s`.
-pub open spec fn wt_num(s: Seq<(Q, Q)>) -> int
+pub open spec fn wt_num(s: Seq<(Rat, Rat)>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -897,7 +897,7 @@ pub open spec fn wt_num(s: Seq<(Q, Q)>) -> int
 }
 
 /// Denominator of the exact left-fold sum of just the weights in `s`.
-pub open spec fn wt_den(s: Seq<(Q, Q)>) -> int
+pub open spec fn wt_den(s: Seq<(Rat, Rat)>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -913,7 +913,7 @@ pub open spec fn wt_den(s: Seq<(Q, Q)>) -> int
 /// the exact per-pair products, with no rounding anywhere. This, not the sum
 /// of the *rounded* per-pair products, is the target `weighted_mean`'s
 /// numerator accumulator is measured against.
-pub open spec fn wsum_num(s: Seq<(Q, Q)>) -> int
+pub open spec fn wsum_num(s: Seq<(Rat, Rat)>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -928,7 +928,7 @@ pub open spec fn wsum_num(s: Seq<(Q, Q)>) -> int
 }
 
 /// Denominator of the true weighted sum `Σ w_i · x_i`.
-pub open spec fn wsum_den(s: Seq<(Q, Q)>) -> int
+pub open spec fn wsum_den(s: Seq<(Rat, Rat)>) -> int
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -943,11 +943,11 @@ pub open spec fn wsum_den(s: Seq<(Q, Q)>) -> int
 
 /// The value the exec loop's weight accumulator (`acc_w`) computes, as a
 /// function — `fold_val` restricted to the weight half of each pair.
-pub open spec fn wt_fold_val(s: Seq<(Q, Q)>) -> Q
+pub open spec fn wt_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Q { num: 0, den: 1 }
+        Rat { num: 0, den: 1 }
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1].0;
@@ -961,12 +961,12 @@ pub open spec fn wt_fold_val(s: Seq<(Q, Q)>) -> Q
 
 /// The value the exec loop's numerator accumulator (`acc_num`) computes: at
 /// each step, round the pair's product, then round it into the running sum
-/// — exactly what `Q::add(acc_num, Q::mul(w, x))` does.
-pub open spec fn wm_num_fold_val(s: Seq<(Q, Q)>) -> Q
+/// — exactly what `Rat::add(acc_num, Rat::mul(w, x))` does.
+pub open spec fn wm_num_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Q { num: 0, den: 1 }
+        Rat { num: 0, den: 1 }
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -985,7 +985,7 @@ pub open spec fn wm_num_fold_val(s: Seq<(Q, Q)>) -> Q
 
 /// Every prefix of the weight fold has step values bounded by `m`, and stays
 /// on a non-saturating path — `fold_bounded` restricted to the weight half.
-pub open spec fn wt_bounded(s: Seq<(Q, Q)>, m: int) -> bool
+pub open spec fn wt_bounded(s: Seq<(Rat, Rat)>, m: int) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -1007,9 +1007,9 @@ pub open spec fn wt_bounded(s: Seq<(Q, Q)>, m: int) -> bool
 
 /// Every prefix of the numerator fold has BOTH of its per-element roundings
 /// — the `mul` and the `add` — bounded by `m` and non-saturating. Two
-/// roundings happen per pair (`Q::mul` then `Q::add`), so this hypothesis
+/// roundings happen per pair (`Rat::mul` then `Rat::add`), so this hypothesis
 /// covers both, unlike `fold_bounded`'s one.
-pub open spec fn wm_num_bounded(s: Seq<(Q, Q)>, m: int) -> bool
+pub open spec fn wm_num_bounded(s: Seq<(Rat, Rat)>, m: int) -> bool
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -1037,7 +1037,7 @@ pub open spec fn wm_num_bounded(s: Seq<(Q, Q)>, m: int) -> bool
 
 /// The exact weight-fold denominator is positive, and the fold result is
 /// well-formed.
-pub proof fn lemma_wt_fold_wf(s: Seq<(Q, Q)>)
+pub proof fn lemma_wt_fold_wf(s: Seq<(Rat, Rat)>)
     requires
         all_wf_pairs(s),
     ensures
@@ -1072,7 +1072,7 @@ pub proof fn lemma_wt_fold_wf(s: Seq<(Q, Q)>)
 
 /// The exact numerator-fold denominator is positive, and the fold result is
 /// well-formed.
-pub proof fn lemma_wm_num_fold_wf(s: Seq<(Q, Q)>)
+pub proof fn lemma_wm_num_fold_wf(s: Seq<(Rat, Rat)>)
     requires
         all_wf_pairs(s),
     ensures
@@ -1119,7 +1119,7 @@ pub proof fn lemma_wm_num_fold_wf(s: Seq<(Q, Q)>)
 /// half of each pair — the induction and the lemma it calls
 /// (`crate::lipschitz::lemma_abs_error_step`) are identical; only the
 /// indexing (`s[i].0` instead of `s[i]`) differs.
-pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Q, Q)>, m: int)
+pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
         m >= 1,
@@ -1182,7 +1182,7 @@ pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Q, Q)>, m: int)
 /// elsewhere in this file, factored out here because
 /// `theorem_wm_num_error_accumulation` needs it applied twice per element
 /// (once for the `mul`, once for the `add`) instead of once.
-pub proof fn lemma_r3_to_abs_error_1(r: Q, n: int, d: int, m: int)
+pub proof fn lemma_r3_to_abs_error_1(r: Rat, n: int, d: int, m: int)
     requires
         r.wf(),
         d > 0,
@@ -1227,7 +1227,7 @@ pub proof fn lemma_r3_to_abs_error_1(r: Q, n: int, d: int, m: int)
 /// this section are the actual "n-ary helper" bound V8 asks for — the
 /// internal accumulation — and are exactly what `docs/SPEC.md` §9 documents
 /// as the honest state of this obligation for `weighted_mean`.
-pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Q, Q)>, m: int)
+pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
         m >= 1,
