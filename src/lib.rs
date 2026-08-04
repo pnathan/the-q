@@ -28,6 +28,48 @@
 //! assert!(Rat::le(Rat::mul_dir(a, a, Dir::Down), Rat::mul_dir(a, a, Dir::Up)));
 //! ```
 //!
+//! ## `Rat` and `Q`
+//!
+//! [`Rat`] above is the verified kernel: exact, canonical, bounded — and
+//! *partial*. `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, and
+//! `Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG`.
+//!
+//! [`Q`] is an extension layer over that kernel which makes "not a representable
+//! rational" an explicit, observable state instead of something the caller is
+//! trusted to have ruled out. Arithmetic on it is **total**: every operation on
+//! every input returns a value in the type, and no operation panics.
+//!
+//! ```
+//! use the_q::{Q, Rat};
+//!
+//! // Division by zero is a value, not a panic. IEEE 754 is the reference model.
+//! assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
+//! assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
+//! assert_eq!(Q::checked_div(Q::one(), Q::zero()), None);
+//!
+//! // Overflow is reported, not clamped — and it is distinguishable from a
+//! // division by zero, which is what the two separate state families buy you.
+//! let m = Q::Number(Rat::new(the_q::MAX_MAG, 1).unwrap());
+//! let over = Q::add(m, m);
+//! assert!(over.is_saturated() && !over.is_infinite());
+//! assert_eq!(over.to_string(), ">max");
+//!
+//! // Saturation denotes finite reals only, so this is exact where `0 * inf`
+//! // would be indeterminate.
+//! assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
+//! assert_eq!(Q::mul(Q::zero(), Q::PosInf), Q::Nan);
+//!
+//! // The order is total, so `Q` can be a map key or be sorted directly.
+//! let mut v = vec![Q::Nan, Q::PosInf, Q::zero(), Q::NegInf];
+//! v.sort();
+//! assert_eq!(v, vec![Q::NegInf, Q::zero(), Q::PosInf, Q::Nan]);
+//!
+//! // But selection propagates Nan, and therefore deliberately disagrees with
+//! // `Ord`-based selection. A fold of `Q::min` is not `slice.iter().min()`.
+//! assert_eq!(Q::min(Q::Nan, Q::one()), Q::Nan);
+//! assert_eq!([Q::Nan, Q::one()].into_iter().min().unwrap(), Q::one());
+//! ```
+//!
 //! ## Design in one paragraph
 //!
 //! Subjective-logic fusion is rational-closed, so `f64` throws away exactness
@@ -96,7 +138,7 @@ pub mod laws;
 pub mod lipschitz;
 pub mod nary;
 
-pub use convert::{from_f64_dir, to_f64, ParseQError};
+pub use convert::{from_f64_dir, q_from_f64, to_f64, ParseQError};
 pub use ext::{Sign, Q};
 pub use interval::QI;
 pub use types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};

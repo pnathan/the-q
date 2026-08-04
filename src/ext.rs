@@ -643,6 +643,9 @@ impl Q {
             // manufacture one, which is what keeps `is_infinite()` meaning
             // "a division by zero happened somewhere upstream".
             r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
+            // ...and conversely an infinite operand always survives, so no
+            // representable sum can come out of one.
+            (a.spec_is_infinite() || b.spec_is_infinite()) ==> !r.spec_is_number(),
     {
         match (a, b) {
             (Q::Nan, _) => Q::Nan,
@@ -696,6 +699,9 @@ impl Q {
             (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
                 || r.spec_is_saturated()),
             r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
+            // An infinite operand yields an infinity or `Nan`, never a
+            // representable product — even against zero, where it is `Nan`.
+            (a.spec_is_infinite() || b.spec_is_infinite()) ==> !r.spec_is_number(),
     {
         match (a, b) {
             (Q::Nan, _) => Q::Nan,
@@ -729,6 +735,100 @@ impl Q {
             (Q::PosInf, Q::NegInf) => Q::NegInf,
             (Q::NegInf, Q::PosInf) => Q::NegInf,
             (Q::NegInf, Q::NegInf) => Q::PosInf,
+        }
+    }
+
+    /// `self` raised to `e`, total.
+    ///
+    /// `pow_u32(a, 0)` is `Number(1)` for **every** `a`, including `Nan` —
+    /// matching IEEE's `NaN^0 == 1`, which #26 §5 calls out rather than leaving
+    /// emergent. The exponent is a count, not a value, so the base's
+    /// informativeness is irrelevant when it is used zero times.
+    ///
+    /// A left fold of [`Q::mul`], the same shape as the kernel's `pow_u32`, so
+    /// the two associate their roundings identically. That matters: with
+    /// rounding, multiplication is *not* associative in general, so a
+    /// square-and-multiply implementation would not merely be faster, it could
+    /// give a different answer.
+    pub fn pow_u32(self, e: u32) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            e == 0 ==> r.spec_is_one(),
+    {
+        let mut acc = Q::one();
+        let mut i: u32 = 0;
+        while i < e
+            invariant
+                acc.wf(),
+                self.wf(),
+                i <= e,
+                i == 0 ==> acc.spec_is_one(),
+            decreases e - i,
+        {
+            acc = Q::mul(acc, self);
+            i = i + 1;
+        }
+        acc
+    }
+
+    /// `a + b` when the result is a representable rational, `None` otherwise.
+    ///
+    /// #26 §3: the kernel's four `checked_*` contracts are literally
+    /// `r.is_none() <==> saturated(...)`, so the discriminant carries precisely
+    /// the same information and these collapse to sugar. A provable
+    /// equivalence, not an approximation — and unlike the kernel's versions
+    /// these cannot panic.
+    pub fn checked_add(a: Q, b: Q) -> (r: Option<Rat>)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.is_some() ==> r.unwrap().wf(),
+            (a.spec_is_nan() || b.spec_is_nan()) ==> r.is_none(),
+            (a.spec_is_infinite() || b.spec_is_infinite()) ==> r.is_none(),
+    {
+        match Q::add(a, b) {
+            Q::Number(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// `a - b` when the result is a representable rational. See
+    /// [`Q::checked_add`].
+    pub fn checked_sub(a: Q, b: Q) -> (r: Option<Rat>)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.is_some() ==> r.unwrap().wf(),
+            (a.spec_is_nan() || b.spec_is_nan()) ==> r.is_none(),
+    {
+        match Q::sub(a, b) {
+            Q::Number(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// `a * b` when the result is a representable rational. See
+    /// [`Q::checked_add`].
+    ///
+    /// Note this can succeed with a *saturated* operand: `Number(0) * PosSat`
+    /// is exactly `Number(0)`, so unlike `checked_add` there is no "a saturated
+    /// input means `None`" rule to state.
+    pub fn checked_mul(a: Q, b: Q) -> (r: Option<Rat>)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.is_some() ==> r.unwrap().wf(),
+            (a.spec_is_nan() || b.spec_is_nan()) ==> r.is_none(),
+            (a.spec_is_infinite() || b.spec_is_infinite()) ==> r.is_none(),
+    {
+        match Q::mul(a, b) {
+            Q::Number(f) => Some(f),
+            _ => None,
         }
     }
 

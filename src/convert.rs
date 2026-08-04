@@ -734,3 +734,60 @@ impl<'de> serde::Deserialize<'de> for crate::ext::Q {
         d.deserialize_any(V)
     }
 }
+
+// ---------------------------------------------------------------------------
+// The f64 boundary for the extended type (issue #26 §8)
+// ---------------------------------------------------------------------------
+
+/// An `f64` as an extended `Q`, **total**.
+///
+/// This is the win §8 calls unclaimed. [`from_f64_dir`] maps `NaN` and both
+/// infinities to `None`, because `Rat` has nowhere to put them; the enum does,
+/// and the mapping is forced rather than chosen — `f64::NAN → Nan`,
+/// `±f64::INFINITY → ±Inf`. Every `f64` now has an image.
+///
+/// A finite `f64` that does not fit the width budget saturates by sign, so the
+/// only way this can fail to be a `Number` is a genuine non-representability,
+/// never a missing case.
+///
+/// # Why there is no `to_f64` for this type
+///
+/// Deliberately absent, per §8. `PosSat → f64::INFINITY` is wrong — the value
+/// is finite — and `PosSat → 4.6e18` is worse, because it claims an exact
+/// magnitude the state explicitly does not have. `to_f64` stays defined only on
+/// [`Rat`], where every value has a real answer.
+///
+/// # Trusted surface
+///
+/// The `f64` classification predicates (`is_nan`, `is_infinite`,
+/// `is_sign_negative`) are used here and are not modelled by Verus, so this
+/// function sits outside the verified region alongside [`f64_decompose`] and
+/// [`to_f64`]. It adds no new *numeric* assumption: the value path still goes
+/// through `from_f64_dir`, and all this contributes is the three-way split on
+/// classes whose meaning IEEE-754 fixes unambiguously.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_f64(v: f64) -> crate::ext::Q {
+    use crate::ext::Q;
+    if v.is_nan() {
+        return Q::Nan;
+    }
+    if v.is_infinite() {
+        return if v.is_sign_negative() {
+            Q::NegInf
+        } else {
+            Q::PosInf
+        };
+    }
+    match from_f64_dir(v, crate::types::Dir::Nearest) {
+        Some(x) => Q::Number(x),
+        // Finite but outside the budget: saturate by sign rather than failing.
+        // `v` is finite and non-representable, so it is genuinely large.
+        None => {
+            if v.is_sign_negative() {
+                Q::NegSat
+            } else {
+                Q::PosSat
+            }
+        }
+    }
+}

@@ -1659,3 +1659,163 @@ fn arithmetic_is_total_and_never_produces_a_malformed_value() {
         }
     }
 }
+
+// ===========================================================================
+// pow, the checked_* sugar, and the f64 boundary
+// ===========================================================================
+
+#[test]
+fn pow_of_zero_is_one_for_every_base_including_nan() {
+    // IEEE's NaN^0 == 1, which #26 §5 states rather than leaving emergent: the
+    // exponent is a count, so the base's informativeness is irrelevant when the
+    // base is used zero times.
+    for q in representatives() {
+        assert_eq!(q.pow_u32(0), Q::one(), "{q}^0 must be one");
+    }
+    assert_eq!(Q::Nan.pow_u32(0), Q::one());
+}
+
+#[test]
+fn pow_matches_repeated_multiplication() {
+    // A left fold of Q::mul, the same association as the kernel's pow_u32 —
+    // which matters, because with rounding multiplication is not associative,
+    // so a square-and-multiply version could give a different answer.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0020);
+    for _ in 0..2_000 {
+        let q = Q::Number(rng.q());
+        for e in 0..6u32 {
+            let mut want = Q::one();
+            for _ in 0..e {
+                want = Q::mul(want, q);
+            }
+            assert_eq!(q.pow_u32(e), want, "pow({q}, {e})");
+        }
+    }
+    // And on the specials.
+    assert_eq!(Q::PosInf.pow_u32(2), Q::PosInf);
+    assert_eq!(Q::NegInf.pow_u32(2), Q::PosInf);
+    assert_eq!(Q::NegInf.pow_u32(3), Q::NegInf);
+    assert_eq!(Q::PosSat.pow_u32(2), Q::PosSat);
+    assert_eq!(Q::NegSat.pow_u32(2), Q::PosSat);
+    assert_eq!(Q::Nan.pow_u32(3), Q::Nan);
+}
+
+#[test]
+fn pow_is_exact_at_one_and_stays_in_the_unit_interval() {
+    // The oracle comparison for `pow` comes for free by composition:
+    // `pow_matches_repeated_multiplication` pins it against `Q::mul`, and
+    // `arithmetic_of_numbers_agrees_with_the_oracle` pins `Q::mul` against
+    // malachite. What is checked here is what composition does *not* give — the
+    // two closure properties a rounding fold could plausibly violate.
+    let one = Rational::from_signeds(1i128, 1i128);
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0021);
+    for _ in 0..3_000 {
+        let x = rng.q_unit(); // in [0,1], so no power can overflow
+        let q = Q::Number(x);
+
+        // e == 1 is the identity, exactly — no rounding may creep in.
+        assert_eq!(q.pow_u32(1), q, "pow({x}, 1) must be the base itself");
+
+        for e in 2..6u32 {
+            match q.pow_u32(e) {
+                Q::Number(r) => {
+                    // A power of a value in [0,1] stays in [0,1], and rounding
+                    // cannot push it out: R3's error is relative, and both
+                    // endpoints are exactly representable.
+                    assert!(
+                        rat(r) >= oracle_zero() && rat(r) <= one,
+                        "pow({x}, {e}) = {r} escaped [0,1]"
+                    );
+                    // Powers are non-increasing on [0,1].
+                    assert!(
+                        Q::le(Q::Number(r), q.pow_u32(e - 1)),
+                        "pow({x}, {e}) exceeds pow({x}, {})",
+                        e - 1
+                    );
+                }
+                other => panic!("pow({x}, {e}) left the Number class: {other}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn checked_operations_are_exactly_the_number_case() {
+    for a in representatives() {
+        for b in representatives() {
+            let num = |q: Q| match q {
+                Q::Number(f) => Some(f),
+                _ => None,
+            };
+            assert_eq!(
+                Q::checked_add(a, b),
+                num(Q::add(a, b)),
+                "checked_add({a},{b})"
+            );
+            assert_eq!(
+                Q::checked_sub(a, b),
+                num(Q::sub(a, b)),
+                "checked_sub({a},{b})"
+            );
+            assert_eq!(
+                Q::checked_mul(a, b),
+                num(Q::mul(a, b)),
+                "checked_mul({a},{b})"
+            );
+            assert_eq!(
+                Q::checked_div(a, b),
+                num(Q::div(a, b)),
+                "checked_div({a},{b})"
+            );
+        }
+    }
+}
+
+#[test]
+fn checked_mul_can_succeed_with_a_saturated_operand() {
+    // Number(0) * PosSat is exactly Number(0), so unlike checked_add there is
+    // no "a saturated input means None" rule. Pinned because the asymmetry is
+    // surprising and follows directly from Sat denoting finite reals only.
+    assert_eq!(
+        Q::checked_mul(Q::zero(), Q::PosSat),
+        Some(Rat::new(0, 1).unwrap())
+    );
+    assert_eq!(Q::checked_add(Q::zero(), Q::PosSat), None);
+}
+
+#[test]
+fn every_f64_has_an_image_in_the_extended_type() {
+    use the_q::q_from_f64;
+    // The win #26 §8 calls unclaimed: from_f64_dir maps these to None because
+    // Rat has nowhere to put them, and the enum does.
+    assert_eq!(q_from_f64(f64::NAN), Q::Nan);
+    assert_eq!(q_from_f64(f64::INFINITY), Q::PosInf);
+    assert_eq!(q_from_f64(f64::NEG_INFINITY), Q::NegInf);
+    assert!(the_q::from_f64_dir(f64::NAN, the_q::Dir::Nearest).is_none());
+
+    // Ordinary values still go through the verified path.
+    assert_eq!(q_from_f64(0.5), Q::Number(Rat::new(1, 2).unwrap()));
+    assert_eq!(q_from_f64(0.0), Q::zero());
+    assert_eq!(q_from_f64(-1.0), Q::neg_one());
+
+    // Finite but past the budget: saturates by sign rather than failing.
+    assert_eq!(q_from_f64(1e30), Q::PosSat);
+    assert_eq!(q_from_f64(-1e30), Q::NegSat);
+
+    // Totality over a wide sweep, including the awkward classes.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0022);
+    for _ in 0..20_000 {
+        let bits = rng.next_u64();
+        let v = f64::from_bits(bits);
+        let q = q_from_f64(v);
+        if let Q::Number(x) = q {
+            common::assert_wf(x, "q_from_f64");
+        }
+        let c = [q.is_number(), q.is_saturated(), q.is_infinite(), q.is_nan()]
+            .iter()
+            .filter(|z| **z)
+            .count();
+        assert_eq!(c, 1, "q_from_f64({v}) produced an unclassified value");
+        assert_eq!(q.is_nan(), v.is_nan(), "NaN must map to Nan and only NaN");
+    }
+}
