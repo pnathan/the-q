@@ -488,6 +488,451 @@ impl Q {
 }
 
 // ---------------------------------------------------------------------------
+// Addition, subtraction, multiplication (issue #26 §10.3)
+//
+// Saturation moves into the enum here. The kernel silently returns
+// `±MAX_MAG/1` when a sum or product leaves the budget — `Rat::add(M, M)` is
+// `M`, wrong by a factor of two and indistinguishable from a real result — and
+// this layer reports `PosSat`/`NegSat` instead.
+//
+// The precision cliffs marked below are option (A) from §6, taken knowingly:
+// the lattice has no element for "sign known, magnitude unknown", so a few
+// cells must answer `Nan` where a `PosUnknown`/`NegUnknown` state would answer
+// precisely. A cliff only bites a computation that continues *after* an
+// overflow, which arguably it should not.
+// ---------------------------------------------------------------------------
+
+impl Q {
+    /// `x + y` for two representable rationals, saturating rather than clamping.
+    fn add_numbers(x: Rat, y: Rat) -> (r: Q)
+        requires
+            x.wf(),
+            y.wf(),
+        ensures
+            r.wf(),
+            !r.spec_is_nan(),
+            !r.spec_is_infinite(),
+    {
+        let n: i128 = crate::q::add_n_exec(x, y);
+        let d: i128 = crate::q::prod_d_exec(x, y);
+        proof {
+            crate::q::lemma_op_widths(x, y);
+            crate::model::lemma_pow2_126();
+        }
+        if crate::q::magnitude_fits_exec(n, d) {
+            Q::Number(Rat::add(x, y))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
+    /// `x * y` for two representable rationals, saturating rather than clamping.
+    fn mul_numbers(x: Rat, y: Rat) -> (r: Q)
+        requires
+            x.wf(),
+            y.wf(),
+        ensures
+            r.wf(),
+            !r.spec_is_nan(),
+            !r.spec_is_infinite(),
+    {
+        let n: i128 = crate::q::mul_n_exec(x, y);
+        let d: i128 = crate::q::prod_d_exec(x, y);
+        proof {
+            crate::q::lemma_op_widths(x, y);
+            crate::model::lemma_pow2_126();
+        }
+        if crate::q::magnitude_fits_exec(n, d) {
+            Q::Number(Rat::mul(x, y))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
+    /// `Number(x) + Sat`, where `sat_pos` says which saturation.
+    ///
+    /// `Number(x) + PosSat` denotes `(MAX_MAG + x, +∞)`. For `x >= 0` that is
+    /// contained in `⟦PosSat⟧` and the answer is sound. For `x < 0` the lower
+    /// endpoint `MAX_MAG + x` can fall as low as `0`, so the image includes
+    /// representable values and `PosSat` would be **unsound** — hence the cliff.
+    fn number_plus_sat(x: Rat, sat_pos: bool) -> (r: Q)
+        requires
+            x.wf(),
+        ensures
+            r.wf(),
+            !r.spec_is_infinite(),
+            !r.spec_is_number(),
+    {
+        let s = x.signum();
+        if sat_pos {
+            if s >= 0 {
+                Q::PosSat
+            } else {
+                Q::Nan
+            }
+        } else {
+            if s <= 0 {
+                Q::NegSat
+            } else {
+                Q::Nan
+            }
+        }
+    }
+
+    /// `Number(x) * Sat`, where `sat_pos` says which saturation.
+    ///
+    /// The boundary is **inclusive**: at `|x| == 1` the image is exactly
+    /// `1 · (MAX_MAG, ∞) = (MAX_MAG, ∞)`, so saturation is sound and minimal
+    /// there. The cliff is the open interval `0 < |x| < 1`, where the image
+    /// `(MAX_MAG·|x|, ∞)` dips below `MAX_MAG`. (An earlier draft of §5 wrote
+    /// the condition as `x > 1`, which gratuitously sent `one() * PosSat` to
+    /// `Nan` and contradicted `neg(PosSat) == NegSat`.)
+    ///
+    /// `Number(0) * Sat` is exactly `Number(0)` — **not** `Nan` — because `Sat`
+    /// denotes finite reals only. This is the clearest case of saturation being
+    /// better behaved than infinity, where `0 · ±∞` genuinely is indeterminate.
+    fn number_times_sat(x: Rat, sat_pos: bool) -> (r: Q)
+        requires
+            x.wf(),
+        ensures
+            r.wf(),
+            !r.spec_is_infinite(),
+    {
+        if x.is_zero() {
+            return Q::zero();
+        }
+        let n = x.numerator();
+        let d = x.denominator();
+        // `|x| >= 1` without division: `|n| >= d`, and `d > 0` by the invariant.
+        let at_least_one = n >= d || n <= 0 - d;
+        if !at_least_one {
+            return Q::Nan;
+        }
+        // Sign of the product of a sign-definite saturation and a nonzero `x`.
+        let positive = (n > 0) == sat_pos;
+        if positive {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
+    /// `a + b`, total.
+    ///
+    /// Replaces a kernel `add` that silently clamps: `Rat::add(MAX_MAG,
+    /// MAX_MAG)` returns `MAX_MAG/1`, wrong by a factor of two, carrying no
+    /// error guarantee and indistinguishable from a real result unless the
+    /// caller happened to reach for `checked_add`.
+    pub fn add(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            a.spec_is_nan() ==> r.spec_is_nan(),
+            b.spec_is_nan() ==> r.spec_is_nan(),
+            // Two representable rationals can only overflow, never become
+            // infinite and never lose all information.
+            (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
+                || r.spec_is_saturated()),
+            // An infinity out requires an infinity in — addition cannot
+            // manufacture one, which is what keeps `is_infinite()` meaning
+            // "a division by zero happened somewhere upstream".
+            r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
+    {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            (Q::Number(x), Q::Number(y)) => Q::add_numbers(x, y),
+            (Q::Number(x), Q::PosSat) => Q::number_plus_sat(x, true),
+            (Q::Number(x), Q::NegSat) => Q::number_plus_sat(x, false),
+            (Q::PosSat, Q::Number(y)) => Q::number_plus_sat(y, true),
+            (Q::NegSat, Q::Number(y)) => Q::number_plus_sat(y, false),
+            // Same-signed saturations reinforce; opposite-signed ones cancel to
+            // something entirely unknown.
+            (Q::PosSat, Q::PosSat) => Q::PosSat,
+            (Q::NegSat, Q::NegSat) => Q::NegSat,
+            (Q::PosSat, Q::NegSat) => Q::Nan,
+            (Q::NegSat, Q::PosSat) => Q::Nan,
+            // An infinity dominates anything finite, saturated or not.
+            (Q::PosInf, Q::NegInf) => Q::Nan,
+            (Q::NegInf, Q::PosInf) => Q::Nan,
+            (Q::PosInf, _) => Q::PosInf,
+            (Q::NegInf, _) => Q::NegInf,
+            (_, Q::PosInf) => Q::PosInf,
+            (_, Q::NegInf) => Q::NegInf,
+        }
+    }
+
+    /// `a - b`, total.
+    ///
+    /// Defined as `a + (-b)`, exactly as §5 specifies, so the two can never
+    /// disagree about an overflowing difference.
+    pub fn sub(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            a.spec_is_nan() ==> r.spec_is_nan(),
+            b.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        Q::add(a, b.neg())
+    }
+
+    /// `a * b`, total.
+    pub fn mul(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            a.spec_is_nan() ==> r.spec_is_nan(),
+            b.spec_is_nan() ==> r.spec_is_nan(),
+            (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
+                || r.spec_is_saturated()),
+            r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
+    {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            (Q::Number(x), Q::Number(y)) => Q::mul_numbers(x, y),
+            (Q::Number(x), Q::PosSat) => Q::number_times_sat(x, true),
+            (Q::Number(x), Q::NegSat) => Q::number_times_sat(x, false),
+            (Q::PosSat, Q::Number(y)) => Q::number_times_sat(y, true),
+            (Q::NegSat, Q::Number(y)) => Q::number_times_sat(y, false),
+            // `0 · ±∞` is genuinely indeterminate — unlike `0 · Sat`, which is
+            // exactly zero.
+            (Q::Number(x), Q::PosInf) => Q::number_times_inf(x, true),
+            (Q::Number(x), Q::NegInf) => Q::number_times_inf(x, false),
+            (Q::PosInf, Q::Number(y)) => Q::number_times_inf(y, true),
+            (Q::NegInf, Q::Number(y)) => Q::number_times_inf(y, false),
+            // Saturations multiply by sign and stay saturated: a product of two
+            // magnitudes above MAX_MAG is far above it.
+            (Q::PosSat, Q::PosSat) => Q::PosSat,
+            (Q::PosSat, Q::NegSat) => Q::NegSat,
+            (Q::NegSat, Q::PosSat) => Q::NegSat,
+            (Q::NegSat, Q::NegSat) => Q::PosSat,
+            (Q::PosSat, Q::PosInf) => Q::PosInf,
+            (Q::PosSat, Q::NegInf) => Q::NegInf,
+            (Q::NegSat, Q::PosInf) => Q::NegInf,
+            (Q::NegSat, Q::NegInf) => Q::PosInf,
+            (Q::PosInf, Q::PosSat) => Q::PosInf,
+            (Q::PosInf, Q::NegSat) => Q::NegInf,
+            (Q::NegInf, Q::PosSat) => Q::NegInf,
+            (Q::NegInf, Q::NegSat) => Q::PosInf,
+            (Q::PosInf, Q::PosInf) => Q::PosInf,
+            (Q::PosInf, Q::NegInf) => Q::NegInf,
+            (Q::NegInf, Q::PosInf) => Q::NegInf,
+            (Q::NegInf, Q::NegInf) => Q::PosInf,
+        }
+    }
+
+    /// `Number(x) * ±∞`. Zero times an infinity is the classic indeterminate.
+    fn number_times_inf(x: Rat, inf_pos: bool) -> (r: Q)
+        requires
+            x.wf(),
+        ensures
+            r.wf(),
+            !r.spec_is_number(),
+            !r.spec_is_saturated(),
+    {
+        let s = x.signum();
+        if s == 0 {
+            Q::Nan
+        } else if (s > 0) == inf_pos {
+            Q::PosInf
+        } else {
+            Q::NegInf
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Negation and absolute value (issue #26 §5)
+//
+// The only entries in the whole design that are exact and total with no
+// precision cliff anywhere: negation is a bijection on every state, and
+// absolute value maps the two sign-definite pairs onto their positive halves.
+// ---------------------------------------------------------------------------
+
+impl Q {
+    /// `-self`. Exact and total.
+    ///
+    /// Negation is sound on the saturations because `⟦PosSat⟧ = (MAX_MAG, ∞)`
+    /// negates exactly onto `⟦NegSat⟧ = (-∞, -MAX_MAG)` — the denotation is
+    /// symmetric, so nothing is lost. The kernel negation cannot overflow
+    /// either: `|num| <= MAX_MAG` keeps it well clear of `i64::MIN`.
+    pub fn neg(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            // Negation permutes the classes rather than collapsing any of them.
+            r.spec_is_number() == self.spec_is_number(),
+            r.spec_is_saturated() == self.spec_is_saturated(),
+            r.spec_is_infinite() == self.spec_is_infinite(),
+            r.spec_is_nan() == self.spec_is_nan(),
+            r.spec_is_zero() == self.spec_is_zero(),
+    {
+        match self {
+            Q::Number(x) => Q::Number(x.neg()),
+            Q::PosSat => Q::NegSat,
+            Q::NegSat => Q::PosSat,
+            Q::PosInf => Q::NegInf,
+            Q::NegInf => Q::PosInf,
+            Q::Nan => Q::Nan,
+        }
+    }
+
+    /// `|self|`. Exact and total.
+    ///
+    /// Note `abs` is *not* injective — it maps both saturations to `PosSat` and
+    /// both infinities to `PosInf` — which is correct and is why `neg` above
+    /// carries the class-preservation postconditions and this one does not.
+    pub fn abs(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            r.spec_is_number() == self.spec_is_number(),
+            r.spec_is_saturated() == self.spec_is_saturated(),
+            r.spec_is_infinite() == self.spec_is_infinite(),
+            r.spec_is_nan() == self.spec_is_nan(),
+            // The result is never negative: a `Number` payload is `>= 0`, and
+            // the only special that survives is the positive one of each pair.
+            r.spec_is_number() ==> r->Number_0.n() >= 0,
+            !r.spec_is_nan() ==> r != Q::NegSat && r != Q::NegInf,
+    {
+        match self {
+            Q::Number(x) => Q::Number(x.abs()),
+            Q::PosSat => Q::PosSat,
+            Q::NegSat => Q::PosSat,
+            Q::PosInf => Q::PosInf,
+            Q::NegInf => Q::PosInf,
+            Q::Nan => Q::Nan,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Selection: min, max, clamp (issue #26 §5)
+//
+// These propagate `Nan`, and are therefore NOT the `Ord`-based selection that
+// `slice.iter().min()` performs. The design is explicit that deriving them from
+// the order would be a defect: `Ord`-based selection gives
+// `min(Nan, Number(5)) == Number(5)`, asserting the true value is exactly 5
+// when it could be anything — reintroducing, through the side door, the precise
+// class of silent wrong answer this type exists to remove.
+//
+// IEEE fought and settled this. 754-2008's `minNum`/`maxNum` returned the
+// non-NaN operand and were **withdrawn** in 754-2019, replaced by
+// NaN-propagating `minimum`/`maximum` with the ignore-NaN behaviour given the
+// separate explicit names `minimumNumber`/`maximumNumber`. Since §4 takes IEEE
+// as the reference model, these are `minimum` semantics.
+//
+// On the sign-definite specials they follow the §5 order, which is sound there
+// because those variants really do sit where the order puts them.
+// ---------------------------------------------------------------------------
+
+impl Q {
+    /// The smaller of `a` and `b`, propagating `Nan`.
+    ///
+    /// **Deliberately disagrees with `Ord`-based selection.** A fold of this is
+    /// not `slice.iter().min()`, and the difference is the point: this returns
+    /// `Nan` if any input is `Nan`, where `Ord` would quietly pick the other
+    /// operand and assert a value it does not have.
+    pub fn min(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            (a.spec_is_nan() || b.spec_is_nan()) ==> r.spec_is_nan(),
+            !(a.spec_is_nan() || b.spec_is_nan()) ==> {
+                &&& (r == a || r == b)
+                &&& Q::spec_le(r, a)
+                &&& Q::spec_le(r, b)
+            },
+    {
+        if a.is_nan() || b.is_nan() {
+            Q::Nan
+        } else if Q::le(a, b) {
+            a
+        } else {
+            b
+        }
+    }
+
+    /// The larger of `a` and `b`, propagating `Nan`. See [`Q::min`].
+    pub fn max(a: Q, b: Q) -> (r: Q)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.wf(),
+            (a.spec_is_nan() || b.spec_is_nan()) ==> r.spec_is_nan(),
+            !(a.spec_is_nan() || b.spec_is_nan()) ==> {
+                &&& (r == a || r == b)
+                &&& Q::spec_le(a, r)
+                &&& Q::spec_le(b, r)
+            },
+    {
+        if a.is_nan() || b.is_nan() {
+            Q::Nan
+        } else if Q::le(a, b) {
+            b
+        } else {
+            a
+        }
+    }
+
+    /// `a` clamped into `[lo, hi]`, propagating `Nan`.
+    ///
+    /// `Nan` in any of the three arguments — including a bound — yields `Nan`.
+    /// Clamping into a range whose endpoint carries no information cannot
+    /// produce an informative answer, and returning `hi` there would be the
+    /// `clamp(Nan, lo, hi) == hi` defect §5 calls out by name.
+    ///
+    /// Unlike the kernel's `clamp` this does **not** require `lo <= hi`: with
+    /// `Nan` admissible as a bound the precondition could not be stated on the
+    /// order alone. An inverted range yields `Nan` rather than an arbitrary
+    /// endpoint, which is the only answer that does not assert something false.
+    pub fn clamp(a: Q, lo: Q, hi: Q) -> (r: Q)
+        requires
+            a.wf(),
+            lo.wf(),
+            hi.wf(),
+        ensures
+            r.wf(),
+            (a.spec_is_nan() || lo.spec_is_nan() || hi.spec_is_nan()) ==> r.spec_is_nan(),
+            (!a.spec_is_nan() && !lo.spec_is_nan() && !hi.spec_is_nan() && Q::spec_le(lo, hi)) ==> {
+                &&& (r == a || r == lo || r == hi)
+                &&& Q::spec_le(lo, r)
+                &&& Q::spec_le(r, hi)
+            },
+    {
+        if a.is_nan() || lo.is_nan() || hi.is_nan() {
+            Q::Nan
+        } else if Q::lt(hi, lo) {
+            // An inverted range has no consistent answer; saying so beats
+            // silently returning an endpoint.
+            Q::Nan
+        } else if Q::lt(a, lo) {
+            lo
+        } else if Q::lt(hi, a) {
+            hi
+        } else {
+            a
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Total division (issue #26 §10.2)
 //
 // This closes the three defects that open #26, all of which reproduce on the

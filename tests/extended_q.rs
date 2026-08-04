@@ -1278,3 +1278,384 @@ fn an_infinity_in_the_quotient_always_points_at_a_zero_divisor() {
         }
     }
 }
+
+// ===========================================================================
+// Stage 3 — add / sub / mul, and the selection and sign operations
+// ===========================================================================
+
+/// The five specials in a fixed order, for the literal tables below.
+const S5: [Q; 5] = [Q::PosSat, Q::NegSat, Q::PosInf, Q::NegInf, Q::Nan];
+
+/// Index into `S5` for a literal table row.
+fn s5_index(q: Q) -> usize {
+    S5.iter().position(|s| *s == q).expect("not a special")
+}
+
+#[test]
+fn addition_special_by_special_matches_the_derived_table() {
+    use Q::{Nan, NegInf, NegSat, PosInf, PosSat};
+    // Rows and columns in S5 order: PosSat, NegSat, PosInf, NegInf, Nan.
+    // Derived from the denotations: same-signed saturations reinforce,
+    // opposite-signed ones cancel to something entirely unknown, and an
+    // infinity dominates anything finite.
+    let table: [[Q; 5]; 5] = [
+        [PosSat, Nan, PosInf, NegInf, Nan],
+        [Nan, NegSat, PosInf, NegInf, Nan],
+        [PosInf, PosInf, PosInf, Nan, Nan],
+        [NegInf, NegInf, Nan, NegInf, Nan],
+        [Nan, Nan, Nan, Nan, Nan],
+    ];
+    for a in S5 {
+        for b in S5 {
+            assert_eq!(
+                Q::add(a, b),
+                table[s5_index(a)][s5_index(b)],
+                "add({a}, {b}) is wrong"
+            );
+        }
+    }
+}
+
+#[test]
+fn multiplication_special_by_special_matches_the_derived_table() {
+    use Q::{Nan, NegInf, NegSat, PosInf, PosSat};
+    let table: [[Q; 5]; 5] = [
+        [PosSat, NegSat, PosInf, NegInf, Nan],
+        [NegSat, PosSat, NegInf, PosInf, Nan],
+        [PosInf, NegInf, PosInf, NegInf, Nan],
+        [NegInf, PosInf, NegInf, PosInf, Nan],
+        [Nan, Nan, Nan, Nan, Nan],
+    ];
+    for a in S5 {
+        for b in S5 {
+            assert_eq!(
+                Q::mul(a, b),
+                table[s5_index(a)][s5_index(b)],
+                "mul({a}, {b}) is wrong"
+            );
+        }
+    }
+}
+
+#[test]
+fn addition_number_by_saturation_respects_the_soundness_cliff() {
+    // Number(x) + PosSat denotes (MAX_MAG + x, +inf). For x >= 0 that sits
+    // inside PosSat's denotation. For x < 0 the lower endpoint can fall to 0,
+    // so the image includes representable values and PosSat would be UNSOUND.
+    for (n, d) in [
+        (0i64, 1i64),
+        (1, 1),
+        (-1, 1),
+        (1, 2),
+        (-1, 2),
+        (MAX_MAG, 1),
+        (-MAX_MAG, 1),
+    ] {
+        let x = Rat::new(n, d).unwrap();
+        let q = Q::Number(x);
+        assert_eq!(
+            Q::add(q, Q::PosSat),
+            if n >= 0 { Q::PosSat } else { Q::Nan },
+            "{x} + PosSat"
+        );
+        assert_eq!(
+            Q::add(q, Q::NegSat),
+            if n <= 0 { Q::NegSat } else { Q::Nan },
+            "{x} + NegSat"
+        );
+        // Addition is commutative, including across the cliff.
+        assert_eq!(Q::add(Q::PosSat, q), Q::add(q, Q::PosSat));
+        assert_eq!(Q::add(Q::NegSat, q), Q::add(q, Q::NegSat));
+        // An infinity dominates any finite value.
+        assert_eq!(Q::add(q, Q::PosInf), Q::PosInf);
+        assert_eq!(Q::add(q, Q::NegInf), Q::NegInf);
+    }
+}
+
+#[test]
+fn multiplication_by_saturation_has_an_inclusive_unit_boundary() {
+    // At |x| == 1 the image is exactly 1 * (M, inf) = (M, inf), so saturation
+    // is sound and minimal. The cliff is the OPEN interval 0 < |x| < 1.
+    // An earlier draft of §5 wrote this as `x > 1`, which sent one() * PosSat
+    // to Nan and contradicted neg(PosSat) == NegSat.
+    assert_eq!(
+        Q::mul(Q::one(), Q::PosSat),
+        Q::PosSat,
+        "boundary is inclusive"
+    );
+    assert_eq!(Q::mul(Q::neg_one(), Q::PosSat), Q::NegSat);
+    assert_eq!(
+        Q::mul(Q::neg_one(), Q::PosSat),
+        Q::PosSat.neg(),
+        "must agree with negation"
+    );
+    // Just inside the cliff.
+    assert_eq!(
+        Q::mul(Q::Number(Rat::new(1, 2).unwrap()), Q::PosSat),
+        Q::Nan
+    );
+    assert_eq!(
+        Q::mul(Q::Number(Rat::new(-1, 2).unwrap()), Q::PosSat),
+        Q::Nan
+    );
+    // Just outside it.
+    assert_eq!(
+        Q::mul(Q::Number(Rat::new(2, 1).unwrap()), Q::PosSat),
+        Q::PosSat
+    );
+    assert_eq!(
+        Q::mul(Q::Number(Rat::new(-2, 1).unwrap()), Q::PosSat),
+        Q::NegSat
+    );
+}
+
+#[test]
+fn zero_times_saturation_is_exactly_zero_but_zero_times_infinity_is_nan() {
+    // The single clearest case of saturation being better behaved than
+    // infinity: Sat denotes finite reals only, so 0 * Sat is exactly 0, while
+    // 0 * inf is genuinely indeterminate.
+    assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
+    assert_eq!(Q::mul(Q::zero(), Q::NegSat), Q::zero());
+    assert_eq!(Q::mul(Q::PosSat, Q::zero()), Q::zero());
+    assert_eq!(Q::mul(Q::zero(), Q::PosInf), Q::Nan);
+    assert_eq!(Q::mul(Q::zero(), Q::NegInf), Q::Nan);
+    assert_eq!(Q::mul(Q::PosInf, Q::zero()), Q::Nan);
+}
+
+#[test]
+fn addition_no_longer_silently_clamps() {
+    // The kernel returns MAX_MAG for MAX_MAG + MAX_MAG: wrong by a factor of
+    // two, carrying no error guarantee, indistinguishable from a real result.
+    let m = Rat::new(MAX_MAG, 1).unwrap();
+    assert_eq!(
+        Rat::add(m, m).numerator(),
+        MAX_MAG,
+        "premise: the kernel still clamps"
+    );
+    assert_eq!(
+        Q::add(Q::Number(m), Q::Number(m)),
+        Q::PosSat,
+        "the extended type must report the overflow"
+    );
+    assert_eq!(Q::add(Q::Number(m).neg(), Q::Number(m).neg()), Q::NegSat);
+}
+
+#[test]
+fn arithmetic_of_numbers_agrees_with_the_oracle() {
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0010);
+    let max = Rational::from_signeds(MAX_MAG as i128, 1i128);
+    let (mut sat_add, mut sat_mul) = (0u32, 0u32);
+    for i in 0..20_000 {
+        // Half the draws are built near the ceiling so the saturating branch is
+        // actually reached; random pairs almost never overflow.
+        let (x, y) = if i % 2 == 0 {
+            let s = if rng.below(2) == 0 { 1i64 } else { -1i64 };
+            (
+                Rat::new(s * (MAX_MAG - rng.below(1000) as i64), 1).unwrap(),
+                Rat::new(MAX_MAG - rng.below(1000) as i64, 1).unwrap(),
+            )
+        } else {
+            (rng.q(), rng.q())
+        };
+        let mag = |r: &Rational| {
+            if *r < oracle_zero() {
+                -r.clone()
+            } else {
+                r.clone()
+            }
+        };
+
+        for (op, exact, got) in [
+            ("add", rat(x) + rat(y), Q::add(Q::Number(x), Q::Number(y))),
+            ("sub", rat(x) - rat(y), Q::sub(Q::Number(x), Q::Number(y))),
+            ("mul", rat(x) * rat(y), Q::mul(Q::Number(x), Q::Number(y))),
+        ] {
+            if mag(&exact) > max {
+                match op {
+                    "add" => sat_add += 1,
+                    "mul" => sat_mul += 1,
+                    _ => {}
+                }
+                assert_eq!(
+                    got,
+                    if exact > oracle_zero() {
+                        Q::PosSat
+                    } else {
+                        Q::NegSat
+                    },
+                    "{op}({x}, {y}) overflows and must saturate by sign, got {got}"
+                );
+            } else {
+                match got {
+                    Q::Number(r) => common::assert_r3(r, &exact, op),
+                    other => panic!("{op}({x}, {y}) = {exact} fits but produced {other}"),
+                }
+            }
+        }
+    }
+    assert!(
+        sat_add > 10 && sat_mul > 10,
+        "saturating paths barely exercised"
+    );
+}
+
+#[test]
+fn subtraction_is_addition_of_the_negation() {
+    // §5 defines it that way, so the two must never disagree about an
+    // overflowing difference.
+    for a in representatives() {
+        for b in representatives() {
+            assert_eq!(Q::sub(a, b), Q::add(a, b.neg()), "sub({a}, {b})");
+        }
+    }
+}
+
+#[test]
+fn addition_and_multiplication_are_commutative_over_every_state() {
+    // Commutativity lifts to the enum trivially, and is worth pinning because
+    // the tables are written out cell by cell and a transposition slip would
+    // otherwise be silent.
+    for a in representatives() {
+        for b in representatives() {
+            assert_eq!(
+                Q::add(a, b),
+                Q::add(b, a),
+                "add not commutative at ({a},{b})"
+            );
+            assert_eq!(
+                Q::mul(a, b),
+                Q::mul(b, a),
+                "mul not commutative at ({a},{b})"
+            );
+        }
+    }
+}
+
+#[test]
+fn negation_and_absolute_value_match_the_derived_table() {
+    assert_eq!(Q::PosSat.neg(), Q::NegSat);
+    assert_eq!(Q::NegSat.neg(), Q::PosSat);
+    assert_eq!(Q::PosInf.neg(), Q::NegInf);
+    assert_eq!(Q::NegInf.neg(), Q::PosInf);
+    assert_eq!(Q::Nan.neg(), Q::Nan);
+
+    assert_eq!(Q::PosSat.abs(), Q::PosSat);
+    assert_eq!(Q::NegSat.abs(), Q::PosSat);
+    assert_eq!(Q::PosInf.abs(), Q::PosInf);
+    assert_eq!(Q::NegInf.abs(), Q::PosInf);
+    assert_eq!(Q::Nan.abs(), Q::Nan);
+
+    // Negation is an involution on every state; abs is idempotent.
+    for q in representatives() {
+        assert_eq!(q.neg().neg(), q, "neg is not an involution at {q}");
+        assert_eq!(q.abs().abs(), q.abs(), "abs is not idempotent at {q}");
+        assert!(
+            !Q::lt(q.abs(), Q::zero()) || q.is_nan(),
+            "{q}.abs() is negative"
+        );
+    }
+}
+
+#[test]
+fn selection_propagates_nan_and_disagrees_with_ord() {
+    // The trap #26 §5 names explicitly. Ord-based selection would give
+    // min(Nan, Number(5)) == Number(5): the true value could be anything and
+    // the result asserts it is exactly 5. IEEE withdrew minNum/maxNum in
+    // 754-2019 for precisely this reason.
+    let five = Q::Number(Rat::new(5, 1).unwrap());
+    assert_eq!(Q::min(Q::Nan, five), Q::Nan);
+    assert_eq!(Q::max(Q::Nan, five), Q::Nan);
+    assert_eq!(Q::min(five, Q::Nan), Q::Nan);
+    assert_eq!(Q::clamp(Q::Nan, Q::zero(), Q::one()), Q::Nan);
+    assert_eq!(Q::clamp(five, Q::Nan, Q::one()), Q::Nan);
+    assert_eq!(Q::clamp(five, Q::zero(), Q::Nan), Q::Nan);
+
+    // ...and the disagreement with Ord-based selection is real, not theoretical.
+    let ord_min = [Q::Nan, five].into_iter().min().unwrap();
+    assert_eq!(ord_min, five, "Ord picks the non-Nan operand");
+    assert_ne!(
+        Q::min(Q::Nan, five),
+        ord_min,
+        "Q::min and slice min are meant to disagree on Nan"
+    );
+}
+
+#[test]
+fn selection_agrees_with_the_order_away_from_nan() {
+    let vs: Vec<Q> = representatives()
+        .into_iter()
+        .filter(|q| !q.is_nan())
+        .collect();
+    for &a in &vs {
+        for &b in &vs {
+            let lo = Q::min(a, b);
+            let hi = Q::max(a, b);
+            assert!(lo == a || lo == b);
+            assert!(
+                Q::le(lo, a) && Q::le(lo, b),
+                "min({a},{b}) not a lower bound"
+            );
+            assert!(
+                Q::le(a, hi) && Q::le(b, hi),
+                "max({a},{b}) not an upper bound"
+            );
+            assert_eq!(lo, if a <= b { a } else { b }, "min disagrees with Ord");
+            // clamp into an ordered range keeps the result inside it.
+            for &c in &vs {
+                if Q::le(lo, hi) {
+                    let r = Q::clamp(c, lo, hi);
+                    assert!(Q::le(lo, r) && Q::le(r, hi), "clamp({c},{lo},{hi}) escaped");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn clamp_reports_an_inverted_range_rather_than_guessing() {
+    // With Nan admissible as a bound, `lo <= hi` cannot be a precondition
+    // stated on the order alone; an inverted range yields Nan rather than an
+    // arbitrary endpoint, which is the only answer that asserts nothing false.
+    assert_eq!(Q::clamp(Q::one(), Q::one(), Q::zero()), Q::Nan);
+    assert_eq!(Q::clamp(Q::zero(), Q::PosInf, Q::NegInf), Q::Nan);
+}
+
+#[test]
+fn arithmetic_is_total_and_never_produces_a_malformed_value() {
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0011);
+    let specials = representatives();
+    for i in 0..20_000 {
+        let a = if i % 6 == 0 {
+            specials[(i as usize) % specials.len()]
+        } else {
+            Q::Number(rng.q())
+        };
+        let b = if i % 4 == 0 {
+            specials[(i as usize * 5) % specials.len()]
+        } else {
+            Q::Number(rng.q())
+        };
+        for q in [
+            Q::add(a, b),
+            Q::sub(a, b),
+            Q::mul(a, b),
+            Q::div(a, b),
+            Q::min(a, b),
+            Q::max(a, b),
+            a.neg(),
+            a.abs(),
+        ] {
+            if let Q::Number(x) = q {
+                common::assert_wf(x, "extended arithmetic");
+            }
+            let c = [q.is_number(), q.is_saturated(), q.is_infinite(), q.is_nan()]
+                .iter()
+                .filter(|z| **z)
+                .count();
+            assert_eq!(
+                c, 1,
+                "an operation on ({a}, {b}) produced {q}, unclassified"
+            );
+        }
+    }
+}
