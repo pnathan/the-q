@@ -10,7 +10,7 @@
 //!   rounding it — is ordinary verified integer arithmetic. The *only* thing
 //!   assumed is that the triple denotes the float.
 //! * [`to_f64`] — display/DTO only. `external_body`. Never feed its output back
-//!   into `Q` arithmetic; that would silently reintroduce every `f64` problem
+//!   into `Rat` arithmetic; that would silently reintroduce every `f64` problem
 //!   this crate exists to remove.
 //!
 //! Both are enumerated in `TRUSTED.md` with their assumed specifications and
@@ -34,7 +34,7 @@ use vstd::prelude::*;
 use crate::model::*;
 #[allow(unused_imports)]
 use crate::round::*;
-use crate::types::{Dir, Q};
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -73,7 +73,7 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
     }
 }
 
-/// Convert an `f64` to a `Q`, rounding in direction `dir`.
+/// Convert an `f64` to a `Rat`, rounding in direction `dir`.
 ///
 /// `None` on NaN, on either infinity, and on `|v| > 2^61` (the specification
 /// explicitly permits restricting the magnitude).
@@ -90,7 +90,7 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
 /// decomposition, and that lives on [`from_parts_dir`], which this is a
 /// two-line composition of. A caller who wants the rounding contract should
 /// read it there and add [`f64_decompose`]'s assumption from `TRUSTED.md`.
-pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Q>)
+pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Rat>)
     ensures
         r.is_some() ==> r.unwrap().wf(),
 {
@@ -124,7 +124,7 @@ pub open spec fn parts_den(e: i32) -> int {
     }
 }
 
-/// The verified core of [`from_f64_dir`]: an IEEE-754 decomposition to a `Q`,
+/// The verified core of [`from_f64_dir`]: an IEEE-754 decomposition to a `Rat`,
 /// rounded in direction `dir`.
 ///
 /// **This is where the contract lives.** `from_f64_dir` cannot state one, because
@@ -156,7 +156,7 @@ pub open spec fn parts_den(e: i32) -> int {
 /// therefore re-check the same bounds and return `None`, which costs one
 /// comparison on a path that already branches and makes the function total for
 /// every caller rather than only for the ones Verus can see.
-pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
+pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>)
     requires
         mant <= 9007199254740992u64,
         -1074 <= e <= 971,
@@ -206,7 +206,7 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
             }
             lemma_r2_r3_directed(parts_num(neg, mant, e), parts_den(e), dir);
         }
-        return Some(Q::zero());
+        return Some(Rat::zero());
     }
     proof {
         lemma_pow2_61();
@@ -393,11 +393,11 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Q>)
 /// one postcondition covering this branch as well as the two that go through
 /// the rounder.
 ///
-/// Builds the pair directly rather than through `Q::new`. `Q::new` returns an
+/// Builds the pair directly rather than through `Rat::new`. `Rat::new` returns an
 /// `Option` and would need a canonical-form uniqueness argument to recover the
 /// exact representation from `q_is`; `gcd(1, 2^61) == 1` is a one-line
 /// discharge of I1 and there is nothing left to reduce.
-pub fn tiny(neg: bool, dir: Dir) -> (r: Q)
+pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
     ensures
         r.wf(),
         r == crate::round::subgrid_endpoint(!neg, dir),
@@ -412,36 +412,36 @@ pub fn tiny(neg: bool, dir: Dir) -> (r: Q)
         crate::gcd::lemma_gcd_le(1nat, 2305843009213693952nat);
     }
     match dir {
-        Dir::Nearest => Q::zero(),
+        Dir::Nearest => Rat::zero(),
         Dir::Down => {
             if neg {
-                Q { num: -1, den: eps_den }
+                Rat { num: -1, den: eps_den }
             } else {
-                Q::zero()
+                Rat::zero()
             }
         },
         Dir::Up => {
             if neg {
-                Q::zero()
+                Rat::zero()
             } else {
-                Q { num: 1, den: eps_den }
+                Rat { num: 1, den: eps_den }
             }
         },
     }
 }
 
-/// Convert a `Q` to the nearest `f64`.
+/// Convert a `Rat` to the nearest `f64`.
 ///
 /// **TRUSTED** (`external_body`), and **display/DTO only**. Proving float
 /// rounding inside Verus is not worth the effort for a function whose entire
 /// job is to hand a number to a JSON encoder. Never feed the result back into
-/// `Q` arithmetic.
+/// `Rat` arithmetic.
 ///
 /// Accuracy: three roundings (numerator, denominator, quotient), so the result
 /// is within about `3·2^-53` relative of the true value. The differential test
 /// suite pins this at 4 ulp against `malachite-q`.
 #[verifier::external_body]
-pub fn to_f64(q: Q) -> f64 {
+pub fn to_f64(q: Rat) -> f64 {
     (q.num as f64) / (q.den as f64)
 }
 
@@ -452,7 +452,7 @@ pub fn to_f64(q: Q) -> f64 {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl core::fmt::Display for Q {
+impl core::fmt::Display for Rat {
     /// `"num/den"`, always in canonical form — so the string is a faithful,
     /// unambiguous rendering of the value.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -463,12 +463,12 @@ impl core::fmt::Display for Q {
 /// Serialise as the `(num, den)` integer pair.
 ///
 /// This round-trips **exactly**, which no `f64` encoding does. The
-/// deserialiser re-canonicalises through [`Q::new`], so a hand-written or
-/// corrupted payload cannot produce a `Q` that violates the type invariant —
+/// deserialiser re-canonicalises through [`Rat::new`], so a hand-written or
+/// corrupted payload cannot produce a `Rat` that violates the type invariant —
 /// it produces an error instead.
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl serde::Serialize for Q {
+impl serde::Serialize for Rat {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
         let mut t = s.serialize_tuple(2)?;
@@ -480,12 +480,314 @@ impl serde::Serialize for Q {
 
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
-impl<'de> serde::Deserialize<'de> for Q {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Q, D::Error> {
+impl<'de> serde::Deserialize<'de> for Rat {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Rat, D::Error> {
         use serde::de::Error;
         let (num, den) = <(i64, i64) as serde::Deserialize>::deserialize(d)?;
-        Q::new(num, den).ok_or_else(|| {
+        Rat::new(num, den).ok_or_else(|| {
             D::Error::custom("the-q: (num, den) pair is not a representable rational")
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The extended `Q`: Display, FromStr and serde (issue #26 §8)
+//
+// One spelling, shared by all three, rather than two that can drift:
+//
+//     nan   inf   -inf   >max   <-max
+//
+// The saturation spellings are deliberately not readable as numbers. Rendering
+// `PosSat` as a numeral would be a lie in either direction: the value is
+// finite, so `inf` is wrong, and it is unknown, so `4611686018427387903` is
+// worse — it would claim an exact value the type explicitly does not have.
+// ---------------------------------------------------------------------------
+
+/// The spelling of `Q::PosSat` in `Display`, `FromStr` and serde.
+const POS_SAT_STR: &str = ">max";
+/// The spelling of `Q::NegSat`.
+const NEG_SAT_STR: &str = "<-max";
+/// The spelling of `Q::PosInf`.
+const POS_INF_STR: &str = "inf";
+/// The spelling of `Q::NegInf`.
+const NEG_INF_STR: &str = "-inf";
+/// The spelling of `Q::Nan`.
+const NAN_STR: &str = "nan";
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::fmt::Display for crate::ext::Q {
+    /// `"num/den"` for a number, and the fixed spelling above for each special.
+    ///
+    /// Every output round-trips through [`FromStr`](core::str::FromStr).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            crate::ext::Q::Number(x) => write!(f, "{}", x),
+            crate::ext::Q::PosSat => f.write_str(POS_SAT_STR),
+            crate::ext::Q::NegSat => f.write_str(NEG_SAT_STR),
+            crate::ext::Q::PosInf => f.write_str(POS_INF_STR),
+            crate::ext::Q::NegInf => f.write_str(NEG_INF_STR),
+            crate::ext::Q::Nan => f.write_str(NAN_STR),
+        }
+    }
+}
+
+/// Why a string could not be parsed as a [`Q`](crate::ext::Q).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ParseQError {
+    /// The input matched no special spelling and was not of the form
+    /// `int` or `int/int`.
+    Malformed,
+    /// A numeral did not fit an `i64`.
+    IntOverflow,
+    /// The denominator was zero.
+    ///
+    /// Rejected rather than mapped to a special. `Q::new(1, 0)` is `PosInf`
+    /// because *a computation* divided by zero and the result has to be some
+    /// value; but `"1/0"` in an input stream is a malformed numeral, and
+    /// silently accepting it would hide the typo that produced it. `Display`
+    /// never emits a zero denominator, so rejecting it costs no round-trip.
+    ZeroDenominator,
+    /// The pair does not reduce to a value inside the width budget.
+    OutOfBudget,
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::fmt::Display for ParseQError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            ParseQError::Malformed => "the-q: not a rational or a recognised special",
+            ParseQError::IntOverflow => "the-q: numeral does not fit an i64",
+            ParseQError::ZeroDenominator => "the-q: denominator is zero",
+            ParseQError::OutOfBudget => "the-q: value is outside the width budget",
+        })
+    }
+}
+
+impl std::error::Error for ParseQError {}
+
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl core::str::FromStr for crate::ext::Q {
+    type Err = ParseQError;
+
+    /// Parses every spelling [`Display`](core::fmt::Display) produces, so the
+    /// round-trip is total over all six states.
+    ///
+    /// The specials are matched **case-insensitively**, following
+    /// `f64::from_str` — IEEE 754 is this type's reference model, and accepting
+    /// `"NaN"` alongside `"nan"` costs nothing. Surrounding whitespace is
+    /// **rejected**, following `i64::from_str`: a parser that silently trims is
+    /// a parser that silently accepts `"1 / 2"` in a data file.
+    ///
+    /// A bare integer (`"5"`) is accepted as well as a ratio (`"5/1"`), because
+    /// it is unambiguous and it is what a human writes.
+    fn from_str(s: &str) -> Result<Self, ParseQError> {
+        use crate::ext::Q;
+
+        if s.eq_ignore_ascii_case(NAN_STR) {
+            return Ok(Q::Nan);
+        }
+        if s.eq_ignore_ascii_case(POS_INF_STR) {
+            return Ok(Q::PosInf);
+        }
+        if s.eq_ignore_ascii_case(NEG_INF_STR) {
+            return Ok(Q::NegInf);
+        }
+        // The saturation spellings contain no letters, so the case-insensitive
+        // comparison is only for uniformity of treatment.
+        if s.eq_ignore_ascii_case(POS_SAT_STR) {
+            return Ok(Q::PosSat);
+        }
+        if s.eq_ignore_ascii_case(NEG_SAT_STR) {
+            return Ok(Q::NegSat);
+        }
+
+        let (num_str, den_str) = match s.split_once('/') {
+            Some((n, d)) => (n, d),
+            None => (s, "1"),
+        };
+        // `split_once` on `"//"` yields `("", "/")`, and on `"1/2/3"` yields
+        // `("1", "2/3")`; both fail here, which is the intent.
+        let num: i64 = parse_i64(num_str)?;
+        let den: i64 = parse_i64(den_str)?;
+        if den == 0 {
+            return Err(ParseQError::ZeroDenominator);
+        }
+        match crate::types::Rat::new(num, den) {
+            Some(x) => Ok(Q::Number(x)),
+            None => Err(ParseQError::OutOfBudget),
+        }
+    }
+}
+
+/// `i64::from_str`, with the overflow case distinguished from the malformed one.
+///
+/// Worth separating: "your number is too big for this type" and "that is not a
+/// number" call for different fixes, and collapsing them into one error throws
+/// away the only information that distinguishes them.
+///
+/// The test is syntactic rather than a re-parse at a wider type. Re-parsing as
+/// `i128` would misreport anything above `i128::MAX` — a well-formed numeral —
+/// as malformed. A numeral is an optional sign followed by at least one ASCII
+/// digit; if the input is one and `i64` still rejected it, the only possible
+/// reason is range.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+fn parse_i64(s: &str) -> Result<i64, ParseQError> {
+    match s.parse::<i64>() {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+            if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+                Err(ParseQError::IntOverflow)
+            } else {
+                Err(ParseQError::Malformed)
+            }
+        }
+    }
+}
+
+/// Serialise a number as the `(num, den)` pair and a special as its string.
+///
+/// This is the untagged shape from issue #26 §8, and it carries that section's
+/// caveat: **it works only in self-describing formats.** The deserialiser has to
+/// ask the format what kind of value comes next, so `bincode` and other
+/// non-self-describing codecs will fail at runtime rather than at compile time.
+/// #26 §12 leaves the "is a wire break acceptable?" question open; if
+/// non-self-describing formats must keep working, this needs to become an
+/// externally tagged representation, which breaks the existing `Rat` wire format.
+///
+/// `Rat`'s own serde impl is untouched by this — a bare `Rat` still round-trips
+/// exactly as it did.
+#[cfg(feature = "serde")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl serde::Serialize for crate::ext::Q {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            crate::ext::Q::Number(x) => x.serialize(s),
+            crate::ext::Q::PosSat => s.serialize_str(POS_SAT_STR),
+            crate::ext::Q::NegSat => s.serialize_str(NEG_SAT_STR),
+            crate::ext::Q::PosInf => s.serialize_str(POS_INF_STR),
+            crate::ext::Q::NegInf => s.serialize_str(NEG_INF_STR),
+            crate::ext::Q::Nan => s.serialize_str(NAN_STR),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl<'de> serde::Deserialize<'de> for crate::ext::Q {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = crate::ext::Q;
+
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(
+                    "a [num, den] pair or one of \"nan\", \"inf\", \"-inf\", \">max\", \"<-max\"",
+                )
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                use crate::ext::Q;
+                // Exact match, not the case-insensitive `FromStr` spelling: a
+                // wire format is machine-written, so a case variant means an
+                // encoder disagreed with this one and should be caught, not
+                // absorbed.
+                match v {
+                    NAN_STR => Ok(Q::Nan),
+                    POS_INF_STR => Ok(Q::PosInf),
+                    NEG_INF_STR => Ok(Q::NegInf),
+                    POS_SAT_STR => Ok(Q::PosSat),
+                    NEG_SAT_STR => Ok(Q::NegSat),
+                    _ => Err(E::custom("the-q: unrecognised special-value string")),
+                }
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+                let num: i64 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("the-q: missing numerator"))?;
+                let den: i64 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("the-q: missing denominator"))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::custom("the-q: expected exactly two elements"));
+                }
+                // Re-canonicalises through `Rat::new`, exactly as `Rat`'s own
+                // deserialiser does, so `[2, 4]` is accepted as `1/2`. A payload
+                // that cannot be canonicalised is an error rather than a
+                // saturation: on the wire, an unrepresentable pair means the
+                // producer and this type disagree, which is worth surfacing.
+                crate::types::Rat::new(num, den)
+                    .map(crate::ext::Q::Number)
+                    .ok_or_else(|| {
+                        A::Error::custom("the-q: (num, den) pair is not a representable rational")
+                    })
+            }
+        }
+
+        // `deserialize_any` is what confines this to self-describing formats.
+        d.deserialize_any(V)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The f64 boundary for the extended type (issue #26 §8)
+// ---------------------------------------------------------------------------
+
+/// An `f64` as an extended `Q`, **total**.
+///
+/// This is the win §8 calls unclaimed. [`from_f64_dir`] maps `NaN` and both
+/// infinities to `None`, because `Rat` has nowhere to put them; the enum does,
+/// and the mapping is forced rather than chosen — `f64::NAN → Nan`,
+/// `±f64::INFINITY → ±Inf`. Every `f64` now has an image.
+///
+/// A finite `f64` that does not fit the width budget saturates by sign, so the
+/// only way this can fail to be a `Number` is a genuine non-representability,
+/// never a missing case.
+///
+/// # Why there is no `to_f64` for this type
+///
+/// Deliberately absent, per §8. `PosSat → f64::INFINITY` is wrong — the value
+/// is finite — and `PosSat → 4.6e18` is worse, because it claims an exact
+/// magnitude the state explicitly does not have. `to_f64` stays defined only on
+/// [`Rat`], where every value has a real answer.
+///
+/// # Trusted surface
+///
+/// The `f64` classification predicates (`is_nan`, `is_infinite`,
+/// `is_sign_negative`) are used here and are not modelled by Verus, so this
+/// function sits outside the verified region alongside [`f64_decompose`] and
+/// [`to_f64`]. It adds no new *numeric* assumption: the value path still goes
+/// through `from_f64_dir`, and all this contributes is the three-way split on
+/// classes whose meaning IEEE-754 fixes unambiguously.
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_f64(v: f64) -> crate::ext::Q {
+    use crate::ext::Q;
+    if v.is_nan() {
+        return Q::Nan;
+    }
+    if v.is_infinite() {
+        return if v.is_sign_negative() {
+            Q::NegInf
+        } else {
+            Q::PosInf
+        };
+    }
+    match from_f64_dir(v, crate::types::Dir::Nearest) {
+        Some(x) => Q::Number(x),
+        // Finite but outside the budget: saturate by sign rather than failing.
+        // `v` is finite and non-representable, so it is genuinely large.
+        None => {
+            if v.is_sign_negative() {
+                Q::NegSat
+            } else {
+                Q::PosSat
+            }
+        }
     }
 }

@@ -6,12 +6,18 @@ takes its `ensures` clause on faith and never looks at the body. Each is listed
 here with the specification that is being assumed and the tests that check the
 assumption against reality.
 
+A third float function, `convert::q_from_f64`, sits outside the verified region
+but is *not* `external_body` and assumes nothing numeric — see the section at
+the end.
+
 There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 Grep for them: `rg 'assume\(|admit\(' src/` returns nothing.
 
 Both trusted functions sit at the crate's `f64` edge. Neither is on any
-arithmetic path — `Q + Q`, `Q * Q`, comparison, canonicalisation and rounding
-never touch a float.
+arithmetic path — `Rat + Rat`, `Rat * Rat`, comparison, canonicalisation and
+rounding never touch a float. The same holds for the extended `Q`: none of
+`Q::add`/`sub`/`mul`/`div`/`recip`, the order, or the predicates touches a
+float.
 
 ---
 
@@ -96,7 +102,7 @@ arbitrary precision.
 
 ```rust
 #[verifier::external_body]
-pub fn to_f64(q: Q) -> f64 {
+pub fn to_f64(q: Rat) -> f64 {
     (q.num as f64) / (q.den as f64)
 }
 ```
@@ -115,10 +121,10 @@ by users: that the returned `f64` is close to `q`.
 then the division), so the relative error is at most about `3 · 2^-53`.
 
 **Tests backing it.** `oracle::to_f64_is_within_four_ulp` converts 20,000 random
-`Q` values, decodes the resulting `f64` back to an exact `Rational` with the
+`Rat` values, decodes the resulting `f64` back to an exact `Rational` with the
 oracle, and asserts the relative error is within 4 ulp.
 
-**Do not feed the output back into `Q`.** `to_f64` is a lossy projection.
+**Do not feed the output back into `Rat`.** `to_f64` is a lossy projection.
 Round-tripping through it silently reintroduces every `f64` problem this crate
 exists to remove — non-associativity, order dependence, and unprovable error.
 Use `serde` (which encodes the exact `(num, den)` pair) or `Display` for
@@ -136,15 +142,34 @@ ergonomics at the crate boundary.
 
 | item | body |
 |---|---|
-| `impl Ord for Q` | delegates to the verified `Q::compare`, mapping its `-1`/`0`/`1` onto `Ordering` |
+| `impl Ord for Rat` | delegates to the verified `Rat::compare`, mapping its `-1`/`0`/`1` onto `Ordering` |
+| `impl PartialOrd for Rat` | delegates to `impl Ord for Rat` |
+| `impl Add/Sub/Mul/Neg for Rat` | delegate to `Rat::add`/`Rat::sub`/`Rat::mul`/`Rat::neg` |
+| `impl Display for Rat` | `write!(f, "{}/{}", num, den)` |
+| `impl Serialize/Deserialize for Rat` (feature `serde`) | encode the `(num, den)` pair; decode through the verified `Rat::new`, so a hand-written or corrupted payload yields an error rather than a value violating the type invariant |
+| `impl Ord for Q` | delegates to the verified `Q::compare`, which is proven total, antisymmetric and transitive against the ghost order |
 | `impl PartialOrd for Q` | delegates to `impl Ord for Q` |
-| `impl Add/Sub/Mul/Neg for Q` | delegate to `Q::add`/`Q::sub`/`Q::mul`/`Q::neg` |
-| `impl Display for Q` | `write!(f, "{}/{}", num, den)` |
-| `impl Serialize/Deserialize for Q` (feature `serde`) | encode the `(num, den)` pair; decode through the verified `Q::new`, so a hand-written or corrupted payload yields an error rather than a value violating the type invariant |
+| `impl Display for Q` | `num/den` for a number; the fixed spellings `nan`, `inf`, `-inf`, `>max`, `<-max` for the specials |
+| `impl FromStr for Q` | parses exactly what `Display` emits, plus a bare integer; rejects whitespace, a zero denominator, and out-of-budget values with distinct errors |
+| `impl Serialize/Deserialize for Q` (feature `serde`) | untagged: the `(num, den)` pair for a number, the `Display` spelling for a special. Decoding goes through the verified `Rat::new`. Uses `deserialize_any`, so it works only in **self-describing** formats — `bincode` and similar will fail at runtime |
+| `impl Add/Sub/Mul/Div/Neg for Q` | delegate to `Q::add`/`sub`/`mul`/`div`/`neg`. **`Div` exists here and not on `Rat`**: the reason `Rat` omits it is that its division carries a precondition (`!b.is_zero()`) an operator cannot express, and `Q::div` is total, so there is no input for which `a / b` fails to produce a value |
+| `impl Default for Q` | `Q::zero()` |
+| `convert::q_from_f64` | total `f64 → Q`. Splits on `is_nan`/`is_infinite`/`is_sign_negative` and delegates the value path to `from_f64_dir`. Adds no numeric assumption beyond `f64_decompose`'s: all it contributes is a three-way split on classes IEEE-754 defines unambiguously |
 
-`Div` is deliberately **not** implemented: division carries a precondition
-(`!b.is_zero()`) that an operator cannot express. Callers use `Q::div`, and
-under Verus they discharge the precondition statically.
+`Q`'s arithmetic — `add`, `sub`, `mul`, `div`, `recip`, `pow_u32`, the four
+`checked_*`, the predicates, the order, and `min`/`max`/`clamp` — is **inside**
+the verified region and contributes no assumptions. What the enum layer does
+not carry is a ghost restatement of the propagation tables in #26 §5; those are
+pinned by exhaustive enumeration of the 6×6 state space in
+`tests/extended_q.rs` rather than by proof, deliberately, because a
+specification shaped exactly like the table it specifies would verify with a
+mistake duplicated into both.
+
+`Div` is deliberately **not** implemented **for `Rat`**: division there carries
+a precondition (`!b.is_zero()`) that an operator cannot express. Callers use
+`Rat::div`, and under Verus they discharge the precondition statically. On the
+extended `Q` that precondition is gone — `Q::div` is total — so the objection no
+longer applies to that type.
 
 These are exercised by the same test suite as everything else —
 `props::ord_is_a_total_order_agreeing_with_the_value_order`,

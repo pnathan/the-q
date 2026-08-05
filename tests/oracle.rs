@@ -15,7 +15,7 @@ mod common;
 
 use common::*;
 use malachite_q::Rational;
-use the_q::{Dir, Q};
+use the_q::{Dir, Rat};
 
 // ---------------------------------------------------------------------------
 // Random differential tests
@@ -28,7 +28,7 @@ fn add_matches_oracle() {
         let (a, b) = (rng.q(), rng.q());
         let exact = rat(a) + rat(b);
         for dir in DIRS {
-            let r = Q::add_dir(a, b, dir);
+            let r = Rat::add_dir(a, b, dir);
             assert_wf(r, "add");
             if magnitude_fits(&exact) {
                 assert_exact_if_representable(r, &exact, "add");
@@ -37,8 +37,8 @@ fn add_matches_oracle() {
         }
         if magnitude_fits(&exact) {
             assert_r2(
-                Q::add_dir(a, b, Dir::Down),
-                Q::add_dir(a, b, Dir::Up),
+                Rat::add_dir(a, b, Dir::Down),
+                Rat::add_dir(a, b, Dir::Up),
                 &exact,
                 "add",
             );
@@ -53,7 +53,7 @@ fn sub_matches_oracle() {
         let (a, b) = (rng.q(), rng.q());
         let exact = rat(a) - rat(b);
         for dir in DIRS {
-            let r = Q::sub_dir(a, b, dir);
+            let r = Rat::sub_dir(a, b, dir);
             assert_wf(r, "sub");
             if magnitude_fits(&exact) {
                 assert_exact_if_representable(r, &exact, "sub");
@@ -62,8 +62,8 @@ fn sub_matches_oracle() {
         }
         if magnitude_fits(&exact) {
             assert_r2(
-                Q::sub_dir(a, b, Dir::Down),
-                Q::sub_dir(a, b, Dir::Up),
+                Rat::sub_dir(a, b, Dir::Down),
+                Rat::sub_dir(a, b, Dir::Up),
                 &exact,
                 "sub",
             );
@@ -78,7 +78,7 @@ fn mul_matches_oracle() {
         let (a, b) = (rng.q(), rng.q());
         let exact = rat(a) * rat(b);
         for dir in DIRS {
-            let r = Q::mul_dir(a, b, dir);
+            let r = Rat::mul_dir(a, b, dir);
             assert_wf(r, "mul");
             if magnitude_fits(&exact) {
                 assert_exact_if_representable(r, &exact, "mul");
@@ -87,8 +87,8 @@ fn mul_matches_oracle() {
         }
         if magnitude_fits(&exact) {
             assert_r2(
-                Q::mul_dir(a, b, Dir::Down),
-                Q::mul_dir(a, b, Dir::Up),
+                Rat::mul_dir(a, b, Dir::Down),
+                Rat::mul_dir(a, b, Dir::Up),
                 &exact,
                 "mul",
             );
@@ -103,7 +103,7 @@ fn div_matches_oracle() {
         let (a, b) = (rng.q(), rng.q_nonzero());
         let exact = rat(a) / rat(b);
         for dir in DIRS {
-            let r = Q::div_dir(a, b, dir);
+            let r = Rat::div_dir(a, b, dir);
             assert_wf(r, "div");
             if magnitude_fits(&exact) {
                 assert_exact_if_representable(r, &exact, "div");
@@ -112,8 +112,8 @@ fn div_matches_oracle() {
         }
         if magnitude_fits(&exact) {
             assert_r2(
-                Q::div_dir(a, b, Dir::Down),
-                Q::div_dir(a, b, Dir::Up),
+                Rat::div_dir(a, b, Dir::Down),
+                Rat::div_dir(a, b, Dir::Up),
                 &exact,
                 "div",
             );
@@ -128,9 +128,9 @@ fn unit_interval_ops_are_always_exact_or_bounded() {
     for _ in 0..20_000 {
         let (a, b) = (rng.q_unit(), rng.q_unit());
         for (name, exact, got) in [
-            ("add", rat(a) + rat(b), Q::add(a, b)),
-            ("mul", rat(a) * rat(b), Q::mul(a, b)),
-            ("sub", rat(a) - rat(b), Q::sub(a, b)),
+            ("add", rat(a) + rat(b), Rat::add(a, b)),
+            ("mul", rat(a) * rat(b), Rat::mul(a, b)),
+            ("sub", rat(a) - rat(b), Rat::sub(a, b)),
         ] {
             assert_wf(got, name);
             assert_exact_if_representable(got, &exact, name);
@@ -148,29 +148,29 @@ fn exhaustive_small_rationals() {
     // Every p/q with |p| <= 12, 1 <= q <= 12: 300 values, 90_000 pairs, four
     // operations, three directions. Small enough to be exhaustive, wide enough
     // to hit every sign and reduction pattern.
-    let mut vals: Vec<Q> = Vec::new();
+    let mut vals: Vec<Rat> = Vec::new();
     for p in -12i64..=12 {
         for q in 1i64..=12 {
-            vals.push(Q::new(p, q).unwrap());
+            vals.push(Rat::new(p, q).unwrap());
         }
     }
     for &a in &vals {
         for &b in &vals {
             for dir in DIRS {
-                let sum = Q::add_dir(a, b, dir);
+                let sum = Rat::add_dir(a, b, dir);
                 assert_wf(sum, "add");
                 assert_eq!(rat(sum), rat(a) + rat(b), "small add {a} + {b}");
 
-                let dif = Q::sub_dir(a, b, dir);
+                let dif = Rat::sub_dir(a, b, dir);
                 assert_wf(dif, "sub");
                 assert_eq!(rat(dif), rat(a) - rat(b), "small sub {a} - {b}");
 
-                let pro = Q::mul_dir(a, b, dir);
+                let pro = Rat::mul_dir(a, b, dir);
                 assert_wf(pro, "mul");
                 assert_eq!(rat(pro), rat(a) * rat(b), "small mul {a} * {b}");
 
                 if !b.is_zero() {
-                    let quo = Q::div_dir(a, b, dir);
+                    let quo = Rat::div_dir(a, b, dir);
                     assert_wf(quo, "div");
                     assert_eq!(rat(quo), rat(a) / rat(b), "small div {a} / {b}");
                 }
@@ -179,9 +179,9 @@ fn exhaustive_small_rationals() {
             let expect = rat(a).cmp(&rat(b));
             let got = a.cmp(&b);
             assert_eq!(got, expect, "cmp {a} vs {b}");
-            assert_eq!(Q::compare(a, b) < 0, expect.is_lt());
-            assert_eq!(Q::compare(a, b) == 0, expect.is_eq());
-            assert_eq!(Q::compare(a, b) > 0, expect.is_gt());
+            assert_eq!(Rat::compare(a, b) < 0, expect.is_lt());
+            assert_eq!(Rat::compare(a, b) == 0, expect.is_eq());
+            assert_eq!(Rat::compare(a, b) > 0, expect.is_gt());
         }
         // Unary operations are exact, always.
         assert_eq!(rat(a.neg()), -rat(a));
@@ -286,20 +286,20 @@ fn long_fold_chain_tracks_oracle() {
     // 10^4 sequential operations, exactly the shape the consuming engine's
     // worst case has. The spec predicts ~k · 2^-61 accumulated relative error.
     let mut rng = Rng::new(0x10CDF01D);
-    let mut acc = Q::from_decimal(5, 1).unwrap();
+    let mut acc = Rat::from_decimal(5, 1).unwrap();
     let mut oracle = rat(acc);
     let k = 10_000u32;
     for i in 0..k {
         let x = rng.q_unit();
         if i % 3 == 0 {
-            acc = Q::mul(acc, x);
+            acc = Rat::mul(acc, x);
             oracle *= rat(x);
         } else {
-            acc = Q::add(acc, x);
+            acc = Rat::add(acc, x);
             oracle += rat(x);
             // Keep it in the unit interval so the comparison stays meaningful.
             if oracle > one() {
-                acc = Q::sub(acc, Q::one());
+                acc = Rat::sub(acc, Rat::one());
                 oracle -= one();
             }
         }

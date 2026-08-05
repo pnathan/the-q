@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  691 verified, 0 errors     <- the-q
+verification results::  819 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -37,7 +37,8 @@ The trajectory, one row per CI round:
 | `c1e3e54` | 442 | 0 |
 | `6c73847` (`main`) | 443 | 0 |
 | `5edea2e` (five merged lines of work) | 665 | 0 |
-| this branch (ingestion contracts, #9) | **691** | **0** |
+| `b27d913` (ingestion contracts, #9) | 691 | 0 |
+| this branch (extended `Q`, #26 stages 1–5) | **819** | **0** |
 
 Verified conditions rose monotonically. The error count did not, and both
 directions had honest causes: it rose when a fixed well-formedness failure
@@ -159,7 +160,7 @@ No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 
 | # | Obligation | Tier | Where |
 |---|---|---|---|
-| V1 | I1 ∧ I2 preserved by every public operation | MUST | `Q::wf` in `model.rs`; every public function `requires` it of inputs and `ensures` it of outputs |
+| V1 | I1 ∧ I2 preserved by every public operation | MUST | `Rat::wf` in `model.rs`; every public function `requires` it of inputs and `ensures` it of outputs |
 | V2 | No panic, no overflow; every `i128` intermediate in range | MUST | `q::lemma_op_widths`, `round::lemma_quotient_bound`, `round::shift_div`, `model::lemma_mul_in_i128` |
 | V3 | Value correctness against the ghost model, division-free | MUST | `model::q_is` / `q_eq` / `q_le`; `round::lemma_r1_identity` |
 | V4 | Rounding contract R1–R4 | MUST | `round::lemma_r1_identity`, `lemma_r2_directed`, `lemma_r3_error`, `lemma_r4_monotone_grid` |
@@ -167,10 +168,12 @@ No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 | V6 | Algebraic laws | MUST | `laws.rs`, whole module |
 | V7 | Error-propagation (Lipschitz) lemmas | SHOULD | `lipschitz.rs` |
 | V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation`, `nary::theorem_product_error_accumulation`, `nary::theorem_wm_num_error_accumulation`, `nary::theorem_wm_denom_error_accumulation` |
+| V9 | Extended `Q`: totality, classification, order laws | MUST | `ext.rs`, whole module |
+| V10 | Roots and transcendentals: totality, termination | MUST | `transcendental.rs`, whole module |
 
 ### V1 — the type invariant
 
-`Q::wf(self)` in `model.rs` is the conjunction of I1 and I2:
+`Rat::wf(self)` in `model.rs` is the conjunction of I1 and I2:
 
 ```
 den > 0  ∧  gcd(|num|, den) == 1  ∧  (num == 0 ⟹ den == 1)
@@ -178,11 +181,11 @@ den > 0  ∧  gcd(|num|, den) == 1  ∧  (num == 0 ⟹ den == 1)
 ```
 
 Every constructor `ensures` it, every operation `requires` it of its inputs and
-`ensures` it of its result. The `Q` fields are public — Verus cannot state a
+`ensures` it of its result. The `Rat` fields are public — Verus cannot state a
 public invariant about a datatype whose fields it cannot see — so a caller *can*
-write `Q { num: 3, den: 0 }`; what it cannot do is pass it to anything, since
+write `Rat { num: 3, den: 0 }`; what it cannot do is pass it to anything, since
 every operation requires the invariant and a malformed value cannot discharge
-it. `serde` deserialisation goes through `Q::new` and returns an error rather
+it. `serde` deserialisation goes through `Rat::new` and returns an error rather
 than a malformed value.
 
 Runtime cross-check: `common::assert_wf` re-derives canonicality with its own
@@ -203,7 +206,7 @@ There is no `wrapping_*`, `saturating_*` or `unchecked_*` call anywhere.
 `[profile.release] overflow-checks = true` keeps the checks on in optimised
 builds, and CI runs the full suite in both profiles.
 
-Division by zero is a **precondition** on `Q::div`, `Q::div_dir` and `Q::recip`,
+Division by zero is a **precondition** on `Rat::div`, `Rat::div_dir` and `Rat::recip`,
 discharged statically by the caller. There is no runtime zero-check to fail.
 
 ### V3 — value correctness, division-free
@@ -242,7 +245,7 @@ commutativity and cross-run determinism provable at all.
   (`lemma_grid_error_step_nearest_half`, division-free
   `2·|sn·rd − rn·2^s| ≤ rd`) composed the same way R3 itself is. This is
   additional to the uniform `B = 61` statement, not a replacement for it — the
-  directed modes stay at `61` — and `Q::add`/`sub`/`mul`/`div` (the only
+  directed modes stay at `61` — and `Rat::add`/`sub`/`mul`/`div` (the only
   operations that fix `dir = Nearest`) `ensures` both.
 * **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
   specification permits. The composed operation is not globally monotone; see
@@ -266,7 +269,7 @@ case (`ensures r.is_none() <==> saturated(...)`).
 * `lemma_gcd_scale` — `gcd(k·a, k·b) == k · gcd(a, b)`.
 * `lemma_gcd_reduce_coprime` — dividing through by the gcd leaves the results
   coprime. **This is the lemma canonicalisation stands on**: it is why
-  `Q::new` produces something satisfying I1.
+  `Rat::new` produces something satisfying I1.
 
 Termination is the `decreases y` measure on the loop, justified by
 `x % y < y` for `y > 0`.
@@ -290,12 +293,90 @@ for the narrow case.
 
 `lemma_canonical_eq` is worth calling out: it derives Euclid's lemma from
 `lemma_gcd_scale` (no Bézout machinery needed) and uses it to show that two
-well-formed `Q` are mathematically equal exactly when they are structurally
+well-formed `Rat` are mathematically equal exactly when they are structurally
 equal. That is what licenses deriving `PartialEq`, `Eq` and `Hash`, and it is
 what makes "deterministic" a fact rather than a hope.
 
 `Ord` is **not** derived — the derived lexicographic order on `(num, den)` is
 not the order on rationals.
+
+### V9 — the extended `Q`
+
+`ext.rs` layers explicit non-representable states over the kernel (issue #26).
+`Rat` is untouched, so **V1–V8 keep their exact statements** — the 691
+obligations that existed before this layer still discharge unchanged, and the
+new total is 742.
+
+| property | status | where |
+|---|---|---|
+| every operation is total — no panic, no malformed output | unconditional | `wf` on every `ensures`; Verus's own no-panic obligation |
+| the four classification predicates partition the type | unconditional | `theorem_classification_partitions` |
+| the order is total | unconditional | `theorem_order_total` |
+| the order is antisymmetric **against structural equality** | unconditional | `theorem_order_antisymmetric` |
+| the order is transitive | unconditional | `theorem_order_transitive` |
+| `spec_eq` ⟺ derived `PartialEq` | unconditional | `theorem_spec_eq_is_structural_eq` |
+| saturation separates strictly from every `Number` | unconditional | `theorem_sat_separates_numbers` |
+| an infinity in a quotient implies a zero divisor or an infinite numerator | unconditional | `Q::div`'s `ensures` |
+| `Nan` is absorbing in `add`/`sub`/`mul`/`div` | unconditional | each operation's `ensures` |
+
+**What is deliberately not proven here.** The cell-by-cell propagation tables of
+#26 §5 are *not* restated as ghost functions. A specification shaped exactly
+like the table it specifies is the circular kind that verifies happily with a
+mistake duplicated into both, so it would buy confidence it has not earned. The
+tables are instead pinned by **exhaustive enumeration** — the state space is
+6×6, so `tests/extended_q.rs` enumerates every cell against expected values
+derived independently from the §2 denotations, rather than sampling.
+
+**The order is on representations, not on denoted values.** Inside `Number` the
+two coincide. Outside it they cannot: `PosSat == PosSat` compares `Equal` while
+the two true values may differ, because `PosSat` denotes an interval rather than
+a point. This is sound for `Ord`, `Eq` and `Hash` — the relation really is an
+equivalence on representations — but it means `Q::compare` answers "are these
+the same state?", not "are these the same number?", and only the former is
+decidable from a saturated value.
+
+**Two deliberate departures from IEEE 754**, both about `Nan`, both required to
+keep `Q` usable in ordinary Rust containers. First, `Nan == Nan` is true, which
+keeps `Eq` lawful and `Hash` consistent with it. Second, `Nan` is *ordered*
+rather than incomparable: IEEE makes every ordered comparison involving NaN
+false, which is exactly what forbids a total order, and `f64` sidesteps that by
+having no `Ord` at all and quarantining the total order in `total_cmp`. These
+are independent decisions — reflexive equality alone would still leave `Nan`
+incomparable — and issue #26 §4, which currently claims there is only one
+departure, is amended accordingly.
+
+### V10 — roots and transcendentals
+
+`transcendental.rs` adds `sqrt`, `cbrt`, `exp`, `exp2`, `ln`, `log2`, `log10`,
+`log`, `powf`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+`sinh`, `cosh` and `tanh`. None of these is rational-closed, so what is proven
+is different in kind from V1–V9:
+
+| property | status | how |
+|---|---|---|
+| every function is total — returns a well-formed `Q` for every input | unconditional | `wf` on every `ensures` |
+| no panics, no overflow | unconditional | Verus's own obligation over the whole module |
+| every loop terminates | unconditional | `decreases` on all of them; all bounds are **fixed constants**, never a convergence test |
+| `isqrt_i64` is the integer square root | unconditional | `r*r <= n < (r+1)*(r+1)` — the *defining* property, not a bound |
+
+**Accuracy is measured, not proven.** Proving an error bound on a rounded
+series in Verus would mean formalising the truncation tail and the accumulated
+rounding together, which is a substantially larger project than the functions
+themselves. Instead each function is checked against an exact-rational oracle
+carried to `2^-90` that shares no structure with the implementation, and the
+worst observed relative error is recorded in `README.md`. That is weaker than a
+proof and is labelled as such.
+
+**Term counts are derived, not chosen.** Each series length is computed from its
+own tail bound against the `2^-61` grid, and the derivation sits next to the
+constant. Shortening them from a uniform twenty changed **no** measured
+accuracy figure, which is the evidence the derivations are right.
+
+**The pinned constants are checked.** `pi`, `e`, `ln2` and `ln10` return
+literals for speed; each keeps its series as a public `*_series` function and a
+test asserts the literal is bit-identical to it. This is not ceremony — the
+`ln10` literal was wrong in the seventh significant figure when first written,
+and the test caught it.
 
 ### V7 — Lipschitz lemmas (SHOULD)
 
@@ -386,7 +467,7 @@ own hypothesis, not `sum`'s hypothesis reused.**
 
 | milestone | scope | status |
 |---|---|---|
-| M1 | `Q`, ghost model, canonical constructor, verified GCD | verified and tested |
+| M1 | `Rat`, ghost model, canonical constructor, verified GCD | verified and tested |
 | M2 | add/sub/mul/div/neg/abs/cmp with exact-path specs | verified and tested |
 | M3 | rounding: budget detection, dyadic snap, R1–R4, exactness theorem | verified and tested against the oracle |
 | M4 | `from_f64_dir`, `to_f64`, `from_decimal`, serde, `Display`, `TRUSTED.md` | complete and tested |

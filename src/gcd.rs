@@ -165,7 +165,7 @@ pub proof fn lemma_gcd_scale(k: nat, a: nat, b: nat)
 
 /// Dividing both arguments by their gcd leaves them coprime.
 ///
-/// This is invariant I1's justification: `Q::new(n, d)` divides through by
+/// This is invariant I1's justification: `Rat::new(n, d)` divides through by
 /// `g = gcd(|n|, d)` and the result is canonical precisely because of this.
 pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
     requires

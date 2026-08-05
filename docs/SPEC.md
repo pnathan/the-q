@@ -10,8 +10,8 @@
 > 1. **Magnitude saturation.** R3 is stated unconditionally below, but it cannot
 >    hold for an exact value whose magnitude exceeds `2^62 − 1`; those results
 >    saturate and the `checked_*` variants report them.
-> 2. **`Q::new`.** §2.1 claims every `i64` pair fits I2 after reduction.
->    `Q::new(i64::MAX, 1)` does not, so `new` returns `None` there too;
+> 2. **`Rat::new`.** §2.1 claims every `i64` pair fits I2 after reduction.
+>    `Rat::new(i64::MAX, 1)` does not, so `new` returns `None` there too;
 >    `new_rounded` is the total variant.
 > 3. **GCD width.** V5 says "u64 Euclid"; canonicalisation reduces `i128`
 >    intermediates, so the verified workhorse is `gcd_u128` with `gcd_u64` as a
@@ -39,14 +39,17 @@ rounding bites (it is an order-of-magnitude larger verification project).
 
 **Naming.** Do NOT name anything `uncertain-logic-2`/`-v2` (collides with an
 existing unrelated crate in the parent monorepo). Crate name is the repo owner's
-choice; this spec calls the type `Q`.
+choice; this spec calls the type `Rat`. (It was called `Q` when this
+specification was written. The name `Q` now belongs to the extended type
+layered over this kernel — see issue #26 — and the rename is mechanical:
+every obligation below keeps its exact statement.)
 
 ---
 
 ## 1. Representation and invariants
 
 ```rust
-pub struct Q { num: i64, den: i64 }   // value = num / den
+pub struct Rat { num: i64, den: i64 }   // value = num / den
 ```
 
 Type invariants — **every public function requires them on inputs and ensures
@@ -92,17 +95,17 @@ everything is proven against.
 Derived from a full scan of the consuming engine (`uncertain-logic`); this is
 the complete surface the fusion rewrite needs. The engine's own formulas (CBF:
 `(b₁u₂ + b₂u₁)/(u₁ + u₂ − u₁u₂)` etc.) live in the ENGINE crate, composed from
-these primitives — do not build fusion into the Q crate.
+these primitives — do not build fusion into the `the-q` crate.
 
 ### 2.1 MUST — constructors
 
 | Function | Contract |
 |---|---|
-| `Q::zero()`, `Q::one()` | exact constants |
-| `Q::from_int(i: i64)` | exact for `|i| ≤ 2^62 − 1`; error/None otherwise |
-| `Q::new(num: i64, den: i64) -> Option<Q>` | None iff `den == 0`; otherwise canonicalize (sign to den>0, GCD-reduce). Inputs within i64 always fit I2 after reduction — exact, never rounds |
-| `Q::from_decimal(mantissa: i64, dec_places: u8) -> Option<Q>` | exact decimal input, e.g. `(85, 2) = 0.85` — the engine's reliability/competence/weight inputs are short decimals; this is the primary ingestion path |
-| `Q::from_f64_dir(v: f64, dir: Dir) -> Option<Q>` | `Dir ∈ {Down, Up, Nearest}`. None on NaN/±inf. Result is a representable Q with the directed inequality vs the exact real value of `v`, and `|result − v| ≤ 2^-B·max(1, |v|)` (B per §3). Restriction to `|v| ≤ 2^61` is acceptable. See §5 boundary note |
+| `Rat::zero()`, `Rat::one()` | exact constants |
+| `Rat::from_int(i: i64)` | exact for `|i| ≤ 2^62 − 1`; error/None otherwise |
+| `Rat::new(num: i64, den: i64) -> Option<Rat>` | None iff `den == 0`; otherwise canonicalize (sign to den>0, GCD-reduce). Inputs within i64 always fit I2 after reduction — exact, never rounds |
+| `Rat::from_decimal(mantissa: i64, dec_places: u8) -> Option<Rat>` | exact decimal input, e.g. `(85, 2) = 0.85` — the engine's reliability/competence/weight inputs are short decimals; this is the primary ingestion path |
+| `Rat::from_f64_dir(v: f64, dir: Dir) -> Option<Rat>` | `Dir ∈ {Down, Up, Nearest}`. None on NaN/±inf. Result is a representable Rat with the directed inequality vs the exact real value of `v`, and `|result − v| ≤ 2^-B·max(1, |v|)` (B per §3). Restriction to `|v| ≤ 2^61` is acceptable. See §5 boundary note |
 
 ### 2.2 MUST — arithmetic
 
@@ -130,14 +133,14 @@ against the ghost order.
 
 | Item | Contract |
 |---|---|
-| `to_f64(q)` | for display/DTO boundary ONLY. This is the one **documented trusted boundary** (`external_body`): proving float rounding in Verus is not worth it. Covered by differential tests instead (§6). Never fed back into Q arithmetic |
+| `to_f64(q)` | for display/DTO boundary ONLY. This is the one **documented trusted boundary** (`external_body`): proving float rounding in Verus is not worth it. Covered by differential tests instead (§6). Never fed back into Rat arithmetic |
 | `Display` | `"num/den"` |
 | `serde` (feature-gated) | serialize as the `(num, den)` integer pair — **exact round-trip**, unlike any f64 encoding |
 | `Hash`, `Eq`, `Ord`, `Clone`, `Copy` | derive; safe because canonical. `Copy` matters: plain 128-bit value type, no heap, trivially `Send + Sync` (the engine holds opinions inside `RwLock`/`Mutex` shared state) |
 
 ### 2.5 SHOULD — n-ary helpers (the ABF formula shape)
 
-`sum(&[Q])`, `product(&[Q])`, `weighted_mean(&[(Q, Q)])` — defined as binary
+`sum(&[Rat])`, `product(&[Rat])`, `weighted_mean(&[(Rat, Rat)])` — defined as binary
 folds (left-to-right, fixed order) so V2 safety is inherited; ensures-clause
 gives the accumulated error bound `k·2^-B` after `k` elements. Do NOT do n-ary
 i128 accumulation (re-opens overflow analysis for no benefit).
@@ -284,12 +287,12 @@ must both pass in CI on every commit.
 
 ## 8. Milestones
 
-1. **M1** — `Q` type, ghost model, canonical constructor, verified GCD (V1, V5).
+1. **M1** — `Rat` type, ghost model, canonical constructor, verified GCD (V1, V5).
 2. **M2** — add/sub/mul/div/neg/abs/cmp with exact-path specs (V2, V3, V6-core).
 3. **M3** — rounding: budget detection, dyadic snap, R1–R4 (V4); exactness theorem.
 4. **M4** — boundary: `from_f64_dir` (bit-decomposition), `to_f64`, `from_decimal`, serde, Display; TRUSTED.md.
 5. **M5** — malachite oracle harness + property tests + CI (verus + cargo + no-LGPL-in-release-tree check).
-6. **M6 (stretch)** — V7 Lipschitz lemmas; interval type `QI = [lo: Q, hi: Q]` on the directed modes.
+6. **M6 (stretch)** — V7 Lipschitz lemmas; interval type `QI = [lo: Rat, hi: Rat]` on the directed modes.
 
 Acceptance = M1–M5 verified and green. The consuming engine rewrite starts
 against the M2 API surface and is a separate project.
@@ -304,16 +307,16 @@ unchanged; each entry below says what §N claims, why it does not hold, and what
 the crate does instead. All four are documented in `README.md` and
 `VERIFICATION.md` as well, and each has a test.*
 
-**§2.1 — `Q::new` cannot be total over `i64` pairs.** The inventory implies that
-every `(num, den)` pair fits I2 once reduced. It does not: `Q::new(i64::MAX, 1)`
-is already in lowest terms and exceeds the `2^62 − 1` budget. `Q::new` is
+**§2.1 — `Rat::new` cannot be total over `i64` pairs.** The inventory implies that
+every `(num, den)` pair fits I2 once reduced. It does not: `Rat::new(i64::MAX, 1)`
+is already in lowest terms and exceeds the `2^62 − 1` budget. `Rat::new` is
 therefore partial in two ways — `None` on `den == 0` *and* on an over-budget
-reduced form — and `Q::new_rounded` is the total variant, returning `None`
+reduced form — and `Rat::new_rounded` is the total variant, returning `None`
 **iff** `den == 0`.
 
 **§3 R3 — the contract is scoped below the magnitude ceiling.** For an exact
 value with `|n/d| > 2^62 − 1` the crate declines to state R3, and results
-saturate. Note this is a *choice*: it is tempting to say no representable `Q`
+saturate. Note this is a *choice*: it is tempting to say no representable `Rat`
 could satisfy the bound there, but that is false — `n/d = MAX_MAG + 1/2` is
 within `2^-61` of `MAX_MAG/1`. The exclusion keeps the contract on one clean
 side of a boundary rather than being forced. R3 is therefore stated under

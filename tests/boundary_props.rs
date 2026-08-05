@@ -17,14 +17,14 @@ mod common;
 use common::*;
 use proptest::prelude::*;
 use the_q::convert::{from_f64_dir, to_f64};
-use the_q::{Dir, Q};
+use the_q::{Dir, Rat};
 
 const DIRS: [Dir; 3] = [Dir::Down, Dir::Up, Dir::Nearest];
 
-/// Arbitrary in-budget `Q`, biased towards the shapes that exercise rounding:
+/// Arbitrary in-budget `Rat`, biased towards the shapes that exercise rounding:
 /// large coprime-ish numerator/denominator pairs rather than small integers.
-fn arb_q() -> impl Strategy<Value = Q> {
-    (any::<i64>(), any::<i64>()).prop_filter_map("constructible", |(n, d)| Q::new(n, d))
+fn arb_q() -> impl Strategy<Value = Rat> {
+    (any::<i64>(), any::<i64>()).prop_filter_map("constructible", |(n, d)| Rat::new(n, d))
 }
 
 proptest! {
@@ -95,9 +95,9 @@ proptest! {
         let ra = rat(a);
         let rb = rat(b);
         for (name, got, exact) in [
-            ("add", Q::add(a, b), ra.clone() + rb.clone()),
-            ("sub", Q::sub(a, b), ra.clone() - rb.clone()),
-            ("mul", Q::mul(a, b), ra.clone() * rb.clone()),
+            ("add", Rat::add(a, b), ra.clone() + rb.clone()),
+            ("sub", Rat::sub(a, b), ra.clone() - rb.clone()),
+            ("mul", Rat::mul(a, b), ra.clone() * rb.clone()),
         ] {
             assert_wf(got, name);
             if magnitude_fits(&exact) {
@@ -107,7 +107,7 @@ proptest! {
         }
         if !b.is_zero() {
             let exact = ra / rb;
-            let got = Q::div(a, b);
+            let got = Rat::div(a, b);
             assert_wf(got, "div");
             if magnitude_fits(&exact) {
                 assert_r3(got, &exact, "div");

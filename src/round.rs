@@ -4,7 +4,7 @@
 //! # The algorithm
 //!
 //! [`round_frac_exec`] takes an *exact* fraction `n / d` computed in `i128` and
-//! produces the `Q` that the operation returns:
+//! produces the `Rat` that the operation returns:
 //!
 //! 1. `n == 0` → `0/1`.
 //! 2. `|n/d| > MAX_MAG` → **saturate** to `±MAX_MAG/1`. R3 is declared not to
@@ -38,7 +38,7 @@
 //! better — but `Dir::Nearest` additionally carries the tighter bound as its
 //! own guarantee: `lemma_grid_error_step_nearest_half` is the half-step form
 //! (division-free: `2·|sn·rd − rn·2^s| <= rd`), `lemma_r3_error_nearest`
-//! composes it into the full bound, and `Q::add`/`sub`/`mul`/`div` each
+//! composes it into the full bound, and `Rat::add`/`sub`/`mul`/`div` each
 //! `ensures` it alongside the uniform one.
 //!
 //! # Why the shift is `62 - k` and not `61 - k`
@@ -77,7 +77,7 @@ use vstd::prelude::*;
 use crate::gcd::*;
 #[allow(unused_imports)]
 use crate::model::*;
-use crate::types::{Dir, MAX_MAG, Q};
+use crate::types::{Dir, Rat, MAX_MAG};
 
 verus! {
 
@@ -150,26 +150,26 @@ pub open spec fn exact_path(n: int, d: int) -> bool {
 /// function (rather than only by its properties) is what makes commutativity
 /// and cross-run determinism provable at all: `add(a, b)` and `add(b, a)` feed
 /// provably equal `int`s into the same function.
-pub open spec fn round_frac(n: int, d: int, dir: Dir) -> Q {
+pub open spec fn round_frac(n: int, d: int, dir: Dir) -> Rat {
     if n == 0 {
-        Q { num: 0, den: 1 }
+        Rat { num: 0, den: 1 }
     } else if !magnitude_fits(n, d) {
         if n > 0 {
-            Q { num: MAX_MAG, den: 1 }
+            Rat { num: MAX_MAG, den: 1 }
         } else {
-            Q { num: (-(MAX_MAG as int)) as i64, den: 1 }
+            Rat { num: (-(MAX_MAG as int)) as i64, den: 1 }
         }
     } else {
         let rn = red_num(n, d);
         let rd = red_den(n, d);
         if fits_budget(rn, rd) {
-            Q { num: rn as i64, den: rd as i64 }
+            Rat { num: rn as i64, den: rd as i64 }
         } else {
             let s = snap_shift(rn, rd);
             let sn = grid_num(rn, rd, s, dir);
             let sd = pow2(s);
             let g2 = gcd_int(sn, sd);
-            Q { num: (sn / g2) as i64, den: (sd / g2) as i64 }
+            Rat { num: (sn / g2) as i64, den: (sd / g2) as i64 }
         }
     }
 }
@@ -200,7 +200,7 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
 {
     crate::model::lemma_max_mag_pow2();
     if n == 0 {
-        assert(round_frac(n, d, dir) == Q { num: 0, den: 1 });
+        assert(round_frac(n, d, dir) == Rat { num: 0, den: 1 });
         lemma_gcd_one();
     } else {
         let g = gcd_int(n, d);
@@ -224,7 +224,7 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
                 d == rd * g,
         ;
         let r = round_frac(n, d, dir);
-        assert(r == Q { num: rn as i64, den: rd as i64 });
+        assert(r == Rat { num: rn as i64, den: rd as i64 });
         // I1's zero clause: `n != 0` and `n == rn·g` force `rn != 0`, so the
         // clause is vacuous here.
         assert(rn != 0) by (nonlinear_arith)
@@ -333,7 +333,7 @@ pub proof fn lemma_reduce_abs(n: int, d: int)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(abs_int(n), g, abs_int(rn), 0);
 }
 
-/// `round_frac` always produces a well-formed `Q` — the V1 obligation stated at
+/// `round_frac` always produces a well-formed `Rat` — the V1 obligation stated at
 /// the specification level, so proof code can use it without going through the
 /// executable function.
 ///
@@ -414,7 +414,7 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
                 assert(od == 1);
             }
-            assert(round_frac(n, d, dir) == Q { num: on as i64, den: od as i64 });
+            assert(round_frac(n, d, dir) == Rat { num: on as i64, den: od as i64 });
             assert(od > 0);
             assert(abs_int(on) <= max_mag());
             assert(od <= max_mag());
@@ -491,7 +491,7 @@ pub proof fn lemma_snap_result_fields(n: int, d: int, dir: Dir)
 /// The bound comes out of `lemma_grid_error_step` and `lemma_shift_covers_bound`
 /// stated against `sn / 2^s`; `round_frac` returns that pair divided through by
 /// its gcd, and the inequality survives because both sides carry the factor.
-pub proof fn lemma_error_after_reduce(rn: int, rd: int, sn: int, sd: int, g2: int, r: Q)
+pub proof fn lemma_error_after_reduce(rn: int, rd: int, sn: int, sd: int, g2: int, r: Rat)
     requires
         g2 > 0,
         r.d() > 0,
@@ -527,7 +527,7 @@ pub proof fn lemma_error_after_reduce(rn: int, rd: int, sn: int, sd: int, g2: in
 
 /// [`lemma_error_after_reduce`] at `precision_b_nearest()` instead of
 /// `precision_b()`. Same proof, the exponent is the only thing that changes.
-pub proof fn lemma_error_after_reduce_nearest(rn: int, rd: int, sn: int, sd: int, g2: int, r: Q)
+pub proof fn lemma_error_after_reduce_nearest(rn: int, rd: int, sn: int, sd: int, g2: int, r: Rat)
     requires
         g2 > 0,
         r.d() > 0,
@@ -741,7 +741,7 @@ pub proof fn lemma_order_after_reduce(rn: int, rd: int, s: nat, dir: Dir)
 
 /// If `r` compares one way against `rn/rd`, it compares the same way against
 /// `n/d == (rn·g)/(rd·g)`.
-pub proof fn lemma_scale_frac_order(n: int, d: int, g: int, rn: int, rd: int, r: Q)
+pub proof fn lemma_scale_frac_order(n: int, d: int, g: int, rn: int, rd: int, r: Rat)
     requires
         g > 0,
         rd > 0,
@@ -1111,7 +1111,7 @@ pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
 
 /// Combine the grid step, the shift bound, and the gcd re-reduction into the
 /// division-free R3 statement against the *unreduced* `n / d`.
-pub proof fn lemma_error_scales(n: int, d: int, g: int, rn: int, rd: int, r: Q, s: nat)
+pub proof fn lemma_error_scales(n: int, d: int, g: int, rn: int, rd: int, r: Rat, s: nat)
     requires
         g > 0,
         rd > 0,
@@ -1155,7 +1155,7 @@ pub proof fn lemma_error_scales(n: int, d: int, g: int, rn: int, rd: int, r: Q, 
 /// `precision_b()`. Same proof, the exponent and the target predicate
 /// (`within_error_bound_nearest` instead of `within_error_bound`) are the only
 /// things that change.
-pub proof fn lemma_error_scales_nearest(n: int, d: int, g: int, rn: int, rd: int, r: Q, s: nat)
+pub proof fn lemma_error_scales_nearest(n: int, d: int, g: int, rn: int, rd: int, r: Rat, s: nat)
     requires
         g > 0,
         rd > 0,
@@ -1634,9 +1634,9 @@ pub open spec fn den_input_bound() -> int {
 
 /// Canonicalise (and, if necessary, round) the exact fraction `n / d`.
 ///
-/// This is the single place where an exact `i128` intermediate becomes a `Q`.
+/// This is the single place where an exact `i128` intermediate becomes a `Rat`.
 /// Every arithmetic operation in [`crate::q`] ends here.
-pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
+pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     requires
         d > 0,
         abs_int(n as int) < num_input_bound(),
@@ -1657,7 +1657,7 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         lemma_round_frac_wf(n as int, d as int, dir);
     }
     if n == 0 {
-        return Q { num: 0, den: 1 };
+        return Rat { num: 0, den: 1 };
     }
     let m0: i128 = if n < 0 {
         0 - n
@@ -1672,9 +1672,9 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
             lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
         }
         if n > 0 {
-            return Q { num: MAX_MAG, den: 1 };
+            return Rat { num: MAX_MAG, den: 1 };
         } else {
-            return Q { num: -MAX_MAG, den: 1 };
+            return Rat { num: -MAX_MAG, den: 1 };
         }
     }
     proof {
@@ -1713,7 +1713,7 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         rn
     };
     if arn <= mm && rd <= mm {
-        return Q { num: rn as i64, den: rd as i64 };
+        return Rat { num: rn as i64, den: rd as i64 };
     }
     // --- dyadic snap -------------------------------------------------------
     proof {
@@ -1808,7 +1808,7 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Q)
         assert(((on as i64) as int) == on as int);
         assert(((od as i64) as int) == od as int);
     }
-    Q { num: on as i64, den: od as i64 }
+    Rat { num: on as i64, den: od as i64 }
 }
 
 /// `|n| <= MAX_MAG · d` is exactly `ip < MAX_MAG || (ip == MAX_MAG && fr == 0)`
@@ -2310,18 +2310,18 @@ pub open spec fn finest_grid_den() -> int {
 /// literal: that is the whole point of naming the constant, and it keeps this
 /// definition tied to `pow2(61)` instead of to a digit string that has to be
 /// checked by eye against the one in `convert::tiny`.
-pub open spec fn subgrid_endpoint(positive: bool, dir: Dir) -> Q {
+pub open spec fn subgrid_endpoint(positive: bool, dir: Dir) -> Rat {
     match dir {
-        Dir::Nearest => Q { num: 0, den: 1 },
+        Dir::Nearest => Rat { num: 0, den: 1 },
         Dir::Down => if positive {
-            Q { num: 0, den: 1 }
+            Rat { num: 0, den: 1 }
         } else {
-            Q { num: (-1int) as i64, den: finest_grid_den() as i64 }
+            Rat { num: (-1int) as i64, den: finest_grid_den() as i64 }
         },
         Dir::Up => if positive {
-            Q { num: 1, den: finest_grid_den() as i64 }
+            Rat { num: 1, den: finest_grid_den() as i64 }
         } else {
-            Q { num: 0, den: 1 }
+            Rat { num: 0, den: 1 }
         },
     }
 }

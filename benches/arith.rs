@@ -2,7 +2,7 @@
 //! arbitrary-precision rational (`malachite-q`, the crate's differential oracle).
 //!
 //! The interesting number is not the single-operation cost — it is what happens
-//! to that cost as a computation gets longer. `Q` and `f64` are both fixed-width,
+//! to that cost as a computation gets longer. `Rat` and `f64` are both fixed-width,
 //! so their per-operation cost is flat in the length of the chain. An exact
 //! rational's denominators multiply, so its per-operation cost grows without
 //! bound. `chain` below measures exactly that, and it is the reason a bounded
@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use malachite_q::Rational;
-use the_q::{nary, Q};
+use the_q::{nary, Rat, Q};
 
 /// splitmix64. Fixed seed: the point is repeatability, not statistics.
 struct Rng(u64);
@@ -75,6 +75,21 @@ fn row(op: &str, q: f64, f: f64, r: f64) {
     );
 }
 
+/// A two-column row, for the functions `f64` has and an exact rational does
+/// not — there is no `malachite-q` square root or exponential to compare with.
+fn row2(op: &str, q: f64, f: f64) {
+    println!("| {:<14} | {:>9.1} | {:>9.1} | {:>7.1}x |", op, q, f, q / f);
+}
+
+fn header2(title: &str) {
+    println!("\n### {title}\n");
+    println!(
+        "| {:<14} | {:>9} | {:>9} | {:>8} |",
+        "op", "the-q ns", "f64 ns", "q/f64"
+    );
+    println!("|{:-<16}|{:->11}|{:->11}|{:->10}|", "", "", "", "");
+}
+
 fn header(title: &str) {
     println!("\n### {title}\n");
     println!(
@@ -92,9 +107,9 @@ fn main() {
     let mut rng = Rng(0x1234_5678);
 
     let raw: Vec<(i64, i64)> = (0..2 * n).map(|_| rng.next_frac()).collect();
-    let qs: Vec<Q> = raw
+    let qs: Vec<Rat> = raw
         .iter()
-        .map(|&(a, b)| Q::new(a, b).expect("den != 0 and both fit"))
+        .map(|&(a, b)| Rat::new(a, b).expect("den != 0 and both fit"))
         .collect();
     let fs: Vec<f64> = raw.iter().map(|&(a, b)| a as f64 / b as f64).collect();
     let rs: Vec<Rational> = raw
@@ -113,7 +128,7 @@ fn main() {
         "add",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::add(qs[a], qs[b])
+            Rat::add(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -129,7 +144,7 @@ fn main() {
         "sub",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::sub(qs[a], qs[b])
+            Rat::sub(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -145,7 +160,7 @@ fn main() {
         "mul",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::mul(qs[a], qs[b])
+            Rat::mul(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -161,7 +176,7 @@ fn main() {
         "div",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::div(qs[a], qs[b])
+            Rat::div(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -177,7 +192,7 @@ fn main() {
         "compare",
         time_ns(n, |i| {
             let (a, b) = m(i);
-            Q::lt(qs[a], qs[b])
+            Rat::lt(qs[a], qs[b])
         }),
         time_ns(n, |i| {
             let (a, b) = m(i);
@@ -190,7 +205,7 @@ fn main() {
     );
 
     // The point of the whole exercise. `acc = (acc + x) * y`, k steps, measured
-    // per step. `Q` and `f64` are 16 and 8 bytes at every depth; the exact
+    // per step. `Rat` and `f64` are 16 and 8 bytes at every depth; the exact
     // backend's operands grow, so its per-step cost has to grow with them. The
     // last column is the size of the exact result, which is what is growing.
     println!("\n### Chained fusion, cost per step at depth k\n");
@@ -210,7 +225,7 @@ fn main() {
         let q = time_ns(iters, |i| {
             let mut acc = qs[i % n];
             for j in 0..k {
-                acc = Q::mul(Q::add(acc, qs[(i + j) % n]), qs[(i + j + 1) % n]);
+                acc = Rat::mul(Rat::add(acc, qs[(i + j) % n]), qs[(i + j + 1) % n]);
             }
             acc
         }) / k as f64;
@@ -232,7 +247,7 @@ fn main() {
         }) / k as f64;
 
         // How big the exact answer actually got, as decimal characters of
-        // "num/den". `Q` is 16 bytes here regardless, and `f64` is 8.
+        // "num/den". `Rat` is 16 bytes here regardless, and `f64` is 8.
         let mut acc = rs[0].clone();
         for j in 0..k {
             acc = (acc + &rs[j % n]) * &rs[(j + 1) % n];
@@ -255,9 +270,9 @@ fn main() {
 
     let w = 8usize;
     // Built once, outside the timed region: `weighted_mean` takes a slice, and
-    // timing a `Vec` allocation for `Q` that the other two backends do not pay
+    // timing a `Vec` allocation for `Rat` that the other two backends do not pay
     // would be measuring the harness rather than the arithmetic.
-    let qpairs: Vec<(Q, Q)> = (0..n + w).map(|j| (qs[j % n], qs[(j + 1) % n])).collect();
+    let qpairs: Vec<(Rat, Rat)> = (0..n + w).map(|j| (qs[j % n], qs[(j + 1) % n])).collect();
     let q = time_ns(n / w, |i| {
         let start = (i * w) % n;
         nary::weighted_mean(&qpairs[start..start + w])
@@ -283,6 +298,66 @@ fn main() {
         num / den
     });
     row("weighted_mean", q, f, r);
+
+    // -----------------------------------------------------------------------
+    // The extended type. Every operation here is total, so the comparison is
+    // against `f64`'s equally-total arithmetic rather than against `Rat`'s
+    // partial version — the question is what totality costs.
+    // -----------------------------------------------------------------------
+
+    let exs: Vec<Q> = qs.iter().map(|x| Q::Number(*x)).collect();
+
+    header2("extended Q (total arithmetic) vs f64");
+
+    let q = time_ns(n, |i| Q::add(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] + fs[(i + 1) % n]);
+    row2("Q::add", q, f);
+
+    let q = time_ns(n, |i| Q::mul(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] * fs[(i + 1) % n]);
+    row2("Q::mul", q, f);
+
+    // Division is the headline: this one cannot panic and needs no guard,
+    // where `Rat::div` requires the caller to have ruled out a zero divisor.
+    let q = time_ns(n, |i| Q::div(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] / fs[(i + 1) % n]);
+    row2("Q::div", q, f);
+
+    let q = time_ns(n, |i| Q::compare(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n].partial_cmp(&fs[(i + 1) % n]));
+    row2("Q::compare", q, f);
+
+    // -----------------------------------------------------------------------
+    // Transcendentals. `f64` has hardware behind these and this crate has a
+    // series in software, so a large ratio is expected; the number worth
+    // knowing is the absolute cost, and whether it is usable.
+    // -----------------------------------------------------------------------
+
+    header2("transcendentals vs f64 (hardware)");
+
+    let q = time_ns(n, |i| exs[i % n].sqrt());
+    let f = time_ns(n, |i| fs[i % n].sqrt());
+    row2("sqrt", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].exp());
+    let f = time_ns(n, |i| fs[i % n].exp());
+    row2("exp", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].ln());
+    let f = time_ns(n, |i| fs[i % n].ln());
+    row2("ln", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].sin());
+    let f = time_ns(n, |i| fs[i % n].sin());
+    row2("sin", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].cos());
+    let f = time_ns(n, |i| fs[i % n].cos());
+    row2("cos", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].atan());
+    let f = time_ns(n, |i| fs[i % n].atan());
+    row2("atan", q, f);
 
     println!();
 }

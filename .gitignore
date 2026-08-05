@@ -25,3 +25,4 @@ target
 
 # Claude Code agent worktrees (transient; not project config)
 .claude/worktrees/
+__pycache__/

@@ -9,7 +9,7 @@
 //!
 //! Prose rots. A proof obligation does not. `lemma_saturation_is_a_choice`
 //! (no intra-doc link: items inside `verus!` are not resolvable targets)
-//! exhibits a value outside the ceiling that a well-formed `Q` satisfies R3 for,
+//! exhibits a value outside the ceiling that a well-formed `Rat` satisfies R3 for,
 //! so the strong claim now contradicts a machine-checked theorem rather than a
 //! comment somebody has to remember.
 //!
@@ -35,12 +35,12 @@ use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::model::*;
 #[allow(unused_imports)]
-use crate::types::{MAX_MAG, Q};
+use crate::types::{Rat, MAX_MAG};
 
 verus! {
 
 /// Saturation is a **scoping choice, not a necessity**: there are values above
-/// the magnitude ceiling that a well-formed `Q` does satisfy R3 for.
+/// the magnitude ceiling that a well-formed `Rat` does satisfy R3 for.
 ///
 /// This exists because the opposite claim — that nothing representable is close
 /// enough, so the bound is unachievable up there — is false, and is attractive
@@ -58,11 +58,11 @@ verus! {
 pub proof fn lemma_saturation_is_a_choice()
     ensures
         !magnitude_fits(2 * max_mag() + 1, 2),
-        (Q { num: MAX_MAG, den: 1 }).wf(),
-        within_error_bound(Q { num: MAX_MAG, den: 1 }, 2 * max_mag() + 1, 2),
+        (Rat { num: MAX_MAG, den: 1 }).wf(),
+        within_error_bound(Rat { num: MAX_MAG, den: 1 }, 2 * max_mag() + 1, 2),
 {
     let n = 2 * max_mag() + 1;
-    let r = Q { num: MAX_MAG, den: 1 };
+    let r = Rat { num: MAX_MAG, den: 1 };
     lemma_max_mag_pow2();
     // Resolve the field accesses on the struct literal before anything reasons
     // about them arithmetically.

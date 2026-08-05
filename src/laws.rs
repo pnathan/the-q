@@ -38,7 +38,7 @@ use crate::q::*;
 #[allow(unused_imports)]
 use crate::round::*;
 #[allow(unused_imports)]
-use crate::types::{Dir, Q};
+use crate::types::{Dir, Rat};
 
 verus! {
 
@@ -75,13 +75,13 @@ pub proof fn lemma_euclid(a: nat, b: nat, c: nat)
     }
 }
 
-/// **Canonicality.** Two well-formed `Q` are mathematically equal exactly when
+/// **Canonicality.** Two well-formed `Rat` are mathematically equal exactly when
 /// they are structurally equal.
 ///
 /// This is what makes `PartialEq`, `Eq` and `Hash` safe to derive, and what
 /// makes every value have exactly one bit pattern — the property that turns
 /// "deterministic" from a hope into a fact.
-pub proof fn lemma_canonical_eq(a: Q, b: Q)
+pub proof fn lemma_canonical_eq(a: Rat, b: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -151,7 +151,7 @@ pub proof fn lemma_canonical_eq(a: Q, b: Q)
 ///
 /// `add_n(a, b)` and `add_n(b, a)` are equal integers and `prod_d` is
 /// symmetric, so both calls apply [`round_frac`] to the same arguments.
-pub proof fn theorem_add_commutative(a: Q, b: Q, dir: Dir)
+pub proof fn theorem_add_commutative(a: Rat, b: Rat, dir: Dir)
     requires
         a.wf(),
         b.wf(),
@@ -163,7 +163,7 @@ pub proof fn theorem_add_commutative(a: Q, b: Q, dir: Dir)
 }
 
 /// **`mul` is commutative**, bit-for-bit, rounding included.
-pub proof fn theorem_mul_commutative(a: Q, b: Q, dir: Dir)
+pub proof fn theorem_mul_commutative(a: Rat, b: Rat, dir: Dir)
     requires
         a.wf(),
         b.wf(),
@@ -196,7 +196,7 @@ pub proof fn theorem_exact_path_is_exact(n: int, d: int, dir: Dir)
 }
 
 /// **`add` is associative on the exact path.**
-pub proof fn theorem_add_associative_exact(a: Q, b: Q, c: Q, dir: Dir)
+pub proof fn theorem_add_associative_exact(a: Rat, b: Rat, c: Rat, dir: Dir)
     requires
         a.wf(),
         b.wf(),
@@ -253,8 +253,8 @@ pub proof fn lemma_cancel_pos(x: int, y: int, c: int)
     ;
 }
 
-/// Two `Q` denoting the same fraction are equal as values.
-pub proof fn lemma_same_value_eq(x: Q, y: Q, n: int, d: int)
+/// Two `Rat` denoting the same fraction are equal as values.
+pub proof fn lemma_same_value_eq(x: Rat, y: Rat, n: int, d: int)
     requires
         d > 0,
         x.d() > 0,
@@ -285,7 +285,7 @@ pub proof fn lemma_same_value_eq(x: Q, y: Q, n: int, d: int)
 /// earlier facts is a plain `assert`, and only pure ring identities are handed
 /// to the nonlinear tactic. And those identities are kept small by naming
 /// subterms, because a five-variable degree-five goal exhausts the budget.
-pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, sd: int)
+pub proof fn lemma_left_assoc_value(a: Rat, b: Rat, c: Rat, ab: Rat, left: Rat, sn: int, sd: int)
     requires
         a.wf(),
         b.wf(),
@@ -348,7 +348,7 @@ pub proof fn lemma_left_assoc_value(a: Q, b: Q, c: Q, ab: Q, left: Q, sn: int, s
 /// and the file's growth pushed it just over. The statement and proof steps
 /// below are unchanged; only the solver's time budget is raised.
 #[verifier::rlimit(20)]
-pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int, sd: int)
+pub proof fn lemma_right_assoc_value(a: Rat, b: Rat, c: Rat, bc: Rat, right: Rat, sn: int, sd: int)
     requires
         a.wf(),
         b.wf(),
@@ -406,7 +406,7 @@ pub proof fn lemma_right_assoc_value(a: Q, b: Q, c: Q, bc: Q, right: Q, sn: int,
 
 /// The pure-rational core of associativity: with every step exact, both
 /// bracketings denote the same rational.
-pub proof fn lemma_add_assoc_exact_values(a: Q, b: Q, c: Q, ab: Q, bc: Q, left: Q, right: Q)
+pub proof fn lemma_add_assoc_exact_values(a: Rat, b: Rat, c: Rat, ab: Rat, bc: Rat, left: Rat, right: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -440,7 +440,7 @@ pub proof fn lemma_add_assoc_exact_values(a: Q, b: Q, c: Q, ab: Q, bc: Q, left: 
 ///
 /// Same shape as the additive case: scale the outer relation by the inner
 /// denominators, substitute, cancel.
-pub proof fn theorem_mul_associative_exact(a: Q, b: Q, c: Q, ab: Q, bc: Q, left: Q, right: Q)
+pub proof fn theorem_mul_associative_exact(a: Rat, b: Rat, c: Rat, ab: Rat, bc: Rat, left: Rat, right: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -471,7 +471,7 @@ pub proof fn theorem_mul_associative_exact(a: Q, b: Q, c: Q, ab: Q, bc: Q, left:
 }
 
 /// `(a·b)·c` denotes `(a.n·b.n·c.n) / (a.d·b.d·c.d)`.
-pub proof fn lemma_mul_chain_value(a: Q, b: Q, c: Q, ab: Q, left: Q, pn: int, pd: int)
+pub proof fn lemma_mul_chain_value(a: Rat, b: Rat, c: Rat, ab: Rat, left: Rat, pn: int, pd: int)
     requires
         a.wf(),
         b.wf(),
@@ -510,7 +510,7 @@ pub proof fn lemma_mul_chain_value(a: Q, b: Q, c: Q, ab: Q, left: Q, pn: int, pd
 }
 
 /// `a·(b·c)` denotes the same product.
-pub proof fn lemma_mul_chain_value_right(a: Q, b: Q, c: Q, bc: Q, right: Q, pn: int, pd: int)
+pub proof fn lemma_mul_chain_value_right(a: Rat, b: Rat, c: Rat, bc: Rat, right: Rat, pn: int, pd: int)
     requires
         a.wf(),
         b.wf(),
@@ -553,14 +553,14 @@ pub proof fn lemma_mul_chain_value_right(a: Q, b: Q, c: Q, bc: Q, right: Q, pn: 
 /// Both sides are reduced to a common fraction the same way as the two
 /// associativity theorems, then compared once.
 pub proof fn theorem_distributive_exact(
-    a: Q,
-    b: Q,
-    c: Q,
-    bc: Q,
-    lhs: Q,
-    ab: Q,
-    ac: Q,
-    rhs: Q,
+    a: Rat,
+    b: Rat,
+    c: Rat,
+    bc: Rat,
+    lhs: Rat,
+    ab: Rat,
+    ac: Rat,
+    rhs: Rat,
 )
     requires
         a.wf(),
@@ -594,7 +594,7 @@ pub proof fn theorem_distributive_exact(
 }
 
 /// `a·(b + c)` denotes `a.n·(b.n·c.d + c.n·b.d) / (a.d·b.d·c.d)`.
-pub proof fn lemma_distrib_lhs_value(a: Q, b: Q, c: Q, bc: Q, lhs: Q, dn: int, dd: int)
+pub proof fn lemma_distrib_lhs_value(a: Rat, b: Rat, c: Rat, bc: Rat, lhs: Rat, dn: int, dd: int)
     requires
         a.wf(),
         b.wf(),
@@ -636,7 +636,7 @@ pub proof fn lemma_distrib_lhs_value(a: Q, b: Q, c: Q, bc: Q, lhs: Q, dn: int, d
 ///
 /// Scale the sum's cross-multiplication by `(a.d·b.d)·(a.d·c.d)`, substitute
 /// both products, cancel `ab.d·ac.d`, and what is left is a pure ring identity.
-pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn: int, dd: int)
+pub proof fn lemma_distrib_rhs_value(a: Rat, b: Rat, c: Rat, ab: Rat, ac: Rat, rhs: Rat, dn: int, dd: int)
     requires
         a.wf(),
         b.wf(),
@@ -748,29 +748,29 @@ pub proof fn lemma_distrib_rhs_value(a: Q, b: Q, c: Q, ab: Q, ac: Q, rhs: Q, dn:
 }
 
 /// Additive and multiplicative identities are exact.
-pub proof fn theorem_identities(a: Q, dir: Dir)
+pub proof fn theorem_identities(a: Rat, dir: Dir)
     requires
         a.wf(),
     ensures
         ({
-            let z = Q { num: 0, den: 1 };
-            let o = Q { num: 1, den: 1 };
+            let z = Rat { num: 0, den: 1 };
+            let o = Rat { num: 1, den: 1 };
             &&& exact_path(add_n(a, z), prod_d(a, z))
             &&& exact_path(mul_n(a, o), prod_d(a, o))
             &&& round_frac(add_n(a, z), prod_d(a, z), dir) == a
             &&& round_frac(mul_n(a, o), prod_d(a, o), dir) == a
         }),
 {
-    let z = Q { num: 0, den: 1 };
-    let o = Q { num: 1, den: 1 };
+    let z = Rat { num: 0, den: 1 };
+    let o = Rat { num: 1, den: 1 };
     assert(add_n(a, z) == a.n() && prod_d(a, z) == a.d());
     assert(mul_n(a, o) == a.n() && prod_d(a, o) == a.d());
     crate::round::lemma_r1_identity(a.n(), a.d(), dir);
     lemma_round_of_wf_is_self(a, dir);
 }
 
-/// Rounding a value that is already a well-formed `Q` returns it unchanged.
-pub proof fn lemma_round_of_wf_is_self(a: Q, dir: Dir)
+/// Rounding a value that is already a well-formed `Rat` returns it unchanged.
+pub proof fn lemma_round_of_wf_is_self(a: Rat, dir: Dir)
     requires
         a.wf(),
     ensures
@@ -797,9 +797,9 @@ pub proof fn lemma_round_of_wf_is_self(a: Q, dir: Dir)
 
 /// **`Ord` is a total order** and it agrees with the ghost order.
 ///
-/// Totality is where `Q` beats `f64` outright: there is no `NaN`, so there is
+/// Totality is where `Rat` beats `f64` outright: there is no `NaN`, so there is
 /// no incomparable pair, so `PartialOrd` is never `None`.
-pub proof fn theorem_order_total(a: Q, b: Q, c: Q)
+pub proof fn theorem_order_total(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -823,22 +823,22 @@ pub proof fn theorem_order_total(a: Q, b: Q, c: Q)
 // ---------------------------------------------------------------------------
 
 /// `-(-a) == a`, `abs(abs(a)) == abs(a)`, `abs(-a) == abs(a)`.
-pub proof fn theorem_neg_abs_involution(a: Q)
+pub proof fn theorem_neg_abs_involution(a: Rat)
     requires
         a.wf(),
     ensures
         ({
-            let na = Q { num: (-a.n()) as i64, den: a.den };
-            let aa = Q { num: abs_int(a.n()) as i64, den: a.den };
-            &&& Q { num: (-(na.n())) as i64, den: na.den } == a
-            &&& Q { num: abs_int(aa.n()) as i64, den: aa.den } == aa
+            let na = Rat { num: (-a.n()) as i64, den: a.den };
+            let aa = Rat { num: abs_int(a.n()) as i64, den: a.den };
+            &&& Rat { num: (-(na.n())) as i64, den: na.den } == a
+            &&& Rat { num: abs_int(aa.n()) as i64, den: aa.den } == aa
         }),
 {
 }
 
 /// `1/(1/a) == a` for non-zero `a`. Reciprocal is exact in both directions, so
 /// this is a genuine involution — no rounding anywhere.
-pub proof fn theorem_recip_involution(a: Q, r: Q, rr: Q)
+pub proof fn theorem_recip_involution(a: Rat, r: Rat, rr: Rat)
     requires
         a.wf(),
         r.wf(),
@@ -868,13 +868,13 @@ pub proof fn theorem_recip_involution(a: Q, r: Q, rr: Q)
 }
 
 /// `a - b == a + (-b)` on the exact path.
-pub proof fn theorem_sub_is_add_neg(a: Q, b: Q)
+pub proof fn theorem_sub_is_add_neg(a: Rat, b: Rat)
     requires
         a.wf(),
         b.wf(),
     ensures
         ({
-            let nb = Q { num: (-b.n()) as i64, den: b.den };
+            let nb = Rat { num: (-b.n()) as i64, den: b.den };
             sub_n(a, b) == add_n(a, nb) && prod_d(a, b) == prod_d(a, nb)
         }),
 {
@@ -884,7 +884,7 @@ pub proof fn theorem_sub_is_add_neg(a: Q, b: Q)
 }
 
 /// `a / b == a * (1/b)` as exact rationals.
-pub proof fn theorem_div_is_mul_recip(a: Q, b: Q, rb: Q)
+pub proof fn theorem_div_is_mul_recip(a: Rat, b: Rat, rb: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -921,7 +921,7 @@ pub proof fn theorem_div_is_mul_recip(a: Q, b: Q, rb: Q)
 /// A value equal to itself carries zero accumulated error against any budget.
 /// The base case every chain below starts from — `a` is not the output of any
 /// rounding, so it is a perfect approximation of itself.
-pub proof fn lemma_self_zero_error(x: Q, m: int)
+pub proof fn lemma_self_zero_error(x: Rat, m: int)
     requires
         x.wf(),
     ensures
@@ -945,7 +945,7 @@ pub proof fn lemma_abs_int_neg(x: int)
 /// pair (up to the obvious reassociation) as combining `b, c` first and
 /// folding in `a`. Neither side needs to be exact — this is pure algebra on
 /// the *exact* numerators and denominators the two additions would compute.
-pub proof fn lemma_sum3_ring(a: Q, b: Q, c: Q)
+pub proof fn lemma_sum3_ring(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -997,7 +997,7 @@ pub proof fn lemma_sum3_ring(a: Q, b: Q, c: Q)
 /// fit comfortably under `m == 3`, giving a defect of at most
 /// `12 · 2^-61 ≈ 5.2 · 10^-18` — far below the unit of least precision that
 /// matters to a subjective-logic fusion.)
-pub proof fn theorem_add_associativity_bound(a: Q, b: Q, c: Q, dir: Dir, m: int)
+pub proof fn theorem_add_associativity_bound(a: Rat, b: Rat, c: Rat, dir: Dir, m: int)
     requires
         a.wf(),
         b.wf(),
@@ -1158,7 +1158,7 @@ pub proof fn lemma_abs_mul_nonneg(x: int, y: int)
 }
 
 /// The exact product of two `[0, 1]` values is itself in `[0, 1]`.
-pub proof fn lemma_unit_interval_mul(a: Q, b: Q)
+pub proof fn lemma_unit_interval_mul(a: Rat, b: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -1193,7 +1193,7 @@ pub proof fn lemma_unit_interval_mul(a: Q, b: Q)
 /// A `[0, 1]` product, rounded: the result is within one absolute-error unit
 /// of the exact product, and its magnitude is at most `2` (the exact product
 /// is at most `1`, and one grid step cannot push it far past that).
-pub proof fn lemma_rounded_product_bound(a: Q, b: Q, dir: Dir)
+pub proof fn lemma_rounded_product_bound(a: Rat, b: Rat, dir: Dir)
     requires
         a.wf(),
         b.wf(),
@@ -1353,7 +1353,7 @@ pub proof fn lemma_frac_scale_nonneg(xn: int, xd: int, yn: int, yd: int, cn: int
 /// If `x`'s numerator is within `k` denominator-widths of zero and `y` is a
 /// `[0, 1]` value, the exact product `x·y` is within `k` widths of zero too —
 /// the magnitude bound R3 needs for a second rounding step on top of `x`.
-pub proof fn lemma_prod_magnitude_bound(x: Q, y: Q, k: int)
+pub proof fn lemma_prod_magnitude_bound(x: Rat, y: Rat, k: int)
     requires
         x.wf(),
         y.wf(),
@@ -1403,7 +1403,7 @@ pub proof fn lemma_prod_magnitude_bound(x: Q, y: Q, k: int)
 /// `a, b` first and folding in `c` reaches the same numerator/denominator
 /// product (up to reassociation) as combining `b, c` first and folding in
 /// `a`. The multiplicative analogue of [`lemma_sum3_ring`].
-pub proof fn lemma_mul3_ring(a: Q, b: Q, c: Q)
+pub proof fn lemma_mul3_ring(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
         b.wf(),
@@ -1449,7 +1449,7 @@ pub proof fn lemma_mul3_ring(a: Q, b: Q, c: Q)
 /// domain that magnitude is always `1`, so the distinction is invisible here,
 /// but it is the reason this theorem is stated for `[0, 1]` rather than for
 /// an arbitrary `m` the way [`theorem_add_associativity_bound`] is.
-pub proof fn theorem_mul_associativity_bound_unit_interval(a: Q, b: Q, c: Q, dir: Dir)
+pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Rat, dir: Dir)
     requires
         a.wf(),
         b.wf(),
@@ -1627,6 +1627,330 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Q, b: Q, c: Q, dir
         3,
         pow2(precision_b()),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Order compatibility: the ordered-field laws
+//
+// `theorem_order_total` above says `q_le` is a total order; this section says
+// the order is compatible with the arithmetic — negation reverses it, addition
+// and multiplication by a non-negative value preserve it, squares sit above
+// zero, and reciprocal reverses it on positives. These are the axioms of an
+// ordered field, stated on the exact fractions the operations compute before
+// rounding, and they are what downstream monotonicity arguments ("a larger
+// input cannot decrease this sum") bottom out in.
+// ---------------------------------------------------------------------------
+
+/// **Negation reverses the order** (and stays inside the type): the
+/// numerator-negated mirror of a well-formed `Rat` is well-formed, and
+/// `a <= b` holds exactly when `-b <= -a`.
+///
+/// The `wf` half is what lets ghost code build negations at all — canonicality
+/// and the budget are both invariant under flipping the numerator's sign. The
+/// antitonicity half is the ordered-group law `Rat::neg` relies on but nothing
+/// previously stated: it is what turns every lower-bound fact into an
+/// upper-bound fact about the negation, e.g. a proven `min` bound into a `max`
+/// bound for negated data.
+pub proof fn theorem_neg_antitone(a: Rat, b: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        ({
+            let na = Rat { num: (-a.n()) as i64, den: a.den };
+            let nb = Rat { num: (-b.n()) as i64, den: b.den };
+            &&& na.wf()
+            &&& (q_le(a, b) <==> q_le(nb, na))
+        }),
+{
+    let na = Rat { num: (-a.n()) as i64, den: a.den };
+    let nb = Rat { num: (-b.n()) as i64, den: b.den };
+    // gcd sees only |num|, which negation preserves.
+    assert(abs_int(na.n()) == abs_int(a.n()));
+    // Pushing the sign through each cross-product is the whole content:
+    // (-b.n)·a.d <= (-a.n)·b.d is the negation, term by term, of
+    // a.n·b.d <= b.n·a.d.
+    assert((-b.n()) * a.d() == -(b.n() * a.d())) by (nonlinear_arith);
+    assert((-a.n()) * b.d() == -(a.n() * b.d())) by (nonlinear_arith);
+}
+
+/// **`abs` is the join of `a` and `-a`**: it dominates both, and anything that
+/// dominates both dominates it.
+///
+/// The two upper-bound clauses plus the minimality clause pin `|a|` uniquely
+/// up to `q_eq` (hence, by canonicality, uniquely) — this is the
+/// specification-pinning discipline applied to `abs`: "non-negative and equal
+/// to `a` or `-a`" would already fail to be satisfiable by anything else, but
+/// the join characterisation is the form order reasoning consumes, e.g.
+/// `|a| <= m` from the two one-sided bounds `-m <= a <= m`. The evenness
+/// clause (`|-a| == |a|`, bit for bit) completes what
+/// [`theorem_neg_abs_involution`]'s doc comment promises but its statement
+/// omits.
+pub proof fn theorem_abs_is_join(a: Rat, b: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        ({
+            let na = Rat { num: (-a.n()) as i64, den: a.den };
+            let aa = Rat { num: abs_int(a.n()) as i64, den: a.den };
+            let naa = Rat { num: abs_int(na.n()) as i64, den: na.den };
+            &&& aa.wf()
+            &&& aa.n() >= 0
+            &&& q_le(a, aa)
+            &&& q_le(na, aa)
+            &&& (aa == a || aa == na)
+            &&& naa == aa
+            &&& (q_le(a, b) && q_le(na, b)) ==> q_le(aa, b)
+        }),
+{
+    let na = Rat { num: (-a.n()) as i64, den: a.den };
+    let aa = Rat { num: abs_int(a.n()) as i64, den: a.den };
+    assert(abs_int(aa.n()) == abs_int(a.n()));
+    // |a| dominates a: a.n <= |a.n|, scaled by the shared positive denominator.
+    assert(a.n() * a.d() <= abs_int(a.n()) * a.d()) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+            a.n() <= abs_int(a.n()),
+    ;
+    // ...and dominates -a symmetrically.
+    assert((-a.n()) * a.d() <= abs_int(a.n()) * a.d()) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+            -a.n() <= abs_int(a.n()),
+    ;
+    // Minimality is free once `aa` is known to be one of the two operands the
+    // hypothesis already bounds.
+    assert(aa == a || aa == na);
+}
+
+/// **Adding the same value to both sides preserves the order**, stated on the
+/// exact fractions `add` computes: `a <= b` implies
+/// `(a + c) <= (b + c)` as cross-multiplied exact sums.
+///
+/// This is the translation-invariance axiom of an ordered group. It concerns
+/// three independent values — the conclusion compares six-term products the
+/// hypothesis never mentions — and holds with no exactness or budget
+/// hypothesis at all, because it is a fact about the mathematical sums, prior
+/// to any rounding.
+pub proof fn theorem_add_monotone_exact(a: Rat, b: Rat, c: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        q_le(a, b),
+    ensures
+        add_n(a, c) * prod_d(b, c) <= add_n(b, c) * prod_d(a, c),
+{
+    let an = a.n();
+    let ad = a.d();
+    let bn = b.n();
+    let bd = b.d();
+    let cn = c.n();
+    let cd = c.d();
+    let s = cd * cd;
+    let t = (cn * (ad * bd)) * cd;
+    assert(s > 0) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+            cd > 0,
+    ;
+    // The hypothesis, scaled by the positive square of c's denominator.
+    assert((an * bd) * s <= (bn * ad) * s) by (nonlinear_arith)
+        requires
+            an * bd <= bn * ad,
+            s > 0,
+    ;
+    // Unfold the operation specs to plain arithmetic before any nonlinear
+    // step — the tactic sees function applications as opaque terms.
+    assert(add_n(a, c) == an * cd + cn * ad);
+    assert(prod_d(b, c) == bd * cd);
+    assert(add_n(b, c) == bn * cd + cn * bd);
+    assert(prod_d(a, c) == ad * cd);
+    // Each side distributes into the scaled hypothesis plus the same c-term,
+    // in small ring steps to stay inside the resource budget.
+    assert((an * cd + cn * ad) * (bd * cd) == (an * cd) * (bd * cd) + (cn * ad) * (bd * cd))
+        by (nonlinear_arith);
+    assert((an * cd) * (bd * cd) == (an * bd) * s) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+    ;
+    assert((cn * ad) * (bd * cd) == t) by (nonlinear_arith)
+        requires
+            t == (cn * (ad * bd)) * cd,
+    ;
+    assert((bn * cd + cn * bd) * (ad * cd) == (bn * cd) * (ad * cd) + (cn * bd) * (ad * cd))
+        by (nonlinear_arith);
+    assert((bn * cd) * (ad * cd) == (bn * ad) * s) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+    ;
+    assert((cn * bd) * (ad * cd) == t) by (nonlinear_arith)
+        requires
+            t == (cn * (ad * bd)) * cd,
+    ;
+    // Recombine: both sides are now the same linear expressions in s and t.
+    assert(add_n(a, c) * prod_d(b, c) == (an * bd) * s + t);
+    assert(add_n(b, c) * prod_d(a, c) == (bn * ad) * s + t);
+}
+
+/// **Multiplying both sides by a non-negative value preserves the order**,
+/// stated on the exact fractions `mul` computes.
+///
+/// The other half of ordered-field compatibility, and the non-negativity
+/// hypothesis is exactly the honest one: for `c < 0` the conclusion is false
+/// (the order flips, by [`theorem_neg_antitone`] composed with this theorem),
+/// so no stronger statement exists to make.
+pub proof fn theorem_mul_monotone_nonneg_exact(a: Rat, b: Rat, c: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        q_le(a, b),
+        c.n() >= 0,
+    ensures
+        mul_n(a, c) * prod_d(b, c) <= mul_n(b, c) * prod_d(a, c),
+{
+    let an = a.n();
+    let ad = a.d();
+    let bn = b.n();
+    let bd = b.d();
+    let cn = c.n();
+    let cd = c.d();
+    let k = cn * cd;
+    assert(k >= 0) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+            cn >= 0,
+            cd > 0,
+    ;
+    assert((an * bd) * k <= (bn * ad) * k) by (nonlinear_arith)
+        requires
+            an * bd <= bn * ad,
+            k >= 0,
+    ;
+    assert(mul_n(a, c) == an * cn);
+    assert(prod_d(b, c) == bd * cd);
+    assert(mul_n(b, c) == bn * cn);
+    assert(prod_d(a, c) == ad * cd);
+    assert((an * cn) * (bd * cd) == (an * bd) * k) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+    assert((bn * cn) * (ad * cd) == (bn * ad) * k) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+}
+
+/// **Squares are non-negative, and vanish only at zero**: the exact square
+/// `a · a` has a non-negative numerator, zero exactly when `a` is zero.
+///
+/// The remaining ordered-field axiom after translation and scaling
+/// compatibility. The "only at zero" half is the field-theoretic content — a
+/// nonzero element's square is strictly positive, which is what makes
+/// sum-of-squares magnitudes (`hypot`'s `x·x + y·y`) definite rather than
+/// merely non-negative.
+pub proof fn theorem_square_sign(a: Rat)
+    requires
+        a.wf(),
+    ensures
+        mul_n(a, a) >= 0,
+        mul_n(a, a) == 0 <==> a.n() == 0,
+        prod_d(a, a) > 0,
+{
+    assert(a.n() * a.n() >= 0) by (nonlinear_arith);
+    if a.n() != 0 {
+        assert(a.n() * a.n() != 0) by (nonlinear_arith)
+            requires
+                a.n() != 0,
+        ;
+    }
+    assert(a.d() * a.d() > 0) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+    ;
+}
+
+/// **Reciprocal reverses the order on positives**: for `0 < a <= b`,
+/// `1/b <= 1/a` — and both reciprocals are themselves positive.
+///
+/// Stated through [`q_is_recip`], the same division-free relation
+/// [`theorem_recip_involution`] uses, so it applies to the actual output of
+/// `Rat::recip`. This is the monotonicity fact division-based bounds reduce
+/// to — "a larger denominator gives a smaller quotient" — and it is genuinely
+/// conditional: on mixed signs the conclusion is false, so the positivity
+/// hypotheses are load-bearing, not decorative.
+pub proof fn theorem_recip_antitone(a: Rat, b: Rat, ra: Rat, rb: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        ra.wf(),
+        rb.wf(),
+        a.n() > 0,
+        b.n() > 0,
+        q_le(a, b),
+        crate::q::q_is_recip(ra, a),
+        crate::q::q_is_recip(rb, b),
+    ensures
+        ra.n() > 0,
+        rb.n() > 0,
+        q_le(rb, ra),
+{
+    // The reciprocal of a positive value is positive: ra.n·a.n equals the
+    // positive a.d·ra.d, and a.n > 0.
+    assert(ra.n() > 0) by (nonlinear_arith)
+        requires
+            ra.n() * a.n() == a.d() * ra.d(),
+            a.n() > 0,
+            a.d() > 0,
+            ra.d() > 0,
+    ;
+    assert(rb.n() > 0) by (nonlinear_arith)
+        requires
+            rb.n() * b.n() == b.d() * rb.d(),
+            b.n() > 0,
+            b.d() > 0,
+            rb.d() > 0,
+    ;
+    let p = a.n() * b.n();
+    assert(p > 0) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+            a.n() > 0,
+            b.n() > 0,
+    ;
+    assert(ra.d() * rb.d() > 0) by (nonlinear_arith)
+        requires
+            ra.d() > 0,
+            rb.d() > 0,
+    ;
+    // Scale the goal by the positive p == a.n·b.n and substitute both
+    // reciprocal relations; what remains is the hypothesis a <= b scaled by
+    // the positive ra.d·rb.d. Each step is a small ring identity or a
+    // congruence, in the file's usual style.
+    assert((rb.n() * ra.d()) * p == (rb.n() * b.n()) * (a.n() * ra.d())) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+    ;
+    assert((rb.n() * b.n()) * (a.n() * ra.d()) == (b.d() * rb.d()) * (a.n() * ra.d()));
+    assert((b.d() * rb.d()) * (a.n() * ra.d()) == (a.n() * b.d()) * (ra.d() * rb.d()))
+        by (nonlinear_arith);
+    assert((a.n() * b.d()) * (ra.d() * rb.d()) <= (b.n() * a.d()) * (ra.d() * rb.d()))
+        by (nonlinear_arith)
+        requires
+            a.n() * b.d() <= b.n() * a.d(),
+            ra.d() * rb.d() > 0,
+    ;
+    assert((b.n() * a.d()) * (ra.d() * rb.d()) == (a.d() * ra.d()) * (b.n() * rb.d()))
+        by (nonlinear_arith);
+    assert((a.d() * ra.d()) * (b.n() * rb.d()) == (ra.n() * a.n()) * (b.n() * rb.d()));
+    assert((ra.n() * a.n()) * (b.n() * rb.d()) == (ra.n() * rb.d()) * p) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+    ;
+    assert((rb.n() * ra.d()) * p <= (ra.n() * rb.d()) * p);
+    lemma_cancel_pos_le(rb.n() * ra.d(), ra.n() * rb.d(), p);
 }
 
 } // verus!
