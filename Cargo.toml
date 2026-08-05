@@ -1,8 +1,8 @@
 [package]
 name = "the-q"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.83"
+edition = "2024"
+rust-version = "1.85"
 license = "LGPL-2.1-or-later"
 description = "Verified bounded rational (Q) arithmetic with machine-checked directed rounding"
 repository = "https://github.com/pnathan/the-q"

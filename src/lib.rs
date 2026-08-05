@@ -4,15 +4,15 @@
 //! canonical form (`den > 0`, `gcd(|num|, den) == 1`) and bounded by a fixed
 //! width budget (`|num| <= 2^62 - 1`, `den <= 2^62 - 1`).
 //!
-//! Arithmetic is *exact whenever the exact result fits the budget* and
-//! *verifiably rounded* when it does not. Every intermediate is computed in
-//! `i128`, and the 2^62 budget is chosen precisely so that no `i128`
-//! intermediate can overflow (see [`crate::round`] and `docs/SPEC.md` §1).
+//! Arithmetic is *exact whenever the exact result fits the budget*. It is
+//! *verifiably rounded* when the result does not fit. Every intermediate uses
+//! `i128`. The 2^62 budget makes overflow of an `i128` intermediate impossible
+//! (see [`crate::round`] and `docs/SPEC.md` §1).
 //!
 //! ```
 //! use the_q::{Dir, Rat};
 //!
-//! // Short decimals — the engine's ingestion path — are exact, not approximate.
+//! // Short decimals are exact, not approximate. They are the ingestion path.
 //! let reliability = Rat::from_decimal(85, 2).unwrap();   // 0.85 == 17/20
 //! let weight = Rat::from_decimal(3, 1).unwrap();         // 0.3  == 3/10
 //! let combined = Rat::mul(reliability, weight);
@@ -22,22 +22,22 @@
 //! assert!(combined < reliability);
 //! assert!(combined.in_unit_interval());
 //!
-//! // Directed modes bracket the exact value, which is what the interval layer
-//! // is built on.
+//! // Directed modes bracket the exact value. The interval layer uses this
+//! // property.
 //! let a = Rat::new(1, 3).unwrap();
 //! assert!(Rat::le(Rat::mul_dir(a, a, Dir::Down), Rat::mul_dir(a, a, Dir::Up)));
 //! ```
 //!
 //! ## `Rat` and `Q`
 //!
-//! [`Rat`] above is the verified kernel: exact, canonical, bounded — and
+//! [`Rat`] is the verified kernel. It is exact, canonical, bounded and
 //! *partial*. `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, and
 //! `Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG`.
 //!
-//! [`Q`] is an extension layer over that kernel which makes "not a representable
-//! rational" an explicit, observable state instead of something the caller is
-//! trusted to have ruled out. Arithmetic on it is **total**: every operation on
-//! every input returns a value in the type, and no operation panics.
+//! [`Q`] extends that kernel. It makes "not a representable rational" an
+//! explicit, observable state. The caller therefore does not have to rule such
+//! a state out. Arithmetic on `Q` is **total**: every operation on every input
+//! returns a value in the type, and no operation panics.
 //!
 //! ```
 //! use the_q::{Q, Rat};
@@ -47,8 +47,8 @@
 //! assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
 //! assert_eq!(Q::checked_div(Q::one(), Q::zero()), None);
 //!
-//! // Overflow is reported, not clamped — and it is distinguishable from a
-//! // division by zero, which is what the two separate state families buy you.
+//! // Overflow is reported, not clamped. The two separate state families keep
+//! // it distinct from a division by zero.
 //! let m = Q::Number(Rat::new(the_q::MAX_MAG, 1).unwrap());
 //! let over = Q::add(m, m);
 //! assert!(over.is_saturated() && !over.is_infinite());
@@ -64,34 +64,34 @@
 //! v.sort();
 //! assert_eq!(v, vec![Q::NegInf, Q::zero(), Q::PosInf, Q::Nan]);
 //!
-//! // But selection propagates Nan, and therefore deliberately disagrees with
-//! // `Ord`-based selection. A fold of `Q::min` is not `slice.iter().min()`.
+//! // Selection propagates Nan. It therefore disagrees with `Ord`-based
+//! // selection. A fold of `Q::min` is not `slice.iter().min()`.
 //! assert_eq!(Q::min(Q::Nan, Q::one()), Q::Nan);
 //! assert_eq!([Q::Nan, Q::one()].into_iter().min().unwrap(), Q::one());
 //! ```
 //!
-//! ## Design in one paragraph
+//! ## Design
 //!
-//! Subjective-logic fusion is rational-closed, so `f64` throws away exactness
-//! for nothing; but exact `ℚ` denominators grow without bound under long fusion
-//! chains, and a *verified* arbitrary-precision bignum does not exist in the
-//! Verus ecosystem. The middle road is a bounded rational with a proven
-//! rounding contract: computations that stay inside the budget are bit-exact
-//! and order-independent, and computations that leave it carry a machine-stated
-//! error bound of `2^-61 · max(1, |exact|)` per operation instead of `f64`
-//! folklore.
+//! Subjective-logic fusion is rational-closed. `f64` therefore discards
+//! exactness for no gain. Exact `ℚ` denominators, however, grow without bound
+//! under long fusion chains, and the Verus ecosystem has no *verified*
+//! arbitrary-precision bignum. This crate thus uses a bounded rational with a
+//! proven rounding contract. Computations that stay inside the budget are
+//! bit-exact and order-independent. Computations that leave the budget carry a
+//! machine-stated error bound of `2^-61 · max(1, |exact|)` per operation, in
+//! place of `f64` folklore.
 //!
-//! ## Honesty notes (read these)
+//! ## Limits
 //!
 //! * With rounding, [`Rat::add`] and [`Rat::mul`] are **commutative** but **not
 //!   associative in general**. Associativity and distributivity hold on the
-//!   *exact path* — i.e. whenever no intermediate rounds. See `README.md`.
+//!   *exact path*, that is, whenever no intermediate rounds. See `README.md`.
 //! * The composed operation ("exact if it fits, else snap to the dyadic grid")
-//!   is **not globally monotone**; the *rounding step itself* is (R4 is stated
-//!   per-grid, as the specification permits). `README.md` carries the
+//!   is **not globally monotone**. The *rounding step itself* is monotone. R4
+//!   is stated per-grid, as the specification permits. `README.md` carries the
 //!   counterexample.
-//! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) is placed
-//!   **outside** the R3 contract by choice, not by necessity — some such values
+//! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) sits
+//!   **outside** the R3 contract by choice, not by necessity. Some such values
 //!   do have a `Rat` within the bound. Those results **saturate**, and the
 //!   `checked_*` variants report them as `None`. No engine value comes near
 //!   this ceiling.

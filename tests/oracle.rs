@@ -1,13 +1,15 @@
 //! Differential tests against `malachite-q` (obligation: §7 of the spec).
 //!
-//! For every operation, on random inputs and on exhaustive small inputs, we
-//! check three things against an independent arbitrary-precision oracle:
+//! Each operation runs on random inputs and on exhaustive small inputs. Each
+//! run checks three properties against an independent arbitrary-precision
+//! oracle:
 //!
-//! * **R1** — if the exact result is representable, `the-q` returned it exactly.
-//! * **R2** — `Down <= exact <= Up`.
-//! * **R3** — every result is within `2^-61 · max(1, |exact|)` of the exact value.
+//! * **R1**. If the exact result is representable, `the-q` returns it exactly.
+//! * **R2**. `Down <= exact <= Up`.
+//! * **R3**. Every result is within `2^-61 · max(1, |exact|)` of the exact
+//!   value.
 //!
-//! plus the type invariant (I1 + I2) on every value produced.
+//! Each run also checks the type invariant (I1 + I2) on every value produced.
 
 #![allow(clippy::unusual_byte_groupings)]
 
@@ -123,7 +125,7 @@ fn div_matches_oracle() {
 
 #[test]
 fn unit_interval_ops_are_always_exact_or_bounded() {
-    // The engine's real domain: opinions in [0, 1] with moderate denominators.
+    // The engine's domain holds opinions in [0, 1] with moderate denominators.
     let mut rng = Rng::new(0x0B1E_0F17);
     for _ in 0..20_000 {
         let (a, b) = (rng.q_unit(), rng.q_unit());
@@ -145,9 +147,10 @@ fn unit_interval_ops_are_always_exact_or_bounded() {
 
 #[test]
 fn exhaustive_small_rationals() {
-    // Every p/q with |p| <= 12, 1 <= q <= 12: 300 values, 90_000 pairs, four
-    // operations, three directions. Small enough to be exhaustive, wide enough
-    // to hit every sign and reduction pattern.
+    // The set covers every p/q with |p| <= 12 and 1 <= q <= 12. That gives 300
+    // values, 90_000 pairs, four operations and three directions. The set is
+    // small enough for exhaustive coverage. It is wide enough to hit every sign
+    // and reduction pattern.
     let mut vals: Vec<Rat> = Vec::new();
     for p in -12i64..=12 {
         for q in 1i64..=12 {
@@ -175,7 +178,7 @@ fn exhaustive_small_rationals() {
                     assert_eq!(rat(quo), rat(a) / rat(b), "small div {a} / {b}");
                 }
             }
-            // Comparison must agree with the oracle's total order.
+            // Comparison agrees with the oracle's total order.
             let expect = rat(a).cmp(&rat(b));
             let got = a.cmp(&b);
             assert_eq!(got, expect, "cmp {a} vs {b}");
@@ -183,7 +186,7 @@ fn exhaustive_small_rationals() {
             assert_eq!(Rat::compare(a, b) == 0, expect.is_eq());
             assert_eq!(Rat::compare(a, b) > 0, expect.is_gt());
         }
-        // Unary operations are exact, always.
+        // Unary operations are always exact.
         assert_eq!(rat(a.neg()), -rat(a));
         assert_eq!(rat(a.abs()), rabs(rat(a)));
         if !a.is_zero() {
@@ -195,7 +198,7 @@ fn exhaustive_small_rationals() {
 }
 
 // ---------------------------------------------------------------------------
-// The f64 boundary — the differential tests backing TRUSTED.md
+// The f64 boundary. These differential tests back TRUSTED.md.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -215,13 +218,13 @@ fn from_f64_matches_oracle() {
         f64::MIN_POSITIVE,
         -f64::MIN_POSITIVE,
         5e-324,          // smallest subnormal
-        2.0f64.powi(61), // right at the documented magnitude limit
+        2.0f64.powi(61), // exactly at the documented magnitude limit
         2.0f64.powi(-61),
         2.0f64.powi(-62),
         2.0f64.powi(-70),
     ];
     for _ in 0..5_000 {
-        // Random finite doubles in a sane range.
+        // Random finite doubles in a moderate range.
         let v = (rng.next_u64() as i64 as f64) / (1u64 << 40) as f64;
         if v.is_finite() {
             specials.push(v);
@@ -245,7 +248,7 @@ fn from_f64_matches_oracle() {
             }
         }
     }
-    // NaN and the infinities are rejected.
+    // The conversion rejects NaN and the infinities.
     for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         for dir in DIRS {
             assert!(the_q::convert::from_f64_dir(v, dir).is_none());
@@ -255,8 +258,8 @@ fn from_f64_matches_oracle() {
 
 #[test]
 fn to_f64_is_within_four_ulp() {
-    // `to_f64` is the crate's one output-side trusted function. It is not
-    // verified; it is pinned here instead.
+    // `to_f64` is the crate's one output-side trusted function. It carries no
+    // proof. This test pins its behaviour instead.
     let mut rng = Rng::new(0x70F64);
     for _ in 0..20_000 {
         let q = rng.q();
@@ -264,7 +267,7 @@ fn to_f64_is_within_four_ulp() {
         let exact = rat(q);
         let back = Rational::try_from(got).unwrap();
         let err = rabs(back - exact.clone());
-        // 4 ulp relative: err * 2^50 <= max(1, |exact|)
+        // The relative bound of 4 ulp is `err * 2^50 <= max(1, |exact|)`.
         let bound = if rabs(exact.clone()) > one() {
             rabs(exact.clone())
         } else {
@@ -278,13 +281,14 @@ fn to_f64_is_within_four_ulp() {
 }
 
 // ---------------------------------------------------------------------------
-// Long chains — the accumulation claim, measured
+// Long chains. This section measures the accumulation claim.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn long_fold_chain_tracks_oracle() {
-    // 10^4 sequential operations, exactly the shape the consuming engine's
-    // worst case has. The spec predicts ~k · 2^-61 accumulated relative error.
+    // This chain runs 10^4 sequential operations. That is the shape of the
+    // consuming engine's worst case. The spec predicts an accumulated relative
+    // error of about k · 2^-61.
     let mut rng = Rng::new(0x10CDF01D);
     let mut acc = Rat::from_decimal(5, 1).unwrap();
     let mut oracle = rat(acc);
@@ -297,7 +301,8 @@ fn long_fold_chain_tracks_oracle() {
         } else {
             acc = Rat::add(acc, x);
             oracle += rat(x);
-            // Keep it in the unit interval so the comparison stays meaningful.
+            // This step keeps the accumulator in the unit interval. The
+            // comparison stays meaningful as a result.
             if oracle > one() {
                 acc = Rat::sub(acc, Rat::one());
                 oracle -= one();

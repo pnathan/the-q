@@ -1,39 +1,39 @@
 //! N-ary helpers (obligation V8).
 //!
-//! Every helper here is a **binary left fold in a fixed order**. That is a
-//! deliberate restriction, not an oversight:
+//! Every helper here is a **binary left fold in a fixed order**. This
+//! restriction gives two properties:
 //!
-//! * V2 safety is inherited for free — no new overflow analysis, because no new
-//!   arithmetic shape appears.
+//! * V2 safety is inherited for free. No new arithmetic shape appears, thus no
+//!   new overflow analysis is necessary.
 //! * The result is deterministic. `sum(&[a, b, c])` is exactly
-//!   `add(add(a, b), c)`, always, on every machine, in every thread. That is
-//!   what makes results bit-reproducible.
+//!   `add(add(a, b), c)` on every machine and in every thread. This makes
+//!   results bit-reproducible.
 //!
-//! N-ary `i128` accumulation would re-open the overflow analysis for no
-//! benefit, so it is not done.
+//! N-ary `i128` accumulation re-opens the overflow analysis for no benefit.
+//! This crate therefore does not use it.
 //!
 //! `sum`'s accumulated error after `k` elements is `k · 2^-61 · max(1,
 //! |exact|)` (theorem `theorem_sum_error_accumulation`).
 //!
-//! `product` and `weighted_mean` carry the same shape of bound, but each
-//! needs its own hypothesis, because the underlying operation is not
-//! addition:
+//! `product` and `weighted_mean` carry the same shape of bound. Each needs its
+//! own hypothesis, because the underlying operation is not addition:
 //!
 //! * `product` (`theorem_product_error_accumulation`) needs every factor's
 //!   magnitude bounded by `1` (`all_unit`). Multiplication is only
-//!   1-Lipschitz when weighted by the other operand's magnitude, so without
-//!   that hypothesis the carried error would amplify geometrically instead of
-//!   accumulating additively, and no `k · 2^-61` bound would hold uniformly
-//!   in `k`. The hypothesis is trivially satisfied in this crate's actual
-//!   domain — every opinion component lives in `[0, 1]`.
+//!   1-Lipschitz when weighted by the other operand's magnitude. Without that
+//!   hypothesis the carried error amplifies geometrically instead of
+//!   accumulating additively, and no `k · 2^-61` bound holds uniformly in `k`.
+//!   This crate's domain satisfies the hypothesis trivially. Every opinion
+//!   component lies in `[0, 1]`.
 //! * `weighted_mean` gets two separate bounds
 //!   (`theorem_wm_num_error_accumulation`,
 //!   `theorem_wm_denom_error_accumulation`) for its two internal
-//!   accumulators, each against its own exact target (the true weighted sum,
-//!   the true weight sum). Composing the two through the final division into
-//!   a single bound on the returned value would need a further explicit
-//!   hypothesis — the exact weight sum bounded away from zero — and is not
-//!   attempted; see the doc comment on `theorem_wm_num_error_accumulation`.
+//!   accumulators. Each bound uses its own exact target: the true weighted sum
+//!   and the true weight sum. A single bound on the returned value requires
+//!   composing the two through the final division. That composition needs a
+//!   further explicit hypothesis, namely the exact weight sum bounded away
+//!   from zero. This crate does not attempt it. See the doc comment on
+//!   `theorem_wm_num_error_accumulation`.
 
 use verus_builtin_macros::verus;
 
@@ -110,8 +110,8 @@ pub open spec fn all_wf(s: Seq<Rat>) -> bool {
 
 /// Every element of a slice has magnitude at most `1`: `|x| <= 1`.
 ///
-/// This is the hypothesis `product`'s accumulated-error bound needs and
-/// `sum`'s does not: see `theorem_product_error_accumulation` for why.
+/// `product`'s accumulated-error bound needs this hypothesis. `sum`'s bound
+/// does not. See `theorem_product_error_accumulation` for the reason.
 pub open spec fn all_unit(s: Seq<Rat>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> abs_int((#[trigger] s[i]).n()) <= s[i].d()
 }
@@ -127,8 +127,8 @@ pub fn sum(xs: &[Rat]) -> (r: Rat)
     ensures
         r.wf(),
         // The fold is a *function* of the input, in a fixed order. This equality
-        // is what makes the result reproducible, and it is what carries the V8
-        // bound (`theorem_sum_error_accumulation`) over to the real code.
+        // makes the result reproducible. It also carries the V8 bound
+        // (`theorem_sum_error_accumulation`) over to the real code.
         r == fold_val(xs@),
 {
     let mut acc = Rat::zero();
@@ -179,9 +179,8 @@ pub fn product(xs: &[Rat]) -> (r: Rat)
         all_wf(xs@),
     ensures
         r.wf(),
-        // The determinism-pinning equality, mirroring `sum`'s: it is what
-        // carries the V8 bound (`theorem_product_error_accumulation`) over to
-        // the real code.
+        // The determinism-pinning equality mirrors `sum`'s. It carries the V8
+        // bound (`theorem_product_error_accumulation`) over to the real code.
         r == prod_fold_val(xs@),
 {
     let mut acc = Rat::one();
@@ -231,23 +230,24 @@ pub open spec fn all_wf_pairs(s: Seq<(Rat, Rat)>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).0.wf() && s[i].1.wf()
 }
 
-/// `sum(w_i · x_i) / sum(w_i)` — the shape the averaging-belief-fusion formula
-/// needs.
+/// `sum(w_i · x_i) / sum(w_i)`. This is the shape the averaging-belief-fusion
+/// formula needs.
 ///
-/// `None` when the *accumulated* weight sum is zero — `wt_fold_val` below, the
-/// fold's own rounded total, not the exact sum. Two different inputs land here:
-/// weights that cancel exactly, and weights whose exact sum is nonzero but too
-/// small for the grid, so the fold rounds it to zero (`1/MAX_MAG` against
-/// `-1/(MAX_MAG - 2)` sums to about `-2^-123` and is refused). The mean is
-/// undefined in the first case and unrepresentable in the second, and this crate
-/// invents a value for neither.
+/// The result is `None` when the *accumulated* weight sum is zero. That total
+/// is `wt_fold_val` below, the fold's own rounded total, not the exact sum.
+/// Two different inputs give this result. First, weights that cancel exactly.
+/// Second, weights whose exact sum is nonzero but too small for the grid, so
+/// the fold rounds it to zero. For example, `1/MAX_MAG` against
+/// `-1/(MAX_MAG - 2)` sums to about `-2^-123`, and the function refuses it. The
+/// mean is undefined in the first case and unrepresentable in the second. This
+/// crate invents a value for neither.
 pub fn weighted_mean(pairs: &[(Rat, Rat)]) -> (r: Option<Rat>)
     requires
         all_wf_pairs(pairs@),
     ensures
         r.is_some() ==> r.unwrap().wf(),
-        // The determinism-pinning equalities, mirroring `sum`'s and
-        // `product`'s: together they carry the V8 bounds
+        // The determinism-pinning equalities mirror `sum`'s and `product`'s.
+        // Together they carry the V8 bounds
         // (`theorem_wm_num_error_accumulation`,
         // `theorem_wm_denom_error_accumulation`) over to the real code.
         r.is_none() <==> wt_fold_val(pairs@).n() == 0,
@@ -291,8 +291,9 @@ pub fn weighted_mean(pairs: &[(Rat, Rat)]) -> (r: Option<Rat>)
     }
 }
 
-/// Extending a prefix by one pair extends both `weighted_mean` folds — the
-/// numerator accumulator and the weight accumulator — by one step.
+/// Extending a prefix by one pair extends both `weighted_mean` folds by one
+/// step. The two folds are the numerator accumulator and the weight
+/// accumulator.
 pub proof fn lemma_wm_fold_snoc(s: Seq<(Rat, Rat)>, i: int)
     requires
         0 <= i < s.len(),
@@ -334,10 +335,10 @@ pub proof fn lemma_wm_fold_snoc(s: Seq<(Rat, Rat)>, i: int)
 
 /// The value the left fold of `s` produces, as a *function*.
 ///
-/// Deliberately not an `exists`-shaped predicate: the induction below has to
-/// unfold this at every step, and an existential would force the solver to
-/// guess a witness each time. Being a function also makes the exec `sum`'s
-/// postcondition an equality, which is what pins determinism.
+/// This is a function, not an `exists`-shaped predicate. The induction below
+/// unfolds it at every step, and an existential forces the solver to guess a
+/// witness each time. A function also makes the exec `sum`'s postcondition an
+/// equality, which pins determinism.
 pub open spec fn fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
@@ -355,7 +356,7 @@ pub open spec fn fold_val(s: Seq<Rat>) -> Rat
 }
 
 /// The value the left fold of `s` produces under multiplication, as a
-/// function — the `product` analogue of `fold_val`.
+/// function. This is the `product` analogue of `fold_val`.
 pub open spec fn prod_fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
@@ -373,12 +374,12 @@ pub open spec fn prod_fold_val(s: Seq<Rat>) -> Rat
 }
 
 /// Every prefix of the fold has step values bounded by `m`, and stays on a
-/// non-saturating path. This is the hypothesis V8 needs and cannot invent:
-/// without a magnitude bound on the intermediates there is nothing for the
-/// accumulated error to be measured against.
+/// non-saturating path. V8 needs this hypothesis and cannot invent it. Without
+/// a magnitude bound on the intermediates there is nothing to measure the
+/// accumulated error against.
 ///
-/// For this crate's actual domain it is trivially satisfiable — opinions live
-/// in `[0, 1]`, so `m == 1`.
+/// This crate's domain satisfies the hypothesis trivially. Opinions lie in
+/// `[0, 1]`, thus `m == 1`.
 pub open spec fn fold_bounded(s: Seq<Rat>, m: int) -> bool
     decreases s.len(),
 {
@@ -434,7 +435,7 @@ pub proof fn lemma_fold_wf(s: Seq<Rat>)
 }
 
 /// Every prefix of the product fold has step values bounded by `m`, and
-/// stays on a non-saturating path — the multiplicative analogue of
+/// stays on a non-saturating path. This is the multiplicative analogue of
 /// `fold_bounded`.
 pub open spec fn prod_fold_bounded(s: Seq<Rat>, m: int) -> bool
     decreases s.len(),
@@ -492,20 +493,20 @@ pub proof fn lemma_prod_fold_wf(s: Seq<Rat>)
 }
 
 /// **The V8 induction step for `product`.** One more rounded `mul` on top of
-/// an accumulator already within `k` units takes the total to `k + 1` units
-/// — **provided the new factor has magnitude at most `1`**.
+/// an accumulator already within `k` units takes the total to `k + 1` units.
+/// This holds **provided the new factor has magnitude at most `1`**.
 ///
 /// Multiplication is not 1-Lipschitz on an unbounded domain the way addition
-/// is: `|prev·next − prev'·next| = |next| · |prev − prev'|` scales the
-/// carried error by `|next|`, not by `1` (see `lemma_mul_lipschitz`). If
-/// `|next| <= 1` that scale factor cannot grow the carried error, and the
-/// step behaves exactly like `sum`'s: one more unit from this step's own
-/// rounding (R3, converted to absolute form by the magnitude hypothesis),
-/// plus the carried error passed through with a scale factor at most `1`.
-/// Without `|next| <= 1` no such bound holds uniformly in `k` — a run of
-/// factors with magnitude `> 1` would amplify the carried error
-/// geometrically, not additively, and no per-step "one more unit" law would
-/// exist. That is why `theorem_product_error_accumulation` carries the extra
+/// is. The identity `|prev·next − prev'·next| = |next| · |prev − prev'|`
+/// scales the carried error by `|next|`, not by `1` (see
+/// `lemma_mul_lipschitz`). If `|next| <= 1` that scale factor cannot grow the
+/// carried error, and the step behaves exactly like `sum`'s. It costs one more
+/// unit from this step's own rounding (R3, converted to absolute form by the
+/// magnitude hypothesis), plus the carried error passed through with a scale
+/// factor at most `1`. Without `|next| <= 1` no such bound holds uniformly in
+/// `k`. A run of factors with magnitude `> 1` amplifies the carried error
+/// geometrically, not additively, thus no per-step "one more unit" law exists.
+/// For this reason `theorem_product_error_accumulation` carries the extra
 /// `all_unit` hypothesis that `theorem_sum_error_accumulation` does not need.
 pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r: Rat, k: nat, m: int)
     requires
@@ -554,15 +555,15 @@ pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r:
             r.d() > 0,
     ;
     // (b) the carried error. Unlike addition, this does NOT pass through
-    // unchanged: en·td - tn·ed factors as bn·bd times the accumulator's own
-    // error, so the step scales the carried error by |bn|/bd. The
-    // unit-magnitude hypothesis |bn| <= bd is what keeps that scale factor at
-    // or below 1, so the carried error still only grows by one unit.
+    // unchanged. The term en·td - tn·ed factors as bn·bd times the
+    // accumulator's own error, thus the step scales the carried error by
+    // |bn|/bd. The unit-magnitude hypothesis |bn| <= bd keeps that scale factor
+    // at or below 1, thus the carried error still only grows by one unit.
     //
-    // The factorisation is given to the solver in small steps -- handed over
-    // whole (four variables, degree four, plus a distribution) it exhausts
-    // the resource limit, exactly as the addition step's analogous
-    // factorisation does.
+    // The factorisation goes to the solver in small steps. Handed over whole
+    // (four variables, degree four, plus a distribution) it exhausts the
+    // resource limit, exactly as the addition step's analogous factorisation
+    // does.
     assert((an * bn) * (pd * bd) == (bn * bd) * (an * pd)) by (nonlinear_arith);
     assert((pn * bn) * (ad * bd) == (bn * bd) * (pn * ad)) by (nonlinear_arith);
     assert((bn * bd) * (an * pd) - (bn * bd) * (pn * ad) == (bn * bd) * (an * pd - pn * ad))
@@ -607,14 +608,14 @@ pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r:
 }
 
 /// **V8 for `product`.** After `k` folded elements the accumulated error
-/// against the exact product is at most `k · m · 2^-61` — **provided every
-/// factor has magnitude at most `1`** (`all_unit(s)`).
+/// against the exact product is at most `k · m · 2^-61`. This holds
+/// **provided every factor has magnitude at most `1`** (`all_unit(s)`).
 ///
-/// The extra hypothesis over `theorem_sum_error_accumulation` is necessary,
-/// not an artifact of the proof: see `lemma_abs_error_mul_step`. It is
-/// trivially satisfiable in this crate's actual domain — every opinion
-/// component lives in `[0, 1]` — where it coincides with `fold_bounded`'s own
-/// `m == 1` case, exactly as documented in `docs/SPEC.md` §9.
+/// The extra hypothesis over `theorem_sum_error_accumulation` is necessary.
+/// It is not an artifact of the proof. See `lemma_abs_error_mul_step`. This
+/// crate's domain satisfies it trivially, because every opinion component
+/// lies in `[0, 1]`. There it coincides with `fold_bounded`'s own `m == 1`
+/// case, exactly as `docs/SPEC.md` §9 documents.
 pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
@@ -630,8 +631,8 @@ pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
         assert(prod_num(s) == 1 && prod_den(s) == 1);
         assert(prod_fold_val(s).n() == 1 && prod_fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
-        // Both sides are zero, but `abs_int(0)` and the `0 · m · …` product
-        // each need saying.
+        // Both sides are zero. The solver still needs `abs_int(0)` and the
+        // `0 · m · …` product stated explicitly.
         assert(prod_fold_val(s).n() * prod_den(s) - prod_num(s) * prod_fold_val(s).d() == 0);
         assert(crate::model::abs_int(0) == 0);
         assert((s.len() as int) * m * (prod_fold_val(s).d() * prod_den(s)) == 0);
@@ -682,15 +683,15 @@ pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
 /// **V8.** After `k` folded elements the accumulated error against the exact
 /// fold is at most `k · m · 2^-61`.
 ///
-/// The induction is exactly the two-line argument: each `add` contributes one
-/// fresh `2^-61` unit (R3), and the error already accumulated passes through
-/// the addition untouched, because addition is exactly 1-Lipschitz. Both halves
-/// live in `crate::lipschitz::lemma_abs_error_step`.
+/// The induction is a two-line argument. Each `add` contributes one fresh
+/// `2^-61` unit (R3). The error already accumulated passes through the addition
+/// untouched, because addition is exactly 1-Lipschitz. Both halves live in
+/// `crate::lipschitz::lemma_abs_error_step`.
 ///
 /// For the consuming engine's worst case of ~2·10⁴ sequential operations with
-/// `m == 1` this is `2·10⁴ · 2^-61 ≈ 2^-46.7 ≈ 1·10^-14` — the same precision
-/// class as `f64` accumulation, but deterministic and proven rather than
-/// assumed.
+/// `m == 1` this is `2·10⁴ · 2^-61 ≈ 2^-46.7 ≈ 1·10^-14`. That is the same
+/// precision class as `f64` accumulation. Unlike `f64`, this bound is
+/// deterministic and proven rather than assumed.
 pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
@@ -705,8 +706,8 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
         assert(sum_num(s) == 0 && sum_den(s) == 1);
         assert(fold_val(s).n() == 0 && fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
-        // Both sides are zero, but `abs_int(0)` and the `0 · m · …` product
-        // each need saying.
+        // Both sides are zero. The solver still needs `abs_int(0)` and the
+        // `0 · m · …` product stated explicitly.
         assert(fold_val(s).n() * sum_den(s) - sum_num(s) * fold_val(s).d() == 0);
         assert(crate::model::abs_int(0) == 0);
         assert((s.len() as int) * m * (fold_val(s).d() * sum_den(s)) == 0);
@@ -752,8 +753,8 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
     }
 }
 
-/// **The exact-path corollary.** If no step of the fold ever leaves the budget,
-/// the whole fold is exact — the k-element lift of R1.
+/// **The exact-path corollary.** If no step of the fold leaves the budget, the
+/// whole fold is exact. This is the k-element lift of R1.
 pub proof fn theorem_exact_fold_is_exact(s: Seq<Rat>)
     requires
         all_wf(s),
@@ -779,8 +780,8 @@ pub proof fn theorem_exact_fold_is_exact(s: Seq<Rat>)
             Dir::Nearest,
         );
         let r = fold_val(s);
-        // r is exactly prev + last, prev is exactly the partial sum, so r is
-        // exactly the whole sum.
+        // r is exactly prev + last, and prev is exactly the partial sum. Thus r
+        // is exactly the whole sum.
         assert(sum_num(s) == sum_num(init) * last.d() + last.n() * sum_den(init));
         assert(sum_den(s) == sum_den(init) * last.d());
         lemma_exact_step(prev, last, r, sum_num(init), sum_den(init), sum_num(s), sum_den(s));
@@ -806,13 +807,11 @@ pub open spec fn fold_exact(s: Seq<Rat>) -> bool
 
 /// Composing two exact steps stays exact.
 ///
-/// `#[verifier::rlimit(20)]`: this file grew substantially with the `product`
-/// and `weighted_mean` V8 additions, and the larger module pushed this
-/// already-tight six-atom, degree-four proof (see the comment below) over the
-/// default resource limit even though its own steps are unchanged. The same
-/// annotation is already used for comparably-sized proofs in
-/// `crate::lipschitz` (`lemma_triangle`, `lemma_mul_lipschitz`,
-/// `lemma_div_lipschitz`).
+/// `#[verifier::rlimit(20)]`: this module also holds the `product` and
+/// `weighted_mean` V8 material. At that module size, this tight six-atom,
+/// degree-four proof (see the comment below) exceeds the default resource
+/// limit. `crate::lipschitz` uses the same annotation for comparably sized
+/// proofs (`lemma_triangle`, `lemma_mul_lipschitz`, `lemma_div_lipschitz`).
 #[verifier::rlimit(20)]
 pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn: int, td: int)
     requires
@@ -834,8 +833,8 @@ pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn
     // r == (an·bd + bn·ad)/(ad·bd) and an/ad == pn/pd, so r == tn/td.
     assert(r.n() * (ad * bd) == (an * bd + bn * ad) * r.d());
     assert(an * pd == pn * ad);
-    // Handed over whole this exhausts the rlimit — six atoms, degree four, and
-    // a hypothesis to substitute. Do it in four steps that each move one thing.
+    // Handed over whole this exhausts the rlimit. It has six atoms, degree
+    // four, and a hypothesis to substitute. Four steps each move one thing.
     assert(r.n() * td * (ad * bd) == (r.n() * (ad * bd)) * (pd * bd)) by (nonlinear_arith)
         requires
             td == pd * bd,
@@ -850,8 +849,8 @@ pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn
         requires
             tn == pn * bd + bn * pd,
     ;
-    // The remaining identity is the cross-multiplication hypothesis, scaled by
-    // bd and by r.d().
+    // The remaining identity is the cross-multiplication hypothesis. It is
+    // scaled by bd and by r.d().
     assert((an * bd + bn * ad) * (pd * bd) == (pn * bd + bn * pd) * (ad * bd))
         by (nonlinear_arith)
         requires
@@ -873,15 +872,16 @@ pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn
 // V8 — accumulated error for `weighted_mean`
 // ---------------------------------------------------------------------------
 //
-// `weighted_mean` folds two accumulators in the same loop: `acc_num` (a sum
-// of rounded per-pair products) and `acc_w` (a plain sum of weights, exactly
-// `sum`'s fold restricted to the weight half of each pair). Each is given its
-// own V8 bound below, stated against the corresponding *exact* target
-// (`wsum_num`/`wsum_den` for the true weighted sum `Σ w_i·x_i`, `wt_num`/
-// `wt_den` for the true weight sum `Σ w_i`) — no rounding anywhere in either
-// target, so composing the two through the final division is a genuinely
-// separate step (see the doc comment on `theorem_wm_num_error_accumulation`
-// for why that composition is intentionally NOT attempted here).
+// `weighted_mean` folds two accumulators in the same loop. `acc_num` is a sum
+// of rounded per-pair products. `acc_w` is a plain sum of weights, exactly
+// `sum`'s fold restricted to the weight half of each pair. Each accumulator
+// gets its own V8 bound below, stated against the corresponding *exact*
+// target. Those targets are `wsum_num`/`wsum_den` for the true weighted sum
+// `Σ w_i·x_i`, and `wt_num`/`wt_den` for the true weight sum `Σ w_i`. Neither
+// target contains any rounding. Composing the two through the final division
+// is therefore a separate step. The doc comment on
+// `theorem_wm_num_error_accumulation` states why this module does NOT attempt
+// that composition.
 
 /// Numerator of the exact left-fold sum of just the weights in `s`.
 pub open spec fn wt_num(s: Seq<(Rat, Rat)>) -> int
@@ -909,10 +909,10 @@ pub open spec fn wt_den(s: Seq<(Rat, Rat)>) -> int
     }
 }
 
-/// Numerator of the *true* weighted sum `Σ w_i · x_i` — an exact fold over
-/// the exact per-pair products, with no rounding anywhere. This, not the sum
-/// of the *rounded* per-pair products, is the target `weighted_mean`'s
-/// numerator accumulator is measured against.
+/// Numerator of the *true* weighted sum `Σ w_i · x_i`. It is an exact fold
+/// over the exact per-pair products, with no rounding anywhere. This value is
+/// the target for `weighted_mean`'s numerator accumulator, rather than the sum
+/// of the *rounded* per-pair products.
 pub open spec fn wsum_num(s: Seq<(Rat, Rat)>) -> int
     decreases s.len(),
 {
@@ -942,7 +942,7 @@ pub open spec fn wsum_den(s: Seq<(Rat, Rat)>) -> int
 }
 
 /// The value the exec loop's weight accumulator (`acc_w`) computes, as a
-/// function — `fold_val` restricted to the weight half of each pair.
+/// function. It is `fold_val` restricted to the weight half of each pair.
 pub open spec fn wt_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
@@ -959,9 +959,9 @@ pub open spec fn wt_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     }
 }
 
-/// The value the exec loop's numerator accumulator (`acc_num`) computes: at
-/// each step, round the pair's product, then round it into the running sum
-/// — exactly what `Rat::add(acc_num, Rat::mul(w, x))` does.
+/// The value the exec loop's numerator accumulator (`acc_num`) computes. At
+/// each step it rounds the pair's product, then rounds that into the running
+/// sum. This is exactly what `Rat::add(acc_num, Rat::mul(w, x))` does.
 pub open spec fn wm_num_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
@@ -984,7 +984,8 @@ pub open spec fn wm_num_fold_val(s: Seq<(Rat, Rat)>) -> Rat
 }
 
 /// Every prefix of the weight fold has step values bounded by `m`, and stays
-/// on a non-saturating path — `fold_bounded` restricted to the weight half.
+/// on a non-saturating path. It is `fold_bounded` restricted to the weight
+/// half.
 pub open spec fn wt_bounded(s: Seq<(Rat, Rat)>, m: int) -> bool
     decreases s.len(),
 {
@@ -1006,9 +1007,9 @@ pub open spec fn wt_bounded(s: Seq<(Rat, Rat)>, m: int) -> bool
 }
 
 /// Every prefix of the numerator fold has BOTH of its per-element roundings
-/// — the `mul` and the `add` — bounded by `m` and non-saturating. Two
-/// roundings happen per pair (`Rat::mul` then `Rat::add`), so this hypothesis
-/// covers both, unlike `fold_bounded`'s one.
+/// bounded by `m` and non-saturating. The two roundings are the `mul` and the
+/// `add`. Each pair costs two roundings (`Rat::mul` then `Rat::add`), thus
+/// this hypothesis covers both. `fold_bounded` covers one.
 pub open spec fn wm_num_bounded(s: Seq<(Rat, Rat)>, m: int) -> bool
     decreases s.len(),
 {
@@ -1115,10 +1116,10 @@ pub proof fn lemma_wm_num_fold_wf(s: Seq<(Rat, Rat)>)
 /// weight accumulator's error against the exact weight sum is at most
 /// `k · m · 2^-61`.
 ///
-/// A direct restatement of `theorem_sum_error_accumulation` for the weight
-/// half of each pair — the induction and the lemma it calls
-/// (`crate::lipschitz::lemma_abs_error_step`) are identical; only the
-/// indexing (`s[i].0` instead of `s[i]`) differs.
+/// This is a direct restatement of `theorem_sum_error_accumulation` for the
+/// weight half of each pair. The induction and the lemma it calls
+/// (`crate::lipschitz::lemma_abs_error_step`) are identical. Only the indexing
+/// differs: `s[i].0` instead of `s[i]`.
 pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
@@ -1179,9 +1180,9 @@ pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
 
 /// R3 plus a magnitude bound on the exact value converts to a one-step
 /// absolute-error bound. This is "part (a)" of every V8 induction step
-/// elsewhere in this file, factored out here because
-/// `theorem_wm_num_error_accumulation` needs it applied twice per element
-/// (once for the `mul`, once for the `add`) instead of once.
+/// elsewhere in this file. It is a separate lemma because
+/// `theorem_wm_num_error_accumulation` applies it twice per element instead of
+/// once: once for the `mul` and once for the `add`.
 pub proof fn lemma_r3_to_abs_error_1(r: Rat, n: int, d: int, m: int)
     requires
         r.wf(),
@@ -1204,29 +1205,30 @@ pub proof fn lemma_r3_to_abs_error_1(r: Rat, n: int, d: int, m: int)
 
 /// **V8 for `weighted_mean`'s numerator accumulator.** After `k` pairs the
 /// numerator accumulator's error against the true weighted sum `Σ w_i · x_i`
-/// is at most `2k · m · 2^-61` — twice `sum`'s rate, because each pair costs
-/// two roundings (the `mul` and the `add`) instead of one.
+/// is at most `2k · m · 2^-61`. That is twice `sum`'s rate, because each pair
+/// costs two roundings (the `mul` and the `add`) instead of one.
 ///
-/// Unlike `theorem_product_error_accumulation`, no `all_unit` hypothesis is
-/// needed here: this accumulator is a *sum* of (independently rounded)
-/// per-pair products, not a running product, so the carried error passes
-/// through the outer `add` unchanged (addition is exactly 1-Lipschitz)
-/// regardless of any pair's magnitude. Only the per-step magnitude bound
-/// (`wm_num_bounded`, needed twice per step to convert each rounding's
-/// relative R3 bound to an absolute one) is required — exactly the same kind
-/// of hypothesis `fold_bounded` supplies for `sum`, just applied twice.
+/// Unlike `theorem_product_error_accumulation`, this theorem needs no
+/// `all_unit` hypothesis. This accumulator is a *sum* of independently rounded
+/// per-pair products, not a running product. The carried error therefore
+/// passes through the outer `add` unchanged, because addition is exactly
+/// 1-Lipschitz, and this holds for any pair's magnitude. Only the per-step
+/// magnitude bound `wm_num_bounded` is required. It applies twice per step, to
+/// convert each rounding's relative R3 bound to an absolute one. This is the
+/// same kind of hypothesis that `fold_bounded` supplies for `sum`, applied
+/// twice.
 ///
-/// This bounds the numerator accumulator alone, against the exact (unrounded)
-/// weighted sum — not the value `weighted_mean` finally returns after
-/// dividing by the weight accumulator. Composing this bound with
-/// `theorem_wm_denom_error_accumulation` through the division would need a
-/// further explicit hypothesis (the exact weight sum bounded away from zero:
-/// division is not Lipschitz otherwise, `crate::lipschitz::lemma_div_lipschitz`
-/// states only the algebraic core, not a finished bound) and is left
-/// unproven here. That is a real gap, not a hidden one: the two theorems in
-/// this section are the actual "n-ary helper" bound V8 asks for — the
-/// internal accumulation — and are exactly what `docs/SPEC.md` §9 documents
-/// as the honest state of this obligation for `weighted_mean`.
+/// This theorem bounds the numerator accumulator alone, against the exact
+/// (unrounded) weighted sum. It does not bound the value `weighted_mean`
+/// finally returns after dividing by the weight accumulator. Composing this
+/// bound with `theorem_wm_denom_error_accumulation` through the division needs
+/// a further explicit hypothesis: the exact weight sum bounded away from zero.
+/// Division is not Lipschitz otherwise, and
+/// `crate::lipschitz::lemma_div_lipschitz` states only the algebraic core, not
+/// a finished bound. This module leaves that composition unproven. The gap is
+/// explicit. The two theorems in this section are the "n-ary helper" bound V8
+/// asks for, namely the internal accumulation. `docs/SPEC.md` §9 documents
+/// them as the state of this obligation for `weighted_mean`.
 pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
@@ -1276,8 +1278,8 @@ pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
         lemma_r3_to_abs_error_1(t, mn, md, m);
 
         // Step 2: combine the carried numerator error (2·k0 units) and the
-        // product's own error (1 unit) across the exact addition -- errors
-        // from two independent approximants simply add.
+        // product's own error (1 unit) across the exact addition. Errors from
+        // two independent approximants add.
         crate::lipschitz::lemma_add_lipschitz(
             prevn.n(),
             prevn.d(),

@@ -1,29 +1,19 @@
-//! One lemma, isolated on purpose.
+//! The scoping of the rounding contract at the magnitude ceiling, as one lemma.
 //!
-//! The rounding contract is scoped below the magnitude ceiling: R3 is stated
-//! under `!saturated(n, d)`, results above it saturate, and `checked_*` reports
-//! them as `None`. The tempting justification for that — *nothing representable
-//! is close enough up there, so the bound is unachievable* — is *false*, and
-//! attractive enough that it was written into this crate three separate times by
-//! two different authors, and corrected twice before it stopped coming back.
+//! R3 is stated under `!saturated(n, d)`: results above the ceiling saturate,
+//! and `checked_*` reports them as `None`. The natural justification for that
+//! scoping — that nothing representable is close enough up there, so the bound
+//! is unachievable — is false. `lemma_saturation_is_a_choice` (no intra-doc
+//! link: items inside `verus!` are not resolvable targets) exhibits a value
+//! outside the ceiling that a well-formed `Rat` satisfies R3 for, so the strong
+//! claim contradicts a machine-checked theorem rather than a comment.
 //!
-//! Prose rots. A proof obligation does not. `lemma_saturation_is_a_choice`
-//! (no intra-doc link: items inside `verus!` are not resolvable targets)
-//! exhibits a value outside the ceiling that a well-formed `Rat` satisfies R3 for,
-//! so the strong claim now contradicts a machine-checked theorem rather than a
-//! comment somebody has to remember.
+//! The module boundary is organisational, not load-bearing: the lemma verifies
+//! cleanly from `model` under the pinned toolchain (issue #15), so it can be
+//! folded back in.
 //!
-//! It lives in its own module for no better reason than that it did not belong
-//! anywhere in particular. An earlier version of this note claimed the
-//! separation was forced — that the lemma's SMT cost tipped marginal proofs in
-//! `model` and `laws`. That was wrong: re-running the experiment under the
-//! pinned toolchain verifies cleanly with the lemma in `model` (see the closed
-//! issue #15), so nothing here is load-bearing and it can be folded back in if
-//! anyone prefers.
-//!
-//! None of this argues for widening the contract. Excluding the region keeps R3
-//! on one clean side of a boundary and keeps `checked_*` honest. It is simply
-//! not forced, and the documentation should not say it is.
+//! Excluding the region above the ceiling keeps R3 on one side of a clean
+//! boundary and keeps `checked_*` honest. It is a choice, not a necessity.
 
 use verus_builtin_macros::verus;
 
@@ -42,19 +32,16 @@ verus! {
 /// Saturation is a **scoping choice, not a necessity**: there are values above
 /// the magnitude ceiling that a well-formed `Rat` does satisfy R3 for.
 ///
-/// This exists because the opposite claim — that nothing representable is close
-/// enough, so the bound is unachievable up there — is false, and is attractive
-/// enough that it was written into this crate's documentation three separate
-/// times by two different authors, and corrected twice before it stopped coming
-/// back. A sentence can rot; a proof obligation cannot. If anyone restates the
-/// strong version, this lemma is the thing that contradicts them.
+/// The opposite claim — that nothing representable is close enough up there, so
+/// the bound is unachievable — is false, and this lemma is the obligation that
+/// contradicts it.
 ///
 /// The witness is `n/d = MAX_MAG + 1/2` against `r = MAX_MAG/1`: the error is
 /// exactly `1/2`, and R3 at this magnitude allows nearly `2`.
 ///
-/// None of this says the crate should widen the contract. Excluding the region
-/// keeps R3 on one clean side of a boundary and keeps `checked_*` honest. It
-/// just is not forced, and the docs should not claim it is.
+/// This is not an argument for widening the contract. Excluding the region
+/// keeps R3 on one side of a clean boundary and keeps `checked_*` honest; it is
+/// simply not forced.
 pub proof fn lemma_saturation_is_a_choice()
     ensures
         !magnitude_fits(2 * max_mag() + 1, 2),

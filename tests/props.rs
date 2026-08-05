@@ -1,9 +1,10 @@
-//! Property tests: the invariants and laws the crate claims, checked at runtime.
+//! Property tests. These check the invariants and laws the crate claims, at
+//! runtime.
 //!
-//! These overlap deliberately with the Verus obligations. A proof that has not
-//! been run is a hypothesis, and a proof that has been run is still worth
-//! double-checking against reality — especially the claims (determinism,
-//! commutativity, serde round-tripping) that the consuming engine will lean on.
+//! These tests overlap with the Verus obligations. The overlap gives a runtime
+//! check of each proved claim. It applies in particular to determinism,
+//! commutativity and serde round-tripping. The consuming engine depends on
+//! these three claims.
 
 #![allow(clippy::unusual_byte_groupings)]
 
@@ -42,7 +43,7 @@ fn every_operation_preserves_the_invariant() {
 }
 
 // ---------------------------------------------------------------------------
-// Commutativity — claimed unconditionally, rounding and all
+// Commutativity. The crate claims it unconditionally, including under rounding.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -67,8 +68,8 @@ fn add_and_mul_are_commutative_bit_for_bit() {
 
 #[test]
 fn associativity_holds_on_the_exact_path() {
-    // The crate claims associativity *only* when nothing rounds. Verify the
-    // claim on inputs small enough that nothing can round.
+    // The crate claims associativity *only* when nothing rounds. This test uses
+    // inputs small enough that no operation can round.
     let mut rng = Rng::new(0xA550C);
     for _ in 0..20_000 {
         let small =
@@ -80,7 +81,7 @@ fn associativity_holds_on_the_exact_path() {
         let lhs = Rat::mul(Rat::mul(a, b), c);
         let rhs = Rat::mul(a, Rat::mul(b, c));
         assert_eq!(lhs, rhs, "mul not associative on small values");
-        // Distributivity too.
+        // Distributivity holds on the same inputs.
         let lhs = Rat::mul(a, Rat::add(b, c));
         let rhs = Rat::add(Rat::mul(a, b), Rat::mul(a, c));
         assert_eq!(lhs, rhs, "distributivity fails on small values");
@@ -105,7 +106,7 @@ fn ord_is_a_total_order_agreeing_with_the_value_order() {
         if Rat::le(a, b) && Rat::le(b, c) {
             assert!(Rat::le(a, c), "transitivity failed on {a}, {b}, {c}");
         }
-        // Agreement with the oracle order and with `Ord`.
+        // The order agrees with the oracle order and with `Ord`.
         assert_eq!(Rat::le(a, b), rat(a) <= rat(b));
         assert_eq!(a.cmp(&b), rat(a).cmp(&rat(b)));
         assert_eq!(
@@ -131,8 +132,8 @@ fn hash_agrees_with_eq() {
         q.hash(&mut s);
         s.finish()
     };
-    // Canonicality means equal values are structurally identical, so equal
-    // values must hash identically — and 6/8 must *be* 3/4, not merely equal.
+    // Canonicality makes equal values structurally identical. Therefore equal
+    // values hash identically. 6/8 *is* 3/4, and is not merely equal to it.
     assert_eq!(Rat::new(6, 8).unwrap(), Rat::new(3, 4).unwrap());
     assert_eq!(h(Rat::new(6, 8).unwrap()), h(Rat::new(3, 4).unwrap()));
     assert_eq!(Rat::new(-2, -4).unwrap(), Rat::new(1, 2).unwrap());
@@ -146,8 +147,8 @@ fn hash_agrees_with_eq() {
 
 #[test]
 fn short_decimals_are_exact_end_to_end() {
-    // The engine's ingestion path: reliabilities and weights as <= 4-place
-    // decimals. Everything about them should be exact, all the way through.
+    // The engine's ingestion path supplies reliabilities and weights as
+    // decimals with 4 or fewer places. All operations on them stay exact.
     let mut rng = Rng::new(0xDEC1_1A1);
     for _ in 0..20_000 {
         let a = Rat::from_decimal(rng.below(20001) as i64 - 10000, 4).unwrap();
@@ -218,9 +219,9 @@ fn results_are_byte_identical_across_runs_and_threads() {
     }
 
     let baseline = workload(0x5EED);
-    // Same run, again.
+    // The same workload runs again in the same process.
     assert_eq!(baseline, workload(0x5EED));
-    // Concurrently, on other threads.
+    // The same workload runs concurrently on other threads.
     let handles: Vec<_> = (0..8)
         .map(|_| std::thread::spawn(|| workload(0x5EED)))
         .collect();
@@ -255,16 +256,16 @@ fn serde_round_trips_exactly() {
         let back: Rat = serde_json::from_str(&s).unwrap();
         assert_eq!(a, back, "serde round-trip changed {a} (encoded as {s})");
     }
-    // The encoding is the integer pair, not a float.
+    // The encoding is the integer pair. It is not a float.
     assert_eq!(
         serde_json::to_string(&Rat::new(17, 20).unwrap()).unwrap(),
         "[17,20]"
     );
-    // A non-canonical or out-of-budget payload is rejected, not silently fixed
-    // into an invariant-violating value.
+    // Deserialization rejects a non-canonical or out-of-budget payload. It does
+    // not convert such a payload into a value that violates the invariant.
     assert!(serde_json::from_str::<Rat>("[1,0]").is_err());
     assert!(serde_json::from_str::<Rat>("[9223372036854775807,1]").is_err());
-    // A non-reduced payload is accepted and canonicalised.
+    // Deserialization accepts a non-reduced payload and canonicalises it.
     let q: Rat = serde_json::from_str("[6,8]").unwrap();
     assert_eq!(q, Rat::new(3, 4).unwrap());
 }
@@ -315,8 +316,7 @@ fn weighted_mean_matches_its_definition() {
             assert_eq!(got.unwrap(), Rat::div(num, den));
         }
     }
-    // Zero total weight has no mean, and the crate says so rather than
-    // inventing one.
+    // A zero total weight has no mean. The crate returns `None` for this case.
     assert!(the_q::nary::weighted_mean(&[(Rat::zero(), Rat::one())]).is_none());
     assert!(the_q::nary::weighted_mean(&[]).is_none());
 }
@@ -351,7 +351,7 @@ fn intervals_bracket_the_exact_result() {
             rat(m.lo) <= exact && exact <= rat(m.hi),
             "product interval misses {exact}"
         );
-        // On the exact path the interval collapses to a point.
+        // On the exact path, the interval collapses to a point.
         if rat(s.lo) == rat(s.hi) {
             assert!(QI::add(ia, ib).width().is_zero());
         }
@@ -369,14 +369,14 @@ fn interval_width_is_zero_on_the_exact_path() {
 }
 
 /// Non-degenerate, arbitrary-sign intervals bracket the exact result of every
-/// point drawn from inside them — not just the endpoint-to-endpoint case
-/// `intervals_bracket_the_exact_result` checks. This is the black-box
-/// counterpart of `theorem_interval_add_contains`, `_sub_contains` and
-/// `_mul_contains`: those are proved for arbitrary `x`/`y` in range, and this
-/// samples that arbitrary range instead of only ever using the endpoints
-/// themselves (which is all a point interval can exercise). Signed endpoints
-/// in particular exercise `mul`'s corner rule across every sign pattern,
-/// which the existing (nonnegative-only) test above never reaches.
+/// point drawn from inside them. `intervals_bracket_the_exact_result` covers
+/// only the endpoint-to-endpoint case. This test is the black-box counterpart
+/// of `theorem_interval_add_contains`, `_sub_contains` and `_mul_contains`.
+/// Those theorems hold for arbitrary `x` and `y` in range. This test samples
+/// that range, and does not use only the endpoints. A point interval can
+/// exercise the endpoints alone. Signed endpoints exercise `mul`'s corner rule
+/// across every sign pattern. The nonnegative-only test above does not reach
+/// those sign patterns.
 #[test]
 fn signed_intervals_bracket_arbitrary_interior_points() {
     use the_q::interval::QI;
@@ -421,10 +421,10 @@ fn signed_intervals_bracket_arbitrary_interior_points() {
     }
 }
 
-/// The composability the layer is supposed to have: the output of one
-/// interval operation, fed straight into the next without any re-validation
-/// in between, stays well-formed and keeps bracketing the exact chained
-/// result. Signed endpoints exercise `mul`'s corner rule inside the chain.
+/// The interval layer composes. The output of one interval operation feeds
+/// straight into the next, with no re-validation in between. The result stays
+/// well-formed and keeps bracketing the exact chained result. Signed endpoints
+/// exercise `mul`'s corner rule inside the chain.
 #[test]
 fn interval_ops_chain_without_reestablishing_wf() {
     use the_q::interval::QI;
@@ -437,8 +437,8 @@ fn interval_ops_chain_without_reestablishing_wf() {
         let ib = QI::new(b_lo, b_hi);
         let ic = QI::new(c_lo, c_hi);
 
-        // `QI::add`'s result feeds `QI::mul` directly, and that result feeds
-        // `QI::sub` directly: no intermediate `QI::new`/re-check.
+        // `QI::add`'s result feeds `QI::mul` directly. That result feeds
+        // `QI::sub` directly. There is no intermediate `QI::new` or re-check.
         let sum = QI::add(ia, ib);
         let prod = QI::mul(sum, ic);
         let diff = QI::sub(prod, ia);
@@ -460,9 +460,9 @@ fn interval_ops_chain_without_reestablishing_wf() {
     }
 }
 
-/// A uniformly-flavoured pair `(lo, hi)` with `lo <= hi`, drawn from the same
-/// mixture of magnitude classes as `Rng::q` — signed, so both endpoints can
-/// land on either side of zero.
+/// Returns a pair `(lo, hi)` with `lo <= hi`. The pair comes from the same
+/// mixture of magnitude classes as `Rng::q`. The values are signed. Therefore
+/// both endpoints can land on either side of zero.
 fn ordered_pair(rng: &mut Rng) -> (Rat, Rat) {
     let (p, q) = (rng.q(), rng.q());
     if Rat::le(p, q) {
@@ -472,8 +472,9 @@ fn ordered_pair(rng: &mut Rng) -> (Rat, Rat) {
     }
 }
 
-/// A `Rat` in `[lo, hi]`, biased toward the endpoints themselves so the corner
-/// rule's boundary is exercised as often as its interior.
+/// Returns a `Rat` in `[lo, hi]`. The distribution is biased toward the
+/// endpoints. Therefore the corner rule's boundary gets as much coverage as its
+/// interior.
 fn interior_point(rng: &mut Rng, lo: Rat, hi: Rat) -> Rat {
     match rng.below(4) {
         0 => lo,
@@ -503,7 +504,7 @@ fn pow_is_repeated_multiplication() {
 }
 
 // ---------------------------------------------------------------------------
-// Directed modes really are directed
+// The directed modes are directed
 // ---------------------------------------------------------------------------
 
 #[test]

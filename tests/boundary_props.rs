@@ -1,16 +1,15 @@
 //! Property tests (proptest, with shrinking) aimed at the parts of the crate
 //! the Verus proofs deliberately do not reach.
 //!
-//! Everything inside `verus!` is machine-checked, so re-testing it here would
-//! buy nothing. What is *not* checked is the trusted boundary enumerated in
-//! `TRUSTED.md`: `to_f64`, the `f64::to_bits` bridge behind `from_f64_dir`, and
-//! the std trait glue. Those are exactly the places where a wrong assumption
-//! would be invisible to the solver, and where shrinking a counterexample to
-//! its minimal form is worth the dependency.
+//! Verus checks each item inside `verus!`, thus a test of those items adds
+//! nothing. `TRUSTED.md` enumerates the parts that Verus does not check:
+//! `to_f64`, the `f64::to_bits` bridge behind `from_f64_dir`, and the std trait
+//! implementations. A wrong assumption at those points is invisible to the
+//! solver, thus a shrinking property test is of value there.
 //!
-//! The rounding contract is included as well, at the *achieved* `B = 61` rather
-//! than the specification's `B >= 60` bar, so that losing the extra bit shows up
-//! as a test failure rather than as silently weaker output.
+//! These tests also cover the rounding contract, at the achieved `B = 61` and
+//! not at the `B >= 60` of the specification. A loss of the extra bit thus
+//! gives a test failure.
 
 mod common;
 
@@ -21,8 +20,9 @@ use the_q::{Dir, Rat};
 
 const DIRS: [Dir; 3] = [Dir::Down, Dir::Up, Dir::Nearest];
 
-/// Arbitrary in-budget `Rat`, biased towards the shapes that exercise rounding:
-/// large coprime-ish numerator/denominator pairs rather than small integers.
+/// An arbitrary in-budget `Rat`. The generator prefers the shapes that exercise
+/// rounding, thus it draws large numerator and denominator pairs with few
+/// common factors, and not small integers.
 fn arb_q() -> impl Strategy<Value = Rat> {
     (any::<i64>(), any::<i64>()).prop_filter_map("constructible", |(n, d)| Rat::new(n, d))
 }

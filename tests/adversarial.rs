@@ -1,9 +1,10 @@
 //! Adversarial fixtures: the edges where a bounded rational is most likely to
 //! be wrong.
 //!
-//! Budget-edge denominators, sign edges, `i64::MIN`, magnitude saturation,
-//! subnormal doubles, and the documented counterexamples. Each of these is a
-//! place where a plausible implementation quietly does the wrong thing.
+//! The fixtures cover budget-edge denominators, sign edges, `i64::MIN`,
+//! magnitude saturation, subnormal doubles, and the documented
+//! counterexamples. At each of these points a plausible implementation gives a
+//! wrong result.
 
 #![allow(clippy::unusual_byte_groupings)]
 
@@ -170,7 +171,7 @@ fn signum_and_predicates_at_the_edges() {
 }
 
 // ---------------------------------------------------------------------------
-// Magnitude saturation — the one case R3 cannot cover
+// Magnitude saturation: the one case that R3 does not cover
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -210,13 +211,13 @@ fn magnitude_overflow_saturates_and_checked_reports_it() {
     assert_wf(q, "saturating div");
     assert_eq!(q, big, "should saturate, not wrap");
 
-    // checked_div reports the same saturating cases as None, and reports
-    // in-budget quotients as Some, agreeing with the plain op — the same
-    // contract checked_add/checked_sub/checked_mul already carry.
+    // checked_div reports each saturating case as None and each in-budget
+    // quotient as Some, and it agrees with the plain operation. This is the
+    // contract that checked_add, checked_sub and checked_mul carry.
     // `MAX_MAG / (1/MAX_MAG) == MAX_MAG^2`, well past the ceiling.
     assert!(Rat::checked_div(big, tiny).is_none());
-    // `1 / (1/MAX_MAG) == MAX_MAG` exactly — right at the ceiling, not over
-    // it, so this one is `Some`.
+    // `1 / (1/MAX_MAG) == MAX_MAG` exactly. That value is at the ceiling and
+    // not above it, thus the result is `Some`.
     assert_eq!(Rat::checked_div(Rat::one(), tiny), Some(big));
     assert_eq!(Rat::checked_div(half, half), Some(Rat::one()));
     assert_eq!(Rat::checked_div(big, big), Some(Rat::one()));
@@ -339,9 +340,9 @@ fn f64_boundary_edges() {
 
 #[test]
 fn associativity_can_fail_when_rounding_bites() {
-    // The README claims add is not associative in general. If this test ever
-    // starts failing, the claim has become too pessimistic and the docs should
-    // be revisited — it is here to keep the documentation honest, in both
+    // The README states that add is not associative in general. A failure of
+    // this test means that the statement is too strong and that the
+    // documentation needs a review. The test thus checks the statement in both
     // directions.
     let mut rng = Rng::new(0xA55_0C_1A);
     let mut found = false;
@@ -360,11 +361,11 @@ fn associativity_can_fail_when_rounding_bites() {
 
 #[test]
 fn associativity_defect_for_add_is_quantitatively_bounded() {
-    // The test above shows `add` can fail to be associative. This one shows
-    // that failure is not unbounded: it demonstrates
-    // `laws::theorem_add_associativity_bound` on a genuine failure instance —
+    // The test above shows that `add` can fail to be associative. This test
+    // shows that the failure is bounded. It demonstrates
+    // `laws::theorem_add_associativity_bound` on a true failure instance:
     // `|((a+b)+c) - (a+(b+c))| <= 4 * 2^-61 * m`, where `m` bounds
-    // `max(1, |exact value|)` for every one of the four additions the two
+    // `max(1, |exact value|)` for each of the four additions that the two
     // bracketings perform.
     let mut rng = Rng::new(0xA55_0C_1A);
     let mut checked_a_failure = false;
@@ -410,11 +411,12 @@ fn associativity_defect_for_add_is_quantitatively_bounded() {
 
 #[test]
 fn associativity_defect_for_mul_is_quantitatively_bounded_on_unit_interval() {
-    // The multiplicative analogue: `laws::theorem_mul_associativity_bound_unit_interval`
-    // claims `|((a*b)*c) - (a*(b*c))| <= 6 * 2^-61` whenever `a, b, c` all lie
-    // in `[0, 1]`. Draw wide unit-interval values (denominators near the
-    // budget, so rounding is essentially guaranteed) until a genuine
-    // associativity failure turns up, and check the bound on it.
+    // The multiplicative form:
+    // `laws::theorem_mul_associativity_bound_unit_interval` states
+    // `|((a*b)*c) - (a*(b*c))| <= 6 * 2^-61` for `a, b, c` in `[0, 1]`. The
+    // test draws wide unit-interval values, with denominators near the budget
+    // so that each operation rounds, until an associativity failure occurs. It
+    // then checks the bound on that instance.
     let mut rng = Rng::new(0x0FF_1CE);
     let wide01 = |r: &mut Rng| loop {
         let d = MAX_MAG - r.below(1024) as i64;
@@ -450,14 +452,15 @@ fn associativity_defect_for_mul_is_quantitatively_bounded_on_unit_interval() {
 
 #[test]
 fn the_composed_operation_is_not_globally_monotone() {
-    // README documents this, and R4 is stated per-grid because of it: "return
-    // it exactly if it fits, otherwise snap to the dyadic grid" is not monotone
-    // across the fits/does-not-fit boundary.
+    // The README documents this behaviour, and R4 is stated per grid for this
+    // reason. The composed operation "return the value exactly if it fits,
+    // otherwise snap to the dyadic grid" is not monotone across the boundary
+    // between the two cases.
     //
-    // `u` is representable and sits strictly inside the grid cell
-    // `(2^-61, 2·2^-61)`, so it is returned untouched. `v` is a hair larger but
-    // *not* representable, so it snaps down to the bottom of that same cell —
-    // which is below `u`. Rounding down has inverted the order.
+    // `u` is representable and lies inside the grid cell `(2^-61, 2·2^-61)`,
+    // thus the operation returns it unchanged. `v` is slightly larger and is
+    // not representable, thus it snaps to the bottom of the same cell, which is
+    // below `u`. Rounding down thus inverts the order.
     let g: i64 = 1i64 << 61;
     let u = Rat::new(2, g + 1).unwrap();
     let scale = Rat::new(MAX_MAG, MAX_MAG - 1).unwrap(); // 1 + 1/(MAX_MAG-1)
@@ -477,12 +480,12 @@ fn the_composed_operation_is_not_globally_monotone() {
 
 #[test]
 fn rounding_is_monotone_within_one_grid() {
-    // R4 as actually claimed: on a fixed grid, snapping preserves order. Every
-    // value in (0, 1) uses the same grid (step 2^-61), so this exercises the
-    // per-grid statement directly, on exact results that all genuinely round.
+    // R4 as stated: on a fixed grid, snapping preserves the order. Each value
+    // in (0, 1) uses the same grid, with step 2^-61, thus this test exercises
+    // the per-grid statement directly, on exact results that all round.
     let mut rng = Rng::new(0xB0_0_1);
-    // Wide unit-interval values: denominators near the budget, so products land
-    // at ~2^124 and essentially always need rounding.
+    // Wide unit-interval values. The denominators are near the budget, thus
+    // products reach approximately 2^124 and need rounding.
     let wide = |r: &mut Rng| loop {
         let d = MAX_MAG - r.below(1024) as i64;
         let n = r.below(d as u64) as i64;
@@ -526,8 +529,8 @@ fn rounding_is_monotone_within_one_grid() {
 
 #[test]
 fn ten_thousand_op_chain_at_the_budget_edge() {
-    // Denominators deliberately pushed against the budget on every step, so
-    // essentially every operation takes the rounding path.
+    // The denominators stay against the budget at each step, thus almost each
+    // operation takes the rounding path.
     let mut rng = Rng::new(0xE_D_9_E);
     let mut acc = Rat::new(MAX_MAG - 1, MAX_MAG).unwrap();
     let mut oracle = rat(acc);
@@ -552,8 +555,8 @@ fn ten_thousand_op_chain_at_the_budget_edge() {
 
 #[test]
 fn deep_reciprocal_chain_is_exact() {
-    // recip is claimed exact in both directions; a long alternating chain must
-    // therefore return to where it started, bit for bit.
+    // recip is exact in both directions, thus a long alternating chain returns
+    // to its start value, bit for bit.
     let mut rng = Rng::new(0x12_EC_19);
     for _ in 0..5_000 {
         let a = rng.q_nonzero();
@@ -565,18 +568,19 @@ fn deep_reciprocal_chain_is_exact() {
     }
 }
 
-/// The rounding carry: a deterministic witness for the one path the `B = 61`
-/// shift introduces that `B = 60` did not have.
+/// The rounding carry: a deterministic witness for the path that the `B = 61`
+/// shift adds and that a `B = 60` shift does not have.
 ///
-/// With `s = 62 - k` the scaled numerator can reach `2^62 - 1`, and rounding
-/// away from zero then lands on `2^62` — one past `MAX_MAG`. `lemma_carry_reduces`
-/// proves the GCD reduction rescues it; this pins the behaviour at runtime,
-/// because the random sweeps cannot plausibly reach it (the scaled numerator has
-/// to fall in the top `rd`-wide window below `2^62` *and* round up, which is
-/// about a `rd / 2^62` chance per snap).
+/// With `s = 62 - k` the scaled numerator can reach `2^62 - 1`. Rounding away
+/// from zero then gives `2^62`, which is one above `MAX_MAG`.
+/// `lemma_carry_reduces` proves that the GCD reduction returns the pair to the
+/// budget. This test pins the behaviour at run time, because the random sweeps
+/// cannot reach it: the scaled numerator must fall in the top `rd`-wide window
+/// below `2^62` and must also round up, which is a chance of approximately
+/// `rd / 2^62` for each snap.
 ///
-/// `x = (3·2^61 − 1) / 3` is just under `2^61`, so `k = 61`, `s = 1`, and the
-/// scaled numerator is exactly `2^62 − 1`.
+/// `x = (3·2^61 − 1) / 3` is just below `2^61`, thus `k = 61` and `s = 1`, and
+/// the scaled numerator is exactly `2^62 − 1`.
 #[test]
 fn rounding_carry_reduces_back_into_budget() {
     let n = 3 * (1i64 << 61) - 1;
@@ -598,9 +602,10 @@ fn rounding_carry_reduces_back_into_budget() {
     );
     assert_wf(down, "carry (Down)");
 
-    // Rounding the other way lands on the last grid point below, `2^62 - 1`
-    // over `2^1`. That numerator is odd, so nothing reduces and it sits exactly
-    // on `MAX_MAG` — in budget, and the boundary the carry steps one past.
+    // Rounding in the other direction lands on the last grid point below,
+    // `2^62 - 1` over `2^1`. That numerator is odd, thus no reduction occurs
+    // and the value is exactly `MAX_MAG`. That value is in budget, and it is
+    // the boundary that the carry passes by one.
     let no_carry = Rat::new_rounded(n, 3, Dir::Down).expect("representable");
     assert_eq!(
         (no_carry.numerator(), no_carry.denominator()),
@@ -611,18 +616,19 @@ fn rounding_carry_reduces_back_into_budget() {
 }
 
 // ---------------------------------------------------------------------------
-// Issue #9: the ingestion constructors' newly-stated value behaviour
+// Issue #9: the value behaviour of the ingestion constructors
 //
-// Each test here targets a postcondition that the proofs now carry and
-// previously did not. They are deliberately executable rather than trusting
-// the `ensures`: a postcondition can be proved and still describe the wrong
-// thing, and these pin the arithmetic a reader would actually expect.
+// Each test targets one postcondition that the proofs carry. The tests are
+// executable and do not rely on the `ensures` clause alone. A postcondition can
+// be proved and still describe the wrong behaviour, thus these tests pin the
+// expected arithmetic.
 // ---------------------------------------------------------------------------
 
 /// `Rat::new`'s completeness direction: in-budget inputs always produce a value.
 ///
-/// The old contract said only what the answer *is* when there is one, which an
-/// implementation returning `None` for every nonzero denominator satisfies.
+/// A contract that states the answer only when an answer exists is too weak.
+/// An implementation that returns `None` for each nonzero denominator
+/// satisfies it.
 #[test]
 fn new_succeeds_for_every_in_budget_pair() {
     let mut rng = Rng::new(0x9e37_79b9);
@@ -678,7 +684,7 @@ fn from_decimal_is_the_exact_decimal_it_claims() {
         );
         assert_wf(q, "from_decimal");
     }
-    // The doc comment's own example, which had no verified meaning before.
+    // The example from the doc comment.
     assert_eq!(Rat::from_decimal(85, 2).unwrap().to_string(), "17/20");
     // Both failure guards, and nothing else.
     assert!(
@@ -695,9 +701,9 @@ fn from_decimal_is_the_exact_decimal_it_claims() {
     );
 }
 
-/// `new_rounded` rounds the *value* `num/den`, so a negative denominator does
-/// not mirror the direction. This is what `signed_den_num` encodes, and it is
-/// the part of the contract most likely to have been written backwards.
+/// `new_rounded` rounds the value `num/den`, thus a negative denominator does
+/// not mirror the direction. `signed_den_num` encodes that rule. This part of
+/// the contract is easy to state backwards.
 #[test]
 fn new_rounded_direction_is_about_the_value_not_the_numerator() {
     // 1/3 is not representable, so both directions actually round.
