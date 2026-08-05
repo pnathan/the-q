@@ -1,11 +1,11 @@
 //! The `Rat` value type, the rounding-direction enum, and the width budget.
 //!
 //! The fields are public. Verus cannot state a public invariant about a
-//! datatype whose fields it cannot see. See the note on [`Rat`]. Every
-//! constructor establishes the invariant. Every operation preserves it. Under
-//! Verus the invariant is a precondition of all of them. Thus a hand-built
-//! value is inert. [`Rat::numerator`] and [`Rat::denominator`] are the
-//! accessors.
+//! datatype whose fields it cannot see. See the note on [`Rat`]. The type is
+//! `#[non_exhaustive]`, thus another crate cannot build a value from a struct
+//! literal and must use a constructor. Every constructor establishes the
+//! invariant, and every operation preserves it. [`Rat::numerator`] and
+//! [`Rat::denominator`] are the accessors.
 
 use verus_builtin_macros::verus;
 
@@ -63,21 +63,27 @@ pub enum Dir {
 /// `(num, den)` is not the order on rationals. `Ord` uses cross-multiplication
 /// instead, and a proof shows that it agrees with the ghost order (V6).
 ///
-/// # Why the fields are public
+/// # Why the fields are public, and why the type is `#[non_exhaustive]`
 ///
 /// Verus treats a datatype as *opaque* wherever any of its fields is invisible.
 /// A public specification must be well-formed everywhere it is visible. With
 /// `pub(crate)` fields, `Rat::wf` cannot mention `self.num` at all. The type
-/// invariant is then unstatable in the crate's public API.
+/// invariant is then unstatable in the crate's public API. The fields are thus
+/// public, and readable by any caller.
 ///
-/// One consequence is that `Rat { num: 3, den: 0 }` compiles. Such a value is
-/// still not usable. **Every** operation in this crate `requires` `Rat::wf`.
-/// Under Verus a hand-built value reaches no operation until the caller
-/// discharges the invariant, and a malformed value cannot discharge it. In
-/// unverified Rust the value is an ordinary hazard. Build values with
-/// [`Rat::new`], [`Rat::from_decimal`] or [`Rat::from_int`]. These constructors
-/// canonicalise and establish the invariant.
+/// `#[non_exhaustive]` closes the hole that public fields would otherwise open.
+/// Another crate cannot write `Rat { num: 3, den: 0 }`, because the attribute
+/// makes a struct literal outside this crate a compile error. The constructors
+/// are therefore the only way in, and each one canonicalises its input and
+/// establishes the invariant: [`Rat::new`], [`Rat::new_rounded`],
+/// [`Rat::from_int`], [`Rat::from_decimal`], and the arithmetic, which takes
+/// well-formed values and returns well-formed values.
+///
+/// Under Verus the invariant is a precondition of every operation, thus a
+/// malformed value reaches nothing. Outside Verus the attribute is what carries
+/// that guarantee, and it carries it at compile time.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
 pub struct Rat {
     /// The numerator. Coprime to `den`; `|num| <= MAX_MAG`.
     pub num: i64,

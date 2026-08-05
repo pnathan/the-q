@@ -27,10 +27,9 @@ cannot be passed to anything. In unverified Rust it is a footgun — use
 ## Two types: `Rat` and `Q`
 
 `Rat` above is the verified kernel — exact, canonical, bounded, and **partial**.
-`Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, `Rat::zero().recip()`
-returns a value that violates the type invariant, and
-`Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG` — wrong by a factor of
-two and indistinguishable from a real answer.
+`Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` and `Rat::zero().recip()` panic
+rather than return, and `Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG`
+— wrong by a factor of two and indistinguishable from a real answer.
 
 `Q` layers explicit non-representable states over that kernel, so that "not a
 representable rational" becomes an observable state instead of something the
@@ -99,12 +98,19 @@ obligation over the whole module, and the test suite re-checks it on the
 compiled artifact by sweeping every function over every state plus tens of
 thousands of random values.
 
-`Rat` is deliberately **not** total, and that has not changed. `Rat::div(x, 0)`
-panics, `Rat::new(_, 0)` is `None`, and `Rat::zero().recip()` returns a value
-violating the type invariant. That is the point of the split: `Rat` is the
-verified kernel where preconditions are discharged statically at the call site,
-and `Q` is the layer that makes them into values for callers who cannot. If you
-want the guarantee, use `Q`.
+`Rat` is deliberately **not** total. `Rat::new(_, 0)` is `None`, and
+`Rat::div(x, 0)` and `Rat::zero().recip()` panic. That is the point of the
+split: `Rat` is the verified kernel where preconditions are discharged
+statically at the call site, and `Q` is the layer that makes them into values
+for callers who cannot. If you want the guarantee, use `Q`.
+
+What `Rat` does **not** do is return a wrong answer to an unverified caller. It
+is `#[non_exhaustive]`, so no other crate can build a `Rat` from a struct
+literal and the constructors are the only way in; the two preconditioned
+operations check at the boundary and panic instead of computing on a value they
+were never given; and `Rat::checked_div` is total in the divisor, returning
+`None` for a zero divisor as `i64::checked_div` does. Every reachable `Rat` is
+canonical and in budget.
 
 There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 

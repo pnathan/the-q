@@ -33,8 +33,8 @@ fn readme_claims_about_the_kernel_defects_hold() {
     let one = Rat::new(1, 1).unwrap();
     assert!(Rat::new(1, 0).is_none(), "Rat::new(_, 0) is None");
     assert!(std::panic::catch_unwind(|| Rat::div(one, zero)).is_err());
-    let broken = zero.recip();
-    assert_eq!((broken.numerator(), broken.denominator()), (-1, 0));
+    assert!(std::panic::catch_unwind(|| zero.recip()).is_err());
+    assert_eq!(Rat::checked_div(one, zero), None);
     let m = Rat::new(MAX_MAG, 1).unwrap();
     assert_eq!(Rat::add(m, m).numerator(), MAX_MAG);
 }

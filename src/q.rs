@@ -522,9 +522,14 @@ impl Rat {
 
     /// `a / b`, rounded in direction `dir`.
     ///
-    /// Division by zero is a precondition and not a runtime error. The caller
-    /// discharges `!b.is_zero()` statically, thus this function has no panic
-    /// path.
+    /// `b.n() != 0` is a precondition. Verified code discharges it statically,
+    /// thus this function has no reachable panic there.
+    ///
+    /// Unverified code cannot discharge a precondition. A zero divisor from
+    /// unverified code therefore fails a runtime check at this boundary, and
+    /// the call panics. It does not return a value. Use [`Rat::checked_div`],
+    /// which is total in the divisor, or [`crate::Q::div`], which gives an
+    /// infinity or `Nan`.
     pub fn div_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -540,6 +545,10 @@ impl Rat {
                 div_d(a, b),
             ),
     {
+        // The runtime half of the precondition. Verified code proves this and
+        // pays nothing. Unverified code that passes a zero divisor panics here
+        // instead of reaching the division inside `round_frac_exec`.
+        vstd::pervasive::runtime_assert(b.num != 0);
         proof {
             lemma_op_widths(a, b);
             crate::model::lemma_pow2_124();
@@ -753,22 +762,30 @@ impl Rat {
         }
     }
 
-    /// `a / b`, or `None` if the exact quotient is too large in magnitude.
-    /// Requires `!b.is_zero()`.
+    /// `a / b`, or `None` if there is no representable quotient.
     ///
-    /// Division saturates on the magnitude ceiling that `add`, `sub` and `mul`
-    /// use. For example, `(MAX_MAG/1) / (1/MAX_MAG)` is far above that ceiling.
-    /// This function thus completes the `checked_*` family.
+    /// This operation is total in the divisor. A zero divisor gives `None`, as
+    /// `i64::checked_div` and `num-traits` do for the same input. It is thus the
+    /// one member of the family that a caller can use without discharging
+    /// `b.n() != 0` first.
+    ///
+    /// The other `None` case is magnitude. Division saturates on the ceiling
+    /// that `add`, `sub` and `mul` use. For example, `(MAX_MAG/1) / (1/MAX_MAG)`
+    /// is far above that ceiling.
     pub fn checked_div(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
-            b.n() != 0,
         ensures
-            r.is_none() <==> saturated(div_n(a, b), div_d(a, b)),
+            b.n() == 0 ==> r.is_none(),
+            b.n() != 0 ==> (r.is_none() <==> saturated(div_n(a, b), div_d(a, b))),
+            r.is_some() ==> b.n() != 0,
             r.is_some() ==> r.unwrap() == round_frac(div_n(a, b), div_d(a, b), Dir::Nearest),
             r.is_some() ==> r.unwrap().wf(),
     {
+        if b.num == 0 {
+            return None;
+        }
         proof {
             lemma_op_widths(a, b);
             crate::model::lemma_pow2_126();
@@ -814,6 +831,10 @@ impl Rat {
 
     /// `1 / a`. Always exact. The operation swaps the numerator and the
     /// denominator, and I2 is symmetric between them.
+    ///
+    /// `self.n() != 0` is a precondition. A zero from unverified code fails a
+    /// runtime check and panics. The reciprocal of zero is not a rational, and
+    /// no `Rat` denotes it. [`crate::Q::recip`] returns `PosInf` for that input.
     pub fn recip(self) -> (r: Rat)
         requires
             self.wf(),
@@ -823,6 +844,9 @@ impl Rat {
             r.n() * self.n() > 0,
             q_is_recip(r, self),
     {
+        // Without this check a zero receiver returns `Rat { num: -1, den: 0 }`,
+        // which violates I1 and fails in a later operation, far from the cause.
+        vstd::pervasive::runtime_assert(self.num != 0);
         proof {
             lemma_max_mag_pow2();
         }

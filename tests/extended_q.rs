@@ -898,21 +898,24 @@ fn constructors_agree_with_their_predicates() {
 // derivation produces.
 // ===========================================================================
 
-/// The three defects that open issue #26. This test confirms that each defect
-/// reproduces on the kernel and is absent from the extended type.
+/// The three defects that open issue #26, and what each one does now.
+///
+/// Two of the three are gone from the kernel as well. `recip` and `div` still
+/// carry `n() != 0` as a precondition, because the exactness contracts need it,
+/// but an unverified caller that breaks the precondition now gets a panic at
+/// the boundary and never a malformed value. `checked_div` is total in the
+/// divisor. The extended type answers with a state in every case.
 #[test]
 fn the_motivating_defects_are_fixed() {
     let zero = Rat::new(0, 1).unwrap();
     let one = Rat::new(1, 1).unwrap();
 
-    // 1. `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }`. That value
-    //    violates the type invariant, which requires den > 0. It causes a
-    //    failure in a later operation.
-    let broken = zero.recip();
-    assert_eq!(
-        (broken.numerator(), broken.denominator()),
-        (-1, 0),
-        "premise: the kernel defect still reproduces"
+    // 1. `Rat::zero().recip()` returned `Rat { num: -1, den: 0 }`, which
+    //    violates I1 and fails in a later operation. It now panics at the
+    //    boundary instead.
+    assert!(
+        std::panic::catch_unwind(|| zero.recip()).is_err(),
+        "recip of zero must panic, not return a malformed value"
     );
     assert_eq!(
         Q::Number(zero).recip(),
@@ -920,16 +923,21 @@ fn the_motivating_defects_are_fixed() {
         "the extended type must report a state, not a malformed value"
     );
 
-    // 2. and 3. `Rat::div(_, 0)` and `Rat::checked_div(_, 0)` both panic.
+    // 2. `Rat::div(_, 0)` panics, at the boundary rather than inside the
+    //    rounding code.
     assert!(
         std::panic::catch_unwind(|| Rat::div(one, zero)).is_err(),
-        "premise: kernel div by zero still panics"
-    );
-    assert!(
-        std::panic::catch_unwind(|| Rat::checked_div(one, zero)).is_err(),
-        "premise: kernel checked_div by zero still panics"
+        "kernel div by zero must panic"
     );
     assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
+
+    // 3. `Rat::checked_div(_, 0)` returned a panic where `std` returns `None`.
+    //    It now returns `None`.
+    assert_eq!(
+        Rat::checked_div(one, zero),
+        None,
+        "kernel checked_div must return None for a zero divisor"
+    );
     assert_eq!(
         Q::checked_div(Q::one(), Q::zero()),
         None,

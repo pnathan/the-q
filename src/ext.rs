@@ -1174,14 +1174,14 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Total division (issue #26 §10.2)
 //
-// This section closes the three defects that open #26. Each defect is present
-// in the kernel:
+// This section closes the three defects that open #26. The kernel now fails
+// loudly on each of them, and this layer answers with a value instead:
 //
-//   * `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }`. That value
-//     violates the type invariant and fails later, far from the cause.
+//   * `Rat::zero().recip()` panics. It once returned `Rat { num: -1, den: 0 }`,
+//     which violates the type invariant and fails later, far from the cause.
 //   * `Rat::div(x, 0)` panics.
-//   * `Rat::checked_div(x, 0)` panics. `std` and `num-traits` both return
-//     `None` for this case.
+//   * `Rat::checked_div(x, 0)` is `None`, as `std` and `num-traits` are for
+//     this case.
 //
 // Each cell below comes from the denotations in §2. The result is the smallest
 // state whose denotation contains the true image
@@ -1398,9 +1398,8 @@ impl Q {
     /// components of a canonical pair, and both components are inside the
     /// budget. No rounding and no saturation can thus occur.
     ///
-    /// This operation replaces a kernel operation that returned
-    /// `Rat { num: -1, den: 0 }` for `recip(0)`, which violates the type
-    /// invariant.
+    /// This operation is total where the kernel `Rat::recip` carries
+    /// `n() != 0` as a precondition and panics at zero.
     pub fn recip(self) -> (r: Q)
         requires
             self.wf(),
