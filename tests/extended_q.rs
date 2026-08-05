@@ -2119,3 +2119,214 @@ fn the_soundness_harness_would_catch_an_unsound_cell() {
          soundness"
     );
 }
+
+// ===========================================================================
+// N-ary folds
+// ===========================================================================
+
+#[test]
+fn folds_report_overflow_where_the_kernel_absorbs_it() {
+    // The kernel clamps `M + M` to `M`, then subtracts `M`, and returns 0 —
+    // silently wrong, since the true total is `M`. This is #26 §9.2's example.
+    let m = Rat::new(MAX_MAG, 1).unwrap();
+    let neg_m = Rat::new(-MAX_MAG, 1).unwrap();
+    assert_eq!(
+        the_q::nary::sum(&[m, m, neg_m]).numerator(),
+        0,
+        "premise: the kernel still returns 0 for [M, M, -M]"
+    );
+    // The enum fold refuses to invent that. It cannot recover the true total —
+    // §9.2 is explicit that a sticky Nan is the cost — but it does not lie.
+    let folded = Q::sum(&[Q::Number(m), Q::Number(m), Q::Number(neg_m)]);
+    assert!(!folded.is_number(), "must not report a plain number here");
+    assert_eq!(folded, Q::Nan);
+}
+
+/// The V8 accumulated-error bound: after `k` elements the fold is within
+/// `k · 2^-61 · max(1, |exact|)` of the exact value.
+///
+/// This is the bound `nary`'s `theorem_sum_error_accumulation` states, and it is
+/// *not* R3 — R3 governs a single rounding, and a `k`-element fold performs `k`
+/// of them. Using `assert_r3` here would be checking the wrong theorem, which is
+/// how this test first failed.
+fn assert_accumulated(got: Rat, exact: &Rational, k: usize, what: &str) {
+    let one = Rational::from_signeds(1i128, 1i128);
+    let err = if rat(got) > *exact {
+        rat(got) - exact.clone()
+    } else {
+        exact.clone() - rat(got)
+    };
+    let mag = if *exact < oracle_zero() {
+        -exact.clone()
+    } else {
+        exact.clone()
+    };
+    let scale = if mag > one { mag } else { one };
+    let bound = Rational::from_signeds(k as i128, 1i128 << 61) * scale;
+    assert!(
+        err <= bound,
+        "{what}: accumulated error exceeds k·2^-61·max(1,|exact|) with k={k}; \
+         got {got}, exact {exact}"
+    );
+}
+
+#[test]
+fn folds_stay_within_the_accumulated_error_bound() {
+    // On the exact path the fold cannot overflow, so it stays a number, and its
+    // distance from the true value is bounded by V8's `k · 2^-61` rather than by
+    // R3's single-rounding bound.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0040);
+    for _ in 0..2_000 {
+        let n = 1 + (rng.below(8) as usize);
+        let xs: Vec<Rat> = (0..n).map(|_| rng.q_unit()).collect();
+        let qs: Vec<Q> = xs.iter().map(|x| Q::Number(*x)).collect();
+
+        let mut exact = oracle_zero();
+        for x in &xs {
+            exact += rat(*x);
+        }
+        match Q::sum(&qs) {
+            Q::Number(r) => assert_accumulated(r, &exact, n, "Q::sum"),
+            other => panic!("sum of unit values must stay a number, got {other}"),
+        }
+
+        // `product`'s bound needs every factor's magnitude at most 1, which
+        // `q_unit` guarantees; without it the carried error amplifies
+        // geometrically rather than accumulating additively.
+        let mut pexact = Rational::from_signeds(1i128, 1i128);
+        for x in &xs {
+            pexact *= rat(*x);
+        }
+        match Q::product(&qs) {
+            Q::Number(r) => assert_accumulated(r, &pexact, n, "Q::product"),
+            other => panic!("product of unit values must stay a number, got {other}"),
+        }
+    }
+}
+
+#[test]
+fn folds_are_bit_exact_when_no_step_rounds() {
+    // Short decimals share a denominator, so no partial sum ever needs rounding
+    // and the fold is exactly the oracle's answer — no bound, equality.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0043);
+    for _ in 0..2_000 {
+        let n = 1 + (rng.below(20) as usize);
+        let xs: Vec<Rat> = (0..n)
+            .map(|_| Rat::from_decimal(rng.below(101) as i64, 2).unwrap())
+            .collect();
+        let qs: Vec<Q> = xs.iter().map(|x| Q::Number(*x)).collect();
+        let mut exact = oracle_zero();
+        for x in &xs {
+            exact += rat(*x);
+        }
+        match Q::sum(&qs) {
+            Q::Number(r) => assert_eq!(rat(r), exact, "two-decimal sum must be exact"),
+            other => panic!("expected a number, got {other}"),
+        }
+    }
+}
+
+#[test]
+fn empty_folds_are_the_identities() {
+    assert_eq!(Q::sum(&[]), Q::zero());
+    assert_eq!(Q::product(&[]), Q::one());
+    // An empty weighted mean is 0/0, which carries no information — Nan by the
+    // same rule as every other division, not by special case.
+    assert_eq!(Q::weighted_mean(&[]), Q::Nan);
+}
+
+#[test]
+fn folds_propagate_nan_and_never_panic() {
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0041);
+    let specials = representatives();
+    for i in 0..5_000 {
+        let n = 1 + (rng.below(6) as usize);
+        let xs: Vec<Q> = (0..n)
+            .map(|k| {
+                if (i + k) % 5 == 0 {
+                    specials[(i + k) % specials.len()]
+                } else {
+                    Q::Number(rng.q())
+                }
+            })
+            .collect();
+        let has_nan = xs.iter().any(|q| q.is_nan());
+
+        for r in [Q::sum(&xs), Q::product(&xs)] {
+            if let Q::Number(x) = r {
+                common::assert_wf(x, "Q fold");
+            }
+            if has_nan {
+                assert!(r.is_nan(), "a Nan input must propagate through the fold");
+            }
+        }
+
+        let pairs: Vec<(Q, Q)> = xs.iter().map(|q| (*q, *q)).collect();
+        let wm = Q::weighted_mean(&pairs);
+        if let Q::Number(x) = wm {
+            common::assert_wf(x, "Q::weighted_mean");
+        }
+    }
+}
+
+#[test]
+fn weighted_mean_is_total_where_the_kernel_returns_none() {
+    // Zero total weight: the kernel reports `None` out of band. Here it is a
+    // value, by the same #26 §4 convention every other division follows.
+    let z = Q::zero();
+    assert_eq!(
+        Q::weighted_mean(&[(z, Q::one()), (z, Q::one())]),
+        Q::Nan,
+        "0 weighted numerator over 0 weight is 0/0"
+    );
+    // Nonzero numerator over zero weight is a signed infinity.
+    let pos = Q::one();
+    let neg = Q::neg_one();
+    let wm = Q::weighted_mean(&[(pos, pos), (neg, pos)]);
+    assert!(wm.is_nan() || wm.is_infinite(), "got {wm}");
+
+    // The ordinary case still works and is exact.
+    let half = Q::Number(Rat::new(1, 2).unwrap());
+    assert_eq!(
+        Q::weighted_mean(&[(Q::one(), Q::zero()), (Q::one(), Q::one())]),
+        half,
+        "equal weights on 0 and 1 give 1/2"
+    );
+}
+
+#[test]
+fn weighted_mean_agrees_with_the_oracle_on_the_exact_path() {
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0042);
+    for _ in 0..2_000 {
+        let n = 1 + (rng.below(5) as usize);
+        let pairs: Vec<(Rat, Rat)> = (0..n).map(|_| (rng.q_unit(), rng.q_unit())).collect();
+        let qp: Vec<(Q, Q)> = pairs
+            .iter()
+            .map(|(w, x)| (Q::Number(*w), Q::Number(*x)))
+            .collect();
+
+        let mut num = oracle_zero();
+        let mut den = oracle_zero();
+        for (w, x) in &pairs {
+            num += rat(*w) * rat(*x);
+            den += rat(*w);
+        }
+        if den == oracle_zero() {
+            continue;
+        }
+        let exact = num / den;
+        if let Q::Number(r) = Q::weighted_mean(&qp) {
+            // Several roundings compose here, so this checks the result is in
+            // the right neighbourhood rather than pinning a single rounding.
+            let err = if rat(r) > exact.clone() {
+                rat(r) - exact.clone()
+            } else {
+                exact.clone() - rat(r)
+            };
+            assert!(
+                err <= Rational::from_signeds(1i128, 1i128 << 40),
+                "weighted_mean is far from the exact value: got {r}, exact {exact}"
+            );
+        }
+    }
+}

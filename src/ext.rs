@@ -488,6 +488,120 @@ impl Q {
 }
 
 // ---------------------------------------------------------------------------
+// N-ary folds (issue #26 §10.5)
+//
+// The kernel's `nary::sum`/`product`/`weighted_mean` clamp: `sum(&[M, M, -M])`
+// clamps to `M`, then subtracts, and returns `0` — silently wrong, since the
+// true total is `M`. These fold with the enum's operations instead, so an
+// overflow anywhere in the chain is reported rather than absorbed.
+//
+// #26 §9.2 is honest about the cost and so is this: once a partial fold
+// saturates, `PosSat + Number(-M)` is `Nan` and the fold never recovers. A
+// sequence of representable numbers whose exact total is representable can
+// still yield `Nan`. That is strictly less useful than `f64`'s sticky
+// infinities — but it is *honest*, where the kernel's `0` is not. Callers who
+// need the exact-path guarantee should check `is_number()` on the result, which
+// is exactly the "all partial folds are `Number`" hypothesis §9.2 calls for.
+// ---------------------------------------------------------------------------
+
+/// Every element satisfies the type invariant.
+pub open spec fn all_wf_q(s: Seq<Q>) -> bool {
+    forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).wf()
+}
+
+/// Every component of every pair satisfies the type invariant.
+pub open spec fn all_wf_q_pairs(s: Seq<(Q, Q)>) -> bool {
+    forall|i: int|
+        0 <= i < s.len() ==> (#[trigger] s[i]).0.wf() && s[i].1.wf()
+}
+
+impl Q {
+    /// `xs[0] + xs[1] + ...`, left to right. An empty slice gives `0`.
+    ///
+    /// Left-to-right is part of the contract, not an implementation detail:
+    /// with rounding, addition is not associative, so the order fixes the
+    /// answer and is what makes the result reproducible.
+    pub fn sum(xs: &[Q]) -> (r: Q)
+        requires
+            all_wf_q(xs@),
+        ensures
+            r.wf(),
+            xs@.len() == 0 ==> r.spec_is_zero(),
+    {
+        let mut acc = Q::zero();
+        let mut i: usize = 0;
+        while i < xs.len()
+            invariant
+                acc.wf(),
+                all_wf_q(xs@),
+                i <= xs.len(),
+                i == 0 ==> acc.spec_is_zero(),
+            decreases xs.len() - i,
+        {
+            acc = Q::add(acc, xs[i]);
+            i = i + 1;
+        }
+        acc
+    }
+
+    /// `xs[0] * xs[1] * ...`, left to right. An empty slice gives `1`.
+    pub fn product(xs: &[Q]) -> (r: Q)
+        requires
+            all_wf_q(xs@),
+        ensures
+            r.wf(),
+            xs@.len() == 0 ==> r.spec_is_one(),
+    {
+        let mut acc = Q::one();
+        let mut i: usize = 0;
+        while i < xs.len()
+            invariant
+                acc.wf(),
+                all_wf_q(xs@),
+                i <= xs.len(),
+                i == 0 ==> acc.spec_is_one(),
+            decreases xs.len() - i,
+        {
+            acc = Q::mul(acc, xs[i]);
+            i = i + 1;
+        }
+        acc
+    }
+
+    /// `sum(w_i · x_i) / sum(w_i)` over `(weight, value)` pairs.
+    ///
+    /// **Total**, where the kernel's returns `Option`. A zero total weight is no
+    /// longer an out-of-band failure: it is `Nan` when the weighted numerator is
+    /// also zero (`0/0` carries no information) and a signed infinity otherwise,
+    /// by the same #26 §4 convention every other division follows. An empty
+    /// slice is `Nan` for that reason, not by special case.
+    pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Q)
+        requires
+            all_wf_q_pairs(pairs@),
+        ensures
+            r.wf(),
+    {
+        let mut acc_num = Q::zero();
+        let mut acc_w = Q::zero();
+        let mut i: usize = 0;
+        while i < pairs.len()
+            invariant
+                acc_num.wf(),
+                acc_w.wf(),
+                all_wf_q_pairs(pairs@),
+                i <= pairs.len(),
+            decreases pairs.len() - i,
+        {
+            let (w, x) = pairs[i];
+            acc_num = Q::add(acc_num, Q::mul(w, x));
+            acc_w = Q::add(acc_w, w);
+            i = i + 1;
+        }
+        Q::div(acc_num, acc_w)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Addition, subtraction, multiplication (issue #26 §10.3)
 //
 // Saturation moves into the enum here. The kernel silently returns
