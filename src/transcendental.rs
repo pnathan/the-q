@@ -309,4 +309,128 @@ impl Q {
     }
 }
 
+/// Terms of every Maclaurin series here.
+///
+/// Each series is range-reduced so its argument satisfies `|z| <= 1/2` before
+/// summing, and at that argument twenty terms put the tail far below the grid:
+/// `(1/2)^20 / 20!` is about `4e-25`, against a grid resolution of `2^-61`
+/// (about `4e-19`). The count is fixed rather than derived from a convergence
+/// test so that termination is structural and the cost of a call is constant.
+const SERIES_TERMS: u32 = 20;
+
+/// Maximum halvings used to bring an argument into the series' comfort zone.
+///
+/// `exp` is only evaluated for `|x| <= 44` (beyond that the result leaves the
+/// budget), and `44 / 2^7 < 0.35`, so seven always suffices; eight is carried
+/// for margin. The bound also makes the reduction loop trivially terminating.
+const MAX_HALVINGS: u32 = 8;
+
+/// Beyond `|x| > 44`, `exp(x)` leaves the budget in one direction or the other:
+/// `exp(44) > 2^63` and `exp(-44) < 2^-63`. Both are decided without summing
+/// anything.
+const EXP_ARG_LIMIT: i64 = 44;
+
+impl Q {
+    /// `e^self`.
+    ///
+    /// | operand | result | why |
+    /// |---|---|---|
+    /// | `Number(x)`, `x > 44` | `PosSat` | `exp(44) > MAX_MAG` |
+    /// | `Number(x)`, `x < -44` | `Number(0)` | underflow, and §11 places that inside R3 |
+    /// | `Number(x)` otherwise | series | |
+    /// | `PosSat` | `PosSat` | image `(exp(MAX_MAG), ∞) ⊆ (MAX_MAG, ∞)` |
+    /// | `NegSat` | `Nan` | see below |
+    /// | `PosInf` | `PosInf` | |
+    /// | `NegInf` | `Number(0)` | exact limit |
+    /// | `Nan` | `Nan` | |
+    ///
+    /// `exp(NegSat)` is `Nan` rather than zero, and the asymmetry with
+    /// `exp(Number(-50))` is deliberate. The image of `(-∞, -MAX_MAG)` is
+    /// `(0, exp(-MAX_MAG))`, an interval that does **not** contain zero, so
+    /// `Number(0)` would be unsound as a denotation — it would assert an exact
+    /// value the true result provably is not. For a `Number` argument the
+    /// rounding contract applies instead and underflow-to-zero is inside it
+    /// (#26 §11), which is why that case may answer zero and this one may not.
+    /// It is also the same call §11 makes for `recip(Sat)`: a computation
+    /// continuing past an overflow is one option (A) declines to serve.
+    ///
+    /// # Method
+    ///
+    /// `exp(x) = exp(x / 2^k)^(2^k)`, with `k` chosen as the smallest value
+    /// bringing `|x|` to at most `1/2`, then twenty Maclaurin terms, then `k`
+    /// squarings. `k` is adaptive rather than fixed because each squaring
+    /// doubles the relative error: a fixed `k = 8` would cost every small
+    /// argument a factor of 256 in accuracy it does not need.
+    pub fn exp(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            self.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        match self {
+            Q::PosSat => Q::PosSat,
+            Q::NegSat => Q::Nan,
+            Q::PosInf => Q::PosInf,
+            Q::NegInf => Q::zero(),
+            Q::Nan => Q::Nan,
+            Q::Number(x) => {
+                let limit = Q::new(EXP_ARG_LIMIT, 1);
+                let q = Q::Number(x);
+                if Q::gt(q, limit) {
+                    return Q::PosSat;
+                }
+                if Q::lt(q, limit.neg()) {
+                    return Q::zero();
+                }
+                let half = Q::new(1, 2);
+                let two = Q::new(2, 1);
+                // Range reduction: halve until |z| <= 1/2.
+                let mut z = q;
+                let mut k: u32 = 0;
+                while k < MAX_HALVINGS && Q::gt(z.abs(), half)
+                    invariant
+                        z.wf(),
+                        half.wf(),
+                        two.wf(),
+                        k <= MAX_HALVINGS,
+                    decreases MAX_HALVINGS - k,
+                {
+                    z = Q::div(z, two);
+                    k = k + 1;
+                }
+                // Maclaurin: term_{n+1} = term_n · z / (n+1).
+                let mut term = Q::one();
+                let mut sum = Q::one();
+                let mut i: u32 = 1;
+                while i <= SERIES_TERMS
+                    invariant
+                        term.wf(),
+                        sum.wf(),
+                        z.wf(),
+                        1 <= i <= SERIES_TERMS + 1,
+                    decreases SERIES_TERMS + 1 - i,
+                {
+                    term = Q::div(Q::mul(term, z), Q::new(i as i64, 1));
+                    sum = Q::add(sum, term);
+                    i = i + 1;
+                }
+                // Undo the reduction.
+                let mut j: u32 = 0;
+                while j < k
+                    invariant
+                        sum.wf(),
+                        j <= k,
+                        k <= MAX_HALVINGS,
+                    decreases k - j,
+                {
+                    sum = Q::mul(sum, sum);
+                    j = j + 1;
+                }
+                sum
+            },
+        }
+    }
+}
+
 } // verus!

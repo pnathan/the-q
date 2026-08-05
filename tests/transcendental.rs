@@ -46,6 +46,17 @@ fn eps(k: u32) -> Rational {
     Rational::from_signeds(1i128, 1i128 << k)
 }
 
+/// The largest `k` with `e <= 2^-k`, i.e. how many bits of precision a worst
+/// observed relative error corresponds to. Printing the raw rational is
+/// useless — these have hundreds of digits.
+fn precision_bits(e: &Rational) -> u32 {
+    let mut k = 0u32;
+    while k < 62 && *e <= eps(k + 1) {
+        k += 1;
+    }
+    k
+}
+
 const SPECIALS: [Q; 5] = [Q::PosSat, Q::NegSat, Q::PosInf, Q::NegInf, Q::Nan];
 
 fn states() -> Vec<Q> {
@@ -143,7 +154,10 @@ fn sqrt_squared_recovers_the_input() {
             other => panic!("sqrt of a positive number must be a number, got {other}"),
         }
     }
-    println!("sqrt: worst relative error of r^2 vs x = {worst}");
+    println!(
+        "sqrt: worst relative error of r^2 vs x is 2^-{}",
+        precision_bits(&worst)
+    );
 }
 
 #[test]
@@ -234,5 +248,164 @@ fn isqrt_is_correct() {
             ((r + 1) as i128) * ((r + 1) as i128) > n as i128,
             "isqrt({n}) too small"
         );
+    }
+}
+
+// ===========================================================================
+// exp
+// ===========================================================================
+
+/// `exp(x)` to far higher precision than the crate can represent, by summing
+/// the Maclaurin series over exact rationals until the term is below `2^-90`.
+/// Independent of the implementation: no range reduction, no fixed term count.
+fn oracle_exp(x: &Rational) -> Rational {
+    let mut term = one();
+    let mut sum = one();
+    let tol = eps(90);
+    for n in 1..400u32 {
+        term = term * x.clone() / Rational::from_signeds(n as i128, 1i128);
+        sum += term.clone();
+        if mag(&term) < tol {
+            break;
+        }
+    }
+    sum
+}
+
+#[test]
+fn exp_matches_the_derived_special_table() {
+    assert_eq!(Q::PosInf.exp(), Q::PosInf);
+    assert_eq!(Q::NegInf.exp(), Q::zero(), "exp(-inf) is exactly 0");
+    assert_eq!(Q::Nan.exp(), Q::Nan);
+    // exp of (MAX_MAG, inf) is (exp(MAX_MAG), inf), astronomically inside
+    // PosSat's denotation.
+    assert_eq!(Q::PosSat.exp(), Q::PosSat);
+    // But exp of (-inf, -MAX_MAG) is (0, exp(-MAX_MAG)) — an interval that does
+    // NOT contain zero, so Number(0) would be an unsound denotation.
+    assert_eq!(
+        Q::NegSat.exp(),
+        Q::Nan,
+        "exp(NegSat) must not claim the exact value zero"
+    );
+    assert_eq!(Q::zero().exp(), Q::one(), "exp(0) is exactly 1");
+}
+
+#[test]
+fn exp_is_accurate_against_a_high_precision_series() {
+    let mut rng = Rng::new(0x5EED_0010);
+    let mut worst = oracle_zero();
+    let mut worst_at = oracle_zero();
+    for _ in 0..600 {
+        // Arguments across the whole usable range, including the large ones
+        // where range reduction and squaring do the most work.
+        let x = rng.q_unit();
+        let scale = (rng.below(80) as i64) - 40;
+        let arg = Rat::new(scale, 1).unwrap();
+        let q = Q::add(Q::Number(x), Q::Number(arg));
+        let Q::Number(xv) = q else { continue };
+        let want = oracle_exp(&rat(xv));
+        match q.exp() {
+            Q::Number(r) => {
+                let e = rel_err(&rat(r), &want);
+                if e > worst {
+                    worst = e.clone();
+                    worst_at = rat(xv);
+                }
+                assert!(
+                    e <= eps(30),
+                    "exp({xv}) = {r}, want ~{want}, relative error {e}"
+                );
+            }
+            other => {
+                // Only legitimate near the ends of the range.
+                assert!(
+                    rat(xv) > Rational::from_signeds(40i128, 1i128)
+                        || rat(xv) < Rational::from_signeds(-40i128, 1i128),
+                    "exp({xv}) left the Number class at {other}"
+                );
+            }
+        }
+    }
+    println!(
+        "exp: worst relative error 2^-{} (at x = {worst_at})",
+        precision_bits(&worst)
+    );
+}
+
+#[test]
+fn exp_is_very_accurate_on_small_arguments() {
+    // No range reduction happens for |x| <= 1/2, so no squaring amplifies the
+    // error, and the result should be near the grid resolution.
+    let mut rng = Rng::new(0x5EED_0011);
+    let mut worst = oracle_zero();
+    for _ in 0..5_000 {
+        let x = rng.q_unit();
+        let half = Rational::from_signeds(1i128, 2i128);
+        if rat(x) > half {
+            continue;
+        }
+        let want = oracle_exp(&rat(x));
+        if let Q::Number(r) = Q::Number(x).exp() {
+            let e = rel_err(&rat(r), &want);
+            if e > worst {
+                worst = e.clone();
+            }
+            assert!(e <= eps(50), "exp({x}) = {r} is not accurate enough");
+        }
+    }
+    println!(
+        "exp: worst relative error on |x| <= 1/2 is 2^-{}",
+        precision_bits(&worst)
+    );
+}
+
+#[test]
+fn exp_saturates_and_underflows_at_the_stated_thresholds() {
+    assert_eq!(Q::Number(Rat::new(45, 1).unwrap()).exp(), Q::PosSat);
+    assert_eq!(Q::Number(Rat::new(100, 1).unwrap()).exp(), Q::PosSat);
+    assert_eq!(Q::Number(Rat::new(-45, 1).unwrap()).exp(), Q::zero());
+    assert_eq!(Q::Number(Rat::new(-100, 1).unwrap()).exp(), Q::zero());
+    // `ln(MAX_MAG)` is about 42.98, so 43 genuinely overflows — the `44`
+    // constant is only a cheap pre-check, and arguments between 42.98 and 44
+    // saturate through the ordinary arithmetic instead. 42 is the last integer
+    // whose exponential fits.
+    assert!(
+        Q::Number(Rat::new(42, 1).unwrap()).exp().is_number(),
+        "exp(42) is about 1.7e18 and fits the budget"
+    );
+    assert_eq!(
+        Q::Number(Rat::new(43, 1).unwrap()).exp(),
+        Q::PosSat,
+        "exp(43) is about 4.7e18, past MAX_MAG"
+    );
+}
+
+#[test]
+fn exp_is_monotone_and_positive() {
+    let mut rng = Rng::new(0x5EED_0012);
+    for _ in 0..5_000 {
+        let a = (rng.below(60) as i64) - 30;
+        let b = a + 1 + (rng.below(5) as i64);
+        let (ea, eb) = (
+            Q::Number(Rat::new(a, 1).unwrap()).exp(),
+            Q::Number(Rat::new(b, 1).unwrap()).exp(),
+        );
+        if let (Q::Number(x), Q::Number(y)) = (ea, eb) {
+            assert!(rat(x) > oracle_zero(), "exp({a}) = {x} is not positive");
+            assert!(rat(x) < rat(y), "exp is not increasing at ({a}, {b})");
+        }
+    }
+}
+
+#[test]
+fn exp_is_total_and_never_panics() {
+    for q in states() {
+        assert_total(q.exp(), "exp");
+    }
+    let mut rng = Rng::new(0x5EED_0013);
+    for _ in 0..20_000 {
+        let n = rng.next_u64() as i64;
+        let d = rng.next_u64() as i64;
+        assert_total(Q::new(n, d).exp(), "exp");
     }
 }
