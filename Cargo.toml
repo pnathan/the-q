@@ -46,6 +46,10 @@ proptest = "1"
 name = "arith"
 harness = false
 
+[[bench]]
+name = "micro"
+harness = false
+
 [features]
 default = []
 serde = ["dep:serde"]

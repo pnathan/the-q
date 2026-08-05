@@ -1846,8 +1846,26 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
                 (n as int) == red_num(n as int, d as int) * (g as int),
         ;
     }
-    let rn: i128 = n / g;
-    let rd: i128 = d / g;
+    // A coprime pair is the common case for small operands, and `x / 1` is
+    // still an `i128` division, which is a call into `compiler_builtins`. Both
+    // arms establish the same two facts, so the proof below sees no case split.
+    let rn: i128;
+    let rd: i128;
+    if g == 1 {
+        proof {
+            vstd::arithmetic::div_mod::lemma_div_basics(n as int);
+            vstd::arithmetic::div_mod::lemma_div_basics(d as int);
+        }
+        rn = n;
+        rd = d;
+    } else {
+        rn = n / g;
+        rd = d / g;
+    }
+    proof {
+        assert(rn as int == red_num(n as int, d as int));
+        assert(rd as int == red_den(n as int, d as int));
+    }
     let arn: i128 = if rn < 0 {
         0 - rn
     } else {
