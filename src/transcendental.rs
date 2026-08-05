@@ -1054,4 +1054,282 @@ impl Q {
     }
 }
 
+
+/// `ln(10)`, by applying [`Q::ln`] to ten.
+///
+/// The derivation of [`ln10`]; see [`ln2`] for why the value is pinned.
+pub fn ln10_series() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::new(10, 1).ln()
+}
+
+/// `ln(10)`.
+///
+/// Pinned like [`ln2`], and `ln10_is_the_series_value` checks it. That test
+/// earned its place immediately: the literal was first written from a
+/// remembered decimal expansion and was wrong in the seventh significant
+/// figure. A constant nobody can check is a constant nobody should trust.
+pub fn ln10() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::new(2654699869899991811, 1152921504606846976)
+}
+
+impl Q {
+    /// The base-2 logarithm, as `ln(self) / ln(2)`.
+    pub fn log2(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(self.ln(), ln2())
+    }
+
+    /// The base-10 logarithm, as `ln(self) / ln(10)`.
+    pub fn log10(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(self.ln(), ln10())
+    }
+
+    /// The logarithm in an arbitrary base, as `ln(self) / ln(base)`.
+    ///
+    /// A base of `1` gives a zero denominator and therefore an infinity or
+    /// `Nan` — which is the honest answer, since `log_1` is undefined.
+    pub fn log(self, base: Q) -> (r: Q)
+        requires
+            self.wf(),
+            base.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(self.ln(), base.ln())
+    }
+
+    /// `2^self`, as `exp(self · ln 2)`.
+    pub fn exp2(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::mul(self, ln2()).exp()
+    }
+
+    /// `self^exponent` for a real exponent, as `exp(exponent · ln(self))`.
+    ///
+    /// Defined only for a positive base: `ln` of a negative is `Nan`, which
+    /// propagates. That is the same domain `f64::powf` has trouble with, made
+    /// explicit rather than special-cased — `(-8)^(1/3)` has a real answer but
+    /// `(-8)^(1/2)` does not, and this does not attempt to tell them apart.
+    /// Use [`Q::pow_i32`] for integer exponents, which is exact and handles
+    /// negative bases.
+    ///
+    /// `0^0` is `1`, matching [`Q::pow_u32`] and IEEE.
+    pub fn powf(self, exponent: Q) -> (r: Q)
+        requires
+            self.wf(),
+            exponent.wf(),
+        ensures
+            r.wf(),
+    {
+        if exponent.is_zero() {
+            return Q::one();
+        }
+        if self.is_zero() {
+            return Q::zero();
+        }
+        Q::mul(exponent, self.ln()).exp()
+    }
+
+    /// The cube root, defined for negative arguments as well as positive.
+    ///
+    /// `cbrt(-x) == -cbrt(x)`, so unlike [`Q::sqrt`] the whole real line is in
+    /// the domain. Computed as `exp(ln|x| / 3)` with the sign reapplied, so it
+    /// carries `exp` and `ln`'s accuracy rather than `sqrt`'s — about `2^-53`
+    /// against `sqrt`'s `2^-60`.
+    pub fn cbrt(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            self.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        match self {
+            Q::Nan => Q::Nan,
+            Q::PosInf => Q::PosInf,
+            Q::NegInf => Q::NegInf,
+            // Same argument as `sqrt(PosSat)`: the image of `(MAX_MAG, inf)`
+            // under a root reaches far below `MAX_MAG`.
+            Q::PosSat => Q::Nan,
+            Q::NegSat => Q::Nan,
+            Q::Number(x) => {
+                let s = x.signum();
+                if s == 0 {
+                    return Q::zero();
+                }
+                let mag = Q::Number(x).abs();
+                let root = Q::div(mag.ln(), Q::new(3, 1)).exp();
+                if s < 0 {
+                    root.neg()
+                } else {
+                    root
+                }
+            },
+        }
+    }
+
+    /// `sqrt(self² + other²)`, without the intermediate overflowing where the
+    /// naive form would.
+    ///
+    /// Computed as `|a|·sqrt(1 + (b/a)²)` with `a` the larger magnitude, which
+    /// keeps the squared term at most `1` and so representable even when
+    /// `a² + b²` is not.
+    pub fn hypot(self, other: Q) -> (r: Q)
+        requires
+            self.wf(),
+            other.wf(),
+        ensures
+            r.wf(),
+    {
+        let a = self.abs();
+        let b = other.abs();
+        let (big, small) = if Q::ge(a, b) {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        if big.is_zero() {
+            return Q::zero();
+        }
+        let ratio = Q::div(small, big);
+        Q::mul(big, Q::add(Q::one(), Q::mul(ratio, ratio)).sqrt())
+    }
+
+    /// The hyperbolic sine, `(e^x - e^-x) / 2`.
+    pub fn sinh(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(Q::sub(self.exp(), self.neg().exp()), Q::new(2, 1))
+    }
+
+    /// The hyperbolic cosine, `(e^x + e^-x) / 2`.
+    pub fn cosh(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(Q::add(self.exp(), self.neg().exp()), Q::new(2, 1))
+    }
+
+    /// The hyperbolic tangent, `sinh / cosh`.
+    ///
+    /// `cosh` is never zero, so unlike [`Q::tan`] this has no poles; large
+    /// arguments approach `±1`.
+    pub fn tanh(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(self.sinh(), self.cosh())
+    }
+
+    /// The arcsine, in `[-π/2, π/2]`.
+    ///
+    /// `Nan` outside `[-1, 1]`, where there is no real answer. The endpoints
+    /// are handled directly rather than through the identity below, which would
+    /// divide by zero there.
+    pub fn asin(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        match self {
+            Q::Number(x) => {
+                let q = Q::Number(x);
+                let one = Q::one();
+                if Q::gt(q.abs(), one) {
+                    return Q::Nan;
+                }
+                if q.abs() == one {
+                    let hp = Q::div(pi(), Q::new(2, 1));
+                    return if Q::gt(q, Q::zero()) {
+                        hp
+                    } else {
+                        hp.neg()
+                    };
+                }
+                // asin(x) = atan(x / sqrt(1 - x²))
+                let denom = Q::sub(one, Q::mul(q, q)).sqrt();
+                Q::div(q, denom).atan()
+            },
+            // Every special lies outside [-1, 1] or carries no information.
+            _ => Q::Nan,
+        }
+    }
+
+    /// The arccosine, in `[0, π]`, as `π/2 - asin(self)`.
+    pub fn acos(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::sub(Q::div(pi(), Q::new(2, 1)), self.asin())
+    }
+
+    /// The two-argument arctangent: the angle of `(x, y)` from the positive
+    /// x-axis, in `(-π, π]`.
+    ///
+    /// The quadrant corrections are what distinguish this from `atan(y/x)`,
+    /// which cannot tell `(-1, -1)` from `(1, 1)`. `atan2(0, 0)` is `Nan`: the
+    /// origin has no angle, and returning zero would invent one.
+    pub fn atan2(self, x: Q) -> (r: Q)
+        requires
+            self.wf(),
+            x.wf(),
+        ensures
+            r.wf(),
+    {
+        let y = self;
+        let zero = Q::zero();
+        let p = pi();
+        let hp = Q::div(p, Q::new(2, 1));
+        if y.is_nan() || x.is_nan() {
+            return Q::Nan;
+        }
+        if x.is_zero() && y.is_zero() {
+            return Q::Nan;
+        }
+        if x.is_zero() {
+            return if Q::gt(y, zero) {
+                hp
+            } else {
+                hp.neg()
+            };
+        }
+        let base = Q::div(y, x).atan();
+        if Q::gt(x, zero) {
+            base
+        } else if Q::ge(y, zero) {
+            Q::add(base, p)
+        } else {
+            Q::sub(base, p)
+        }
+    }
+}
+
 } // verus!

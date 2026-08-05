@@ -986,3 +986,330 @@ fn e_is_accurate_and_consistent_with_exp_and_ln() {
         panic!("ln(e) must be a number");
     }
 }
+
+#[test]
+fn ln10_is_the_series_value() {
+    assert_eq!(
+        the_q::transcendental::ln10(),
+        the_q::transcendental::ln10_series(),
+        "the ln10 literal has drifted from ln(10)"
+    );
+}
+
+// ===========================================================================
+// The rest of the standard function set
+// ===========================================================================
+
+#[test]
+fn logarithms_in_other_bases_are_consistent() {
+    let mut rng = Rng::new(0x5EED_0040);
+    for _ in 0..2_000 {
+        let x = rng.q();
+        if x.numerator() <= 0 {
+            continue;
+        }
+        let q = Q::Number(x);
+        // log2(x)·ln2 == ln(x), and likewise for log10.
+        if let (Q::Number(l2), Q::Number(ln)) = (q.log2(), q.ln()) {
+            let lhs = rat(l2)
+                * rat(match the_q::transcendental::ln2() {
+                    Q::Number(v) => v,
+                    _ => unreachable!(),
+                });
+            assert!(
+                rel_err(&lhs, &rat(ln)) <= eps(40),
+                "log2({x})·ln2 should equal ln({x})"
+            );
+        }
+        if let (Q::Number(l10), Q::Number(ln)) = (q.log10(), q.ln()) {
+            let lhs = rat(l10)
+                * rat(match the_q::transcendental::ln10() {
+                    Q::Number(v) => v,
+                    _ => unreachable!(),
+                });
+            assert!(
+                rel_err(&lhs, &rat(ln)) <= eps(40),
+                "log10({x})·ln10 should equal ln({x})"
+            );
+        }
+    }
+    // Landmark values.
+    for (n, want) in [(2i64, 1i64), (8, 3), (1024, 10)] {
+        if let Q::Number(r) = Q::Number(Rat::new(n, 1).unwrap()).log2() {
+            let d = mag(&(rat(r) - Rational::from_signeds(want as i128, 1i128)));
+            assert!(d <= eps(35), "log2({n}) = {r}, want {want}");
+        }
+    }
+    for (n, want) in [(10i64, 1i64), (1000, 3)] {
+        if let Q::Number(r) = Q::Number(Rat::new(n, 1).unwrap()).log10() {
+            let d = mag(&(rat(r) - Rational::from_signeds(want as i128, 1i128)));
+            assert!(d <= eps(35), "log10({n}) = {r}, want {want}");
+        }
+    }
+}
+
+#[test]
+fn exp2_and_powf_agree_with_integer_powers() {
+    for k in 0i64..40 {
+        if let Q::Number(r) = Q::Number(Rat::new(k, 1).unwrap()).exp2() {
+            let want = Rational::from_signeds(1i128 << k, 1i128);
+            assert!(
+                rel_err(&rat(r), &want) <= eps(40),
+                "exp2({k}) = {r}, want 2^{k}"
+            );
+        }
+    }
+    // powf against the exact integer power.
+    let mut rng = Rng::new(0x5EED_0041);
+    for _ in 0..1_000 {
+        let base = rng.q_unit();
+        if base.numerator() <= 0 {
+            continue;
+        }
+        let e = 1 + (rng.below(5) as u32);
+        let q = Q::Number(base);
+        if let (Q::Number(a), Q::Number(b)) = (
+            q.powf(Q::Number(Rat::new(e as i64, 1).unwrap())),
+            q.pow_u32(e),
+        ) {
+            assert!(
+                rel_err(&rat(a), &rat(b)) <= eps(30),
+                "powf({base}, {e}) = {a} disagrees with pow_u32 = {b}"
+            );
+        }
+    }
+    // The conventions.
+    assert_eq!(Q::zero().powf(Q::zero()), Q::one(), "0^0 is 1");
+    assert_eq!(Q::zero().powf(Q::one()), Q::zero());
+}
+
+#[test]
+fn cbrt_cubes_back_and_handles_negatives() {
+    let mut rng = Rng::new(0x5EED_0042);
+    for _ in 0..2_000 {
+        let x = rng.q();
+        if x.numerator() == 0 {
+            continue;
+        }
+        let q = Q::Number(x);
+        if let Q::Number(r) = q.cbrt() {
+            let cube = rat(r) * rat(r) * rat(r);
+            assert!(
+                rel_err(&cube, &rat(x)) <= eps(30),
+                "cbrt({x}) = {r}; cubing gives {cube}"
+            );
+        }
+    }
+    // Unlike sqrt, the whole real line is in the domain.
+    if let Q::Number(r) = Q::Number(Rat::new(-8, 1).unwrap()).cbrt() {
+        assert!(
+            mag(&(rat(r) + Rational::from_signeds(2i128, 1i128))) <= eps(30),
+            "cbrt(-8) = {r}, want -2"
+        );
+    } else {
+        panic!("cbrt of a negative must be a number");
+    }
+    assert_eq!(Q::zero().cbrt(), Q::zero());
+}
+
+#[test]
+fn hypot_avoids_the_overflow_the_naive_form_hits() {
+    // The point of the identity: a² + b² can leave the budget when
+    // sqrt(a² + b²) comfortably fits.
+    let big = Q::Number(Rat::new(MAX_MAG / 2, 1).unwrap());
+    let naive = Q::add(Q::mul(big, big), Q::mul(big, big));
+    assert!(
+        naive.is_saturated(),
+        "premise: the naive form really does overflow here"
+    );
+    let h = big.hypot(big);
+    assert!(
+        h.is_number(),
+        "hypot must survive where a²+b² does not, got {h}"
+    );
+
+    // 3-4-5 and its scalings.
+    for k in 1i64..1000 {
+        let (a, b) = (
+            Q::Number(Rat::new(3 * k, 1).unwrap()),
+            Q::Number(Rat::new(4 * k, 1).unwrap()),
+        );
+        if let Q::Number(r) = a.hypot(b) {
+            let want = Rational::from_signeds((5 * k) as i128, 1i128);
+            assert!(
+                rel_err(&rat(r), &want) <= eps(40),
+                "hypot(3k, 4k) at k={k} = {r}, want {want}"
+            );
+        }
+    }
+    assert_eq!(Q::zero().hypot(Q::zero()), Q::zero());
+}
+
+#[test]
+fn hyperbolics_satisfy_their_identity() {
+    // cosh² - sinh² == 1.
+    let mut rng = Rng::new(0x5EED_0043);
+    let mut worst = oracle_zero();
+    for _ in 0..2_000 {
+        let k = (rng.below(2_000) as i64) - 1_000;
+        let q = Q::Number(Rat::new(k, 100).unwrap());
+        if let (Q::Number(s), Q::Number(c)) = (q.sinh(), q.cosh()) {
+            let d = rat(c) * rat(c) - rat(s) * rat(s);
+            let e = mag(&(d - one()));
+            if e > worst {
+                worst = e.clone();
+            }
+            assert!(e <= eps(30), "cosh²-sinh² at {q} is off by {e}");
+        }
+    }
+    println!(
+        "cosh^2 - sinh^2 - 1: worst absolute error 2^-{}",
+        precision_bits(&worst)
+    );
+    assert_eq!(Q::zero().sinh(), Q::zero(), "sinh(0) is exactly 0");
+    assert_eq!(Q::zero().cosh(), Q::one(), "cosh(0) is exactly 1");
+    assert_eq!(Q::zero().tanh(), Q::zero());
+}
+
+#[test]
+fn tanh_has_no_poles_and_stays_bounded() {
+    // cosh is never zero, so unlike tan this never blows up.
+    let mut rng = Rng::new(0x5EED_0044);
+    for _ in 0..5_000 {
+        let k = (rng.below(8_000) as i64) - 4_000;
+        let q = Q::Number(Rat::new(k, 100).unwrap());
+        let t = q.tanh();
+        assert_total(t, "tanh");
+        if let Q::Number(r) = t {
+            assert!(
+                mag(&rat(r)) <= one() + eps(30),
+                "tanh({q}) = {r} escaped [-1, 1]"
+            );
+        }
+    }
+}
+
+#[test]
+fn asin_and_acos_invert_sin_and_cos() {
+    let mut rng = Rng::new(0x5EED_0045);
+    for _ in 0..2_000 {
+        let x = rng.q_unit();
+        let q = Q::Number(x);
+        // sin(asin(x)) == x
+        if let Q::Number(a) = q.asin() {
+            if let Q::Number(back) = Q::Number(a).sin() {
+                assert!(
+                    rel_err(&rat(back), &rat(x)) <= eps(25),
+                    "sin(asin({x})) = {back}"
+                );
+            }
+        }
+        // asin + acos == pi/2
+        if let (Q::Number(a), Q::Number(c)) = (q.asin(), q.acos()) {
+            let sum = rat(a) + rat(c);
+            let half_pi = oracle_pi() / two_rational();
+            assert!(
+                rel_err(&sum, &half_pi) <= eps(30),
+                "asin({x}) + acos({x}) should be pi/2"
+            );
+        }
+    }
+    // Endpoints and the domain boundary.
+    let half_pi = oracle_pi() / two_rational();
+    if let Q::Number(r) = Q::one().asin() {
+        assert!(rel_err(&rat(r), &half_pi) <= eps(45), "asin(1) = pi/2");
+    } else {
+        panic!("asin(1) must be a number");
+    }
+    assert_eq!(Q::zero().asin(), Q::zero(), "asin(0) is exactly 0");
+    assert_eq!(
+        Q::Number(Rat::new(2, 1).unwrap()).asin(),
+        Q::Nan,
+        "no real arcsine outside [-1, 1]"
+    );
+    assert_eq!(Q::Number(Rat::new(-2, 1).unwrap()).asin(), Q::Nan);
+}
+
+#[test]
+fn atan2_gets_the_quadrant_right() {
+    // The whole reason atan2 exists: atan(y/x) cannot tell these apart.
+    let p = oracle_pi();
+    let one_q = Q::one();
+    let neg_q = Q::neg_one();
+    let cases = [
+        (
+            one_q,
+            one_q,
+            p.clone() / Rational::from_signeds(4i128, 1i128),
+        ),
+        (
+            one_q,
+            neg_q,
+            Rational::from_signeds(3i128, 4i128) * p.clone(),
+        ),
+        (
+            neg_q,
+            neg_q,
+            -Rational::from_signeds(3i128, 4i128) * p.clone(),
+        ),
+        (
+            neg_q,
+            one_q,
+            -p.clone() / Rational::from_signeds(4i128, 1i128),
+        ),
+    ];
+    for (y, x, want) in cases {
+        match y.atan2(x) {
+            Q::Number(r) => assert!(
+                mag(&(rat(r) - want.clone())) <= eps(30),
+                "atan2({y}, {x}) = {r}, want {want}"
+            ),
+            other => panic!("atan2({y}, {x}) = {other}"),
+        }
+    }
+    // The origin has no angle; returning zero would invent one.
+    assert_eq!(Q::zero().atan2(Q::zero()), Q::Nan);
+    // On the axes.
+    if let Q::Number(r) = Q::one().atan2(Q::zero()) {
+        assert!(mag(&(rat(r) - p.clone() / two_rational())) <= eps(30));
+    } else {
+        panic!("atan2(1, 0) must be a number");
+    }
+}
+
+#[test]
+fn the_whole_function_set_is_total() {
+    // Every function, every state, plus a wide random sweep. Nothing panics and
+    // nothing returns a malformed or unclassified value.
+    let mut rng = Rng::new(0x5EED_0046);
+    let mut all: Vec<Q> = states();
+    for _ in 0..2_000 {
+        all.push(Q::new(rng.next_u64() as i64, rng.next_u64() as i64));
+    }
+    for q in all {
+        for (v, what) in [
+            (q.sqrt(), "sqrt"),
+            (q.cbrt(), "cbrt"),
+            (q.exp(), "exp"),
+            (q.exp2(), "exp2"),
+            (q.ln(), "ln"),
+            (q.log2(), "log2"),
+            (q.log10(), "log10"),
+            (q.sin(), "sin"),
+            (q.cos(), "cos"),
+            (q.tan(), "tan"),
+            (q.asin(), "asin"),
+            (q.acos(), "acos"),
+            (q.atan(), "atan"),
+            (q.sinh(), "sinh"),
+            (q.cosh(), "cosh"),
+            (q.tanh(), "tanh"),
+            (q.hypot(Q::one()), "hypot"),
+            (q.atan2(Q::one()), "atan2"),
+            (q.powf(Q::new(3, 2)), "powf"),
+            (q.log(Q::new(3, 1)), "log"),
+        ] {
+            assert_total(v, what);
+        }
+    }
+}
