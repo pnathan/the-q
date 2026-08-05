@@ -75,6 +75,17 @@ jobs:
       - name: Check dependency licences
         run: ./scripts/check-no-lgpl.sh
 
+      # A vacuous theorem — one whose `ensures` restates its own `requires` —
+      # verifies happily and raises the verified count while establishing
+      # nothing. Two shipped on this branch before being caught by hand, so the
+      # check is mechanical now. The self-test runs first: a linter that has
+      # quietly stopped parsing is indistinguishable from one that finds
+      # nothing.
+      - name: Check for vacuous theorems
+        run: |
+          python3 scripts/check-vacuous-theorems.py --self-test
+          python3 scripts/check-vacuous-theorems.py
+
   verify:
     name: verus verify
     runs-on: ubuntu-latest
