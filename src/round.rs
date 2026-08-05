@@ -1369,6 +1369,44 @@ pub proof fn lemma_floor_div_monotone(a1: int, d1: int, a2: int, d2: int)
 // Executable helpers
 // ---------------------------------------------------------------------------
 
+/// Whether `|n| / d` leaves the budget, without dividing when it need not.
+///
+/// The test is `m > MAX_MAG · d`, and answering it by division costs two `i128`
+/// divisions on every operation. A numerator at or below `MAX_MAG` answers it
+/// without dividing, because `d >= 1`. That covers every pair whose exact
+/// result is inside the budget, which is the whole exact path.
+///
+/// The two arms return the same predicate, so the caller sees one fact and no
+/// case split. The caller is the largest proof in the crate, and an inline
+/// branch here puts it over its resource limit.
+pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
+    requires
+        d > 0,
+        m >= 0,
+    ensures
+        r <==> !magnitude_fits(m as int, d as int),
+{
+    let mm: i128 = MAX_MAG as i128;
+    if m <= mm {
+        proof {
+            crate::model::lemma_max_mag_pow2();
+            assert(m as int <= max_mag() * (d as int)) by (nonlinear_arith)
+                requires
+                    m as int <= max_mag(),
+                    d as int >= 1,
+            ;
+        }
+        false
+    } else {
+        let ip: i128 = m / d;
+        let fr: i128 = m % d;
+        proof {
+            lemma_magnitude_test(m as int, d as int, ip as int, fr as int);
+        }
+        ip > mm || (ip == mm && fr != 0)
+    }
+}
+
 /// `gcd(|m|, 2^s)`, without a gcd.
 ///
 /// The second reduction of the snap path always takes its gcd against `2^s`,
@@ -1776,6 +1814,13 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
 /// The precondition pins `g` to the same value the general entry point would
 /// compute, thus the postcondition is identical and no caller can pass a
 /// number that changes the result.
+// This function carries the whole rounding contract, and it sits at the edge of
+// the default resource budget. Each fast path added to it -- the division-free
+// saturation test, the coprime shortcut -- adds a branch the solver has to
+// carry through the rest of the body. Both are written to converge on a single
+// fact for exactly that reason, and the budget is raised once here rather than
+// paying for a proof restructure that buys nothing.
+#[verifier::rlimit(30)]
 pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
     requires
         d > 0,
@@ -1806,21 +1851,35 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
     } else {
         n
     };
-    let ip0: i128 = m0 / d;
-    let fr0: i128 = m0 % d;
     let mm: i128 = MAX_MAG as i128;
-    if ip0 > mm || (ip0 == mm && fr0 != 0) {
+    // The saturation test asks whether `|n| <= MAX_MAG · d`, and answering it
+    // by division costs two `i128` divisions on every operation. A numerator
+    // at or below `MAX_MAG` answers it without dividing, because `d >= 1`.
+    // That covers every operand pair whose exact result is inside the budget,
+    // which is the whole exact path.
+    let saturates: bool = if m0 <= mm {
+        proof {
+            assert(m0 as int <= max_mag() * (d as int)) by (nonlinear_arith)
+                requires
+                    m0 as int <= max_mag(),
+                    d as int >= 1,
+            ;
+        }
+        false
+    } else {
+        let ip0: i128 = m0 / d;
+        let fr0: i128 = m0 % d;
         proof {
             lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
         }
+        ip0 > mm || (ip0 == mm && fr0 != 0)
+    };
+    if saturates {
         if n > 0 {
             return Rat { num: MAX_MAG, den: 1 };
         } else {
             return Rat { num: -MAX_MAG, den: 1 };
         }
-    }
-    proof {
-        lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
     }
     proof {
         // `red_den > 0`, therefore `g <= d`, therefore the divisions below are
