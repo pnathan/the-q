@@ -304,7 +304,7 @@ against the M2 API surface and is a separate project.
 *Not part of the original specification. Appended by the implementation so the
 spec text and the shipped crate do not disagree silently. The sections above are
 unchanged; each entry below says what §N claims, why it does not hold, and what
-the crate does instead. All four are documented in `README.md` and
+the crate does instead. Each entry is documented in `README.md` and
 `VERIFICATION.md` as well, and each has a test.*
 
 **§2.1 — `Rat::new` cannot be total over `i64` pairs.** The inventory implies that
@@ -342,6 +342,24 @@ is a correction, not a weakening: the relative form is not true as stated.
 Euclid", but canonicalisation reduces the `i128` intermediates produced by the
 arithmetic, not `i64` operands. `gcd_u128` carries the proofs; `gcd_u64` is a
 thin verified wrapper kept for the narrow case.
+
+**§2.6 — the crate provides roots and transcendentals, on `Q`.** §2.6 places
+`exp`, `ln`, `sqrt` and rational-exponent `pow` out of scope, and directs a
+consuming engine to compute them as `f64` pre-passes. The crate now provides
+them: `sqrt`, `cbrt`, `hypot`, `exp`, `exp2`, `powf`, `pow_i32`, `ln`, `log2`,
+`log10`, `log`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+`cosh`, `tanh`, and the constants `pi`, `half_pi`, `e`, `ln2` and `ln10`.
+
+They live on `Q` and not on `Rat`. None of these functions is rational-closed,
+thus the result is the nearest representable rational with a stated error bound,
+and the out-of-domain cases need a state to land in. `Rat` provides neither. The
+§2.6 exclusion still holds for `Rat` itself, and the `from_f64_dir` pre-pass
+route remains available.
+
+Each function is total and never panics. Each uses a fixed-length series or
+iteration, thus termination is structural and the cost of a call is constant.
+The accuracy figures and the precision floor for results far below `1` are in
+`README.md`; `src/transcendental.rs` carries the per-function reasoning.
 
 **§2.5 / V8 — `product` and `weighted_mean` each need their own hypothesis,
 and `weighted_mean`'s bound stops short of the returned value.** The `k·2^-B`

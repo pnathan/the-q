@@ -399,13 +399,36 @@ Out (`convert`): `to_f64` (display/DTO only — see `TRUSTED.md`), `Display`
 (`"num/den"`), and feature-gated `serde` that encodes the `(num, den)` integer
 pair for exact round-tripping.
 
+### Roots and transcendentals — on `Q` only
+
+These live on `Q`, not on `Rat`, because none of them is rational-closed:
+`sqrt(2)`, `exp(1)` and `sin(1)` are irrational, so the answer is the nearest
+representable rational with a stated error bound, and the out-of-domain cases
+need a state to land in. `Rat` has neither.
+
+Roots: `sqrt`, `cbrt`, `hypot`. Exponentials and logarithms: `exp`, `exp2`,
+`powf`, `pow_i32`, `ln`, `log2`, `log10`, `log`. Trigonometric: `sin`, `cos`,
+`tan`, `asin`, `acos`, `atan`, `atan2`. Hyperbolic: `sinh`, `cosh`, `tanh`.
+Constants: `pi`, `e`, `ln2` and `ln10` are pinned literals, each with a
+`*_series` derivation and a test asserting the two are bit-identical; `half_pi`
+is `pi/2`.
+
+Every one is **total** — `sqrt` of a negative is `Nan`, `ln(0)` is `NegInf`,
+nothing panics — and every one is a fixed-length series or iteration, so
+termination is structural and the cost of a call is constant. Accuracy and
+timings are in the two tables above; the precision floor for results far below
+`1` is in "Where precision runs out", and it matters more than the accuracy
+table does.
+
 ### Not provided, deliberately
 
-No transcendental functions of any kind — no `exp`, `ln`, `sqrt`, no rational
-exponents. A consuming engine that needs them should compute them as an `f64`
-pre-pass and bring the result in through `from_f64_dir`. No arbitrary precision:
-that is the escalation path if benchmarks ever show rounding actually biting,
-and it is an order-of-magnitude larger verification project.
+No arbitrary precision. That is the escalation path if benchmarks ever show
+rounding actually biting, and it is an order-of-magnitude larger verification
+project.
+
+No transcendentals on `Rat` itself, for the reason above. A caller working in
+`Rat` that wants one should move to `Q`, or compute it as an `f64` pre-pass and
+bring the result in through `from_f64_dir`.
 
 ## What is proven
 
@@ -567,7 +590,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   the current status of each.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
   and the differential tests backing it. There are two.
-* **`docs/SPEC.md` §9** — the five places the specification as written does not
+* **`docs/SPEC.md` §9** — the six places the specification as written does not
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
