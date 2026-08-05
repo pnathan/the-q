@@ -275,10 +275,9 @@ impl Q {
     /// | `NegInf` | `Nan` | negative |
     /// | `Nan` | `Nan` | |
     ///
-    /// Newton's iteration `y <- (y + x/y)/2` converges quadratically and from
-    /// above once past the first step, so a fixed eight iterations from the
-    /// integer-root seed is comfortably past the point where further steps
-    /// cannot change the rounded answer.
+    /// Newton's iteration `y <- (y + x/y)/2` converges quadratically, so a fixed
+    /// seven steps from the integer-root seed is past the point where
+    /// further steps cannot change the rounded answer.
     pub fn sqrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -299,13 +298,13 @@ impl Q {
                     let mut y = sqrt_seed(x);
                     let q = Q::Number(x);
                     let mut i: u32 = 0;
-                    while i < 8
+                    while i < SQRT_ITERS
                         invariant
                             y.wf(),
                             q.wf(),
                             two.wf(),
-                            i <= 8,
-                        decreases 8 - i,
+                            i <= SQRT_ITERS,
+                        decreases SQRT_ITERS - i,
                     {
                         // y <- (y + x/y) / 2. If `y` ever became zero or a
                         // special the division would report it rather than
@@ -327,14 +326,53 @@ impl Q {
     }
 }
 
-/// Terms of every Maclaurin series here.
+// ---------------------------------------------------------------------------
+// Series lengths
+//
+// Each count is derived from its own tail bound against the grid resolution
+// `2^-61` (about `4.34e-19`), not shared. A uniform count would be wrong in
+// both directions at once: too short for `atan`, whose coefficients are
+// `1/(2k+1)`, and nearly twice as long as `sin` needs, whose coefficients are
+// `1/(2k+1)!`. Benchmarking made the second cost visible.
+//
+// Every count is fixed rather than derived from a convergence test, so that
+// termination is structural and the cost of a call is constant.
+// ---------------------------------------------------------------------------
+
+/// Terms of the `atanh` series, whose argument is reduced to `|z| <= 1/3`.
 ///
-/// Each series is range-reduced so its argument satisfies `|z| <= 1/2` before
-/// summing, and at that argument twenty terms put the tail far below the grid:
-/// `(1/2)^20 / 20!` is about `4e-25`, against a grid resolution of `2^-61`
-/// (about `4e-19`). The count is fixed rather than derived from a convergence
-/// test so that termination is structural and the cost of a call is constant.
+/// The tail at `k` is `3^-(2k+1)/(2k+1)`; `k = 18` gives `6.0e-20`, under the
+/// grid, while `k = 17` gives `5.7e-19`, over it. The loop covers `k` up to
+/// `SERIES_TERMS - 1 = 19`, one past what is needed.
 const SERIES_TERMS: u32 = 20;
+
+/// Terms of the `exp` series, whose argument is reduced to `|z| <= 1/2`.
+///
+/// The tail at `n` is `2^-n/n!`; `n = 17` gives `2.1e-20`, under the grid,
+/// while `n = 16` gives `7.3e-19`, over it. Eighteen covers seventeen with one
+/// to spare.
+const EXP_TERMS: u32 = 18;
+
+/// Terms of the `sin` and `cos` series, whose argument is reduced to
+/// `|z| <= π/4`.
+///
+/// The tail at `k` is `(π/4)^(2k+1)/(2k+1)!`; `k = 9` gives `8.4e-20`, under
+/// the grid, while `k = 8` gives `4.6e-17`, well over it. The loop covers `k`
+/// up to `TRIG_TERMS - 1 = 10`.
+///
+/// This is the count that most rewards being derived rather than shared: the
+/// factorial denominators make it converge far faster than `atan`, so reusing
+/// `atan`'s length here would have doubled the cost of every `sin` and `cos`
+/// for no accuracy at all.
+const TRIG_TERMS: u32 = 11;
+
+/// Newton iterations in [`Q::sqrt`].
+///
+/// The integer-root seed is within a factor of two, so the initial relative
+/// error is at most about `1/2`. Newton squares it each step:
+/// `0.5 → 0.125 → 7.8e-3 → 3.1e-5 → 4.6e-10 → 1.1e-19`, which is past the grid
+/// by the sixth. Seven leaves a margin; eight was simply wasted work.
+const SQRT_ITERS: u32 = 7;
 
 /// Maximum halvings used to bring an argument into the series' comfort zone.
 ///
@@ -421,13 +459,13 @@ impl Q {
                 let mut term = Q::one();
                 let mut sum = Q::one();
                 let mut i: u32 = 1;
-                while i <= SERIES_TERMS
+                while i <= EXP_TERMS
                     invariant
                         term.wf(),
                         sum.wf(),
                         z.wf(),
-                        1 <= i <= SERIES_TERMS + 1,
-                    decreases SERIES_TERMS + 1 - i,
+                        1 <= i <= EXP_TERMS + 1,
+                    decreases EXP_TERMS + 1 - i,
                 {
                     term = Q::div(Q::mul(term, z), Q::new(i as i64, 1));
                     sum = Q::add(sum, term);
@@ -489,17 +527,68 @@ fn atanh_series(z: Q) -> (r: Q)
     sum
 }
 
-/// `ln(2)`, as `2·atanh(1/3)`.
+/// `e`, by the series `Σ 1/n!`.
 ///
-/// Computed rather than hard-coded. A literal would be a magic constant nobody
-/// could check by inspection, and would have to be re-derived if the width
-/// budget ever changed; the series costs twenty operations and is checked
-/// against the oracle by `ln2_constant_is_accurate`.
-pub fn ln2() -> (r: Q)
+/// Kept as the *derivation* of [`e`]. Summed directly rather than as `exp(1)`
+/// so that the constant and the function that would otherwise produce it are
+/// independent — a bug in `exp`'s range reduction cannot hide inside `e`.
+pub fn e_series() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    let mut term = Q::one();
+    let mut sum = Q::one();
+    let mut i: u32 = 1;
+    while i <= SERIES_TERMS
+        invariant
+            term.wf(),
+            sum.wf(),
+            1 <= i <= SERIES_TERMS + 1,
+        decreases SERIES_TERMS + 1 - i,
+    {
+        term = Q::div(term, Q::new(i as i64, 1));
+        sum = Q::add(sum, term);
+        i = i + 1;
+    }
+    sum
+}
+
+/// `e`, the base of the natural logarithm.
+///
+/// The literal is exactly what [`e_series`] computes — `e_is_the_series_value`
+/// asserts they are bit-identical. See [`ln2`] for why a checked literal is
+/// preferable to recomputing a series on every call.
+pub fn e() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::new(3133965575612453543, 1152921504606846976)
+}
+
+/// `ln(2)`, by the series `2·atanh(1/3)`.
+///
+/// Kept as the *derivation* of [`ln2`], which returns the same value as a
+/// literal. Benchmarking showed why: recomputing twenty series terms on every
+/// call dominated the cost of everything that used it.
+pub fn ln2_series() -> (r: Q)
     ensures
         r.wf(),
 {
     Q::mul(Q::new(2, 1), atanh_series(Q::new(1, 3)))
+}
+
+/// `ln(2)`.
+///
+/// The literal is exactly what [`ln2_series`] computes — `ln2_is_the_series_value`
+/// asserts the two are bit-identical, so the constant is derived and checked
+/// rather than asserted. That test is what makes a hard-coded value acceptable
+/// here: it can be re-derived by running the suite, and it fails loudly if the
+/// series, the width budget or the rounding contract ever changes.
+pub fn ln2() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::new(399572145162582989, 576460752303423488)
 }
 
 impl Q {
@@ -609,14 +698,13 @@ impl Q {
     }
 }
 
-/// Terms of the `atan` series.
+/// Terms of the `atan` series, whose argument is reduced to `|z| <= 1/2`.
 ///
-/// Its argument is reduced to `|z| <= 1/2`, where the tail after `n` odd powers
-/// is about `2^-n / n`. Sixty-one odd powers — thirty-one terms — put that below
-/// the grid; thirty-two is carried for margin. This is larger than
-/// [`SERIES_TERMS`] because `atan`'s coefficients are `1/(2k+1)` rather than
-/// `1/(2k+1)!`, so it converges geometrically rather than factorially.
-const ATAN_TERMS: u32 = 32;
+/// The tail at `k` is `2^-(2k+1)/(2k+1)`; `k = 28` gives `1.2e-19`, under the
+/// grid, while `k = 27` gives `5.1e-19`, over it. This is by far the longest
+/// series here — `atan`'s coefficients are `1/(2k+1)`, so it converges
+/// geometrically where `sin` and `exp` converge factorially.
+const ATAN_TERMS: u32 = 30;
 
 /// The largest argument `sin`, `cos` and `tan` will accept.
 ///
@@ -669,18 +757,33 @@ fn atan_series(z: Q) -> (r: Q)
 
 /// `π`, by Machin's formula `π = 16·atan(1/5) − 4·atan(1/239)`.
 ///
-/// Computed rather than hard-coded, for the same reason as [`ln2`]. Machin's
-/// form is chosen because both arguments are small enough that the series is
-/// deep in its comfortable range — `1/5` needs far fewer terms than the `1`
-/// that the naive `π/4 = atan(1)` would demand, where the series barely
-/// converges at all.
-pub fn pi() -> (r: Q)
+/// Machin's form is chosen because both arguments sit deep in the series'
+/// comfortable range — the naive `π/4 = atan(1)` would put the argument exactly
+/// where the series barely converges.
+///
+/// Kept as the *derivation* of [`pi`], which returns the same value as a
+/// literal. This costs two full series — about sixty-four terms — and
+/// benchmarking showed it dominating `sin`, `cos` and `atan`, each of which
+/// needed it on every call.
+pub fn pi_series() -> (r: Q)
     ensures
         r.wf(),
 {
     let a = Q::mul(Q::new(16, 1), atan_series(Q::new(1, 5)));
     let b = Q::mul(Q::new(4, 1), atan_series(Q::new(1, 239)));
     Q::sub(a, b)
+}
+
+/// `π`.
+///
+/// The literal is exactly what [`pi_series`] computes — `pi_is_the_series_value`
+/// asserts they are bit-identical. See [`ln2`] for why a checked literal is
+/// preferable to recomputing here.
+pub fn pi() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::new(1811004864519280709, 576460752303423488)
 }
 
 /// `π/2`.
@@ -725,22 +828,22 @@ fn sin_series(z: Q) -> (r: Q)
     let mut term = z;
     let mut sum = z;
     let mut k: u32 = 1;
-    while k < SERIES_TERMS
+    while k < TRIG_TERMS
         invariant
             term.wf(),
             sum.wf(),
             z2.wf(),
-            1 <= k <= SERIES_TERMS,
-        decreases SERIES_TERMS - k,
+            1 <= k <= TRIG_TERMS,
+        decreases TRIG_TERMS - k,
     {
         // term_{k} = term_{k-1} · z² / ((2k)(2k+1))
         let kk: i64 = k as i64;
-        assert(1 <= kk <= SERIES_TERMS as i64);
+        assert(1 <= kk <= TRIG_TERMS as i64);
         // `kk <= 20`, so the product is at most `40 * 41`. The prover needs
         // this spelled out: a product of two bounded terms is nonlinear.
         assert(2 * kk * (2 * kk + 1) <= 40 * 41) by (nonlinear_arith)
             requires
-                1 <= kk <= 20,
+                1 <= kk <= 11,
         ;
         let d = Q::new(2 * kk * (2 * kk + 1), 1);
         term = Q::div(Q::mul(term, z2), d);
@@ -765,20 +868,20 @@ fn cos_series(z: Q) -> (r: Q)
     let mut term = Q::one();
     let mut sum = Q::one();
     let mut k: u32 = 1;
-    while k < SERIES_TERMS
+    while k < TRIG_TERMS
         invariant
             term.wf(),
             sum.wf(),
             z2.wf(),
-            1 <= k <= SERIES_TERMS,
-        decreases SERIES_TERMS - k,
+            1 <= k <= TRIG_TERMS,
+        decreases TRIG_TERMS - k,
     {
         // term_{k} = term_{k-1} · z² / ((2k-1)(2k))
         let kk: i64 = k as i64;
-        assert(1 <= kk <= SERIES_TERMS as i64);
+        assert(1 <= kk <= TRIG_TERMS as i64);
         assert((2 * kk - 1) * (2 * kk) <= 39 * 40) by (nonlinear_arith)
             requires
-                1 <= kk <= 20,
+                1 <= kk <= 11,
         ;
         let d = Q::new((2 * kk - 1) * (2 * kk), 1);
         term = Q::div(Q::mul(term, z2), d);
@@ -824,7 +927,10 @@ impl Q {
                 let q = Q::Number(x);
                 let one = Q::one();
                 let half = Q::new(1, 2);
-                let quarter_pi = Q::div(pi(), Q::new(4, 1));
+                // One `pi()` for both uses below; the reduction needs a quarter
+                // and the reciprocal branch needs a half.
+                let p = pi();
+                let quarter_pi = Q::div(p, Q::new(4, 1));
                 let big = Q::gt(q.abs(), one);
                 // Reduce |x| > 1 by reciprocation.
                 let base = if big {
@@ -843,7 +949,7 @@ impl Q {
                 let inner = Q::add(atan_series(core), shift);
                 if big {
                     // atan(x) = sign(x)·π/2 − atan(1/x)
-                    let hp = half_pi();
+                    let hp = Q::div(p, Q::new(2, 1));
                     if Q::gt(q, Q::zero()) {
                         Q::sub(hp, inner)
                     } else {

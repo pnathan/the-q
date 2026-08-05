@@ -925,3 +925,64 @@ fn trig_is_total_and_never_panics() {
         assert_total(q.atan(), "atan");
     }
 }
+
+// ===========================================================================
+// The pinned constants
+//
+// `pi`, `e` and `ln2` return literals rather than summing a series on every
+// call — benchmarking showed the series dominating every function that used
+// them. A hard-coded constant is only acceptable if it can be re-derived and
+// is checked, so each of these asserts the literal is **bit-identical** to what
+// its series produces. If the series, the width budget or the rounding
+// contract ever changes, these fail rather than silently drifting.
+// ===========================================================================
+
+#[test]
+fn pi_is_the_series_value() {
+    assert_eq!(
+        the_q::transcendental::pi(),
+        the_q::transcendental::pi_series(),
+        "the pi literal has drifted from its Machin derivation"
+    );
+}
+
+#[test]
+fn e_is_the_series_value() {
+    assert_eq!(
+        the_q::transcendental::e(),
+        the_q::transcendental::e_series(),
+        "the e literal has drifted from its factorial-series derivation"
+    );
+}
+
+#[test]
+fn ln2_is_the_series_value() {
+    assert_eq!(
+        the_q::transcendental::ln2(),
+        the_q::transcendental::ln2_series(),
+        "the ln2 literal has drifted from its atanh derivation"
+    );
+}
+
+#[test]
+fn e_is_accurate_and_consistent_with_exp_and_ln() {
+    // Independently: e must match the oracle's exponential at 1...
+    let want = oracle_exp(&one());
+    match the_q::transcendental::e() {
+        Q::Number(r) => {
+            let err = rel_err(&rat(r), &want);
+            println!("e: relative error 2^-{}", precision_bits(&err));
+            assert!(err <= eps(55), "e = {r} is not accurate enough");
+        }
+        other => panic!("e must be a number, got {other}"),
+    }
+    // ...and ln(e) must come back to 1.
+    if let Q::Number(r) = the_q::transcendental::e().ln() {
+        assert!(
+            mag(&(rat(r) - one())) <= eps(45),
+            "ln(e) = {r}, should be 1"
+        );
+    } else {
+        panic!("ln(e) must be a number");
+    }
+}

@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use malachite_q::Rational;
-use the_q::{nary, Rat};
+use the_q::{nary, Rat, Q};
 
 /// splitmix64. Fixed seed: the point is repeatability, not statistics.
 struct Rng(u64);
@@ -73,6 +73,21 @@ fn row(op: &str, q: f64, f: f64, r: f64) {
         q / f,
         r / q
     );
+}
+
+/// A two-column row, for the functions `f64` has and an exact rational does
+/// not — there is no `malachite-q` square root or exponential to compare with.
+fn row2(op: &str, q: f64, f: f64) {
+    println!("| {:<14} | {:>9.1} | {:>9.1} | {:>7.1}x |", op, q, f, q / f);
+}
+
+fn header2(title: &str) {
+    println!("\n### {title}\n");
+    println!(
+        "| {:<14} | {:>9} | {:>9} | {:>8} |",
+        "op", "the-q ns", "f64 ns", "q/f64"
+    );
+    println!("|{:-<16}|{:->11}|{:->11}|{:->10}|", "", "", "", "");
 }
 
 fn header(title: &str) {
@@ -283,6 +298,66 @@ fn main() {
         num / den
     });
     row("weighted_mean", q, f, r);
+
+    // -----------------------------------------------------------------------
+    // The extended type. Every operation here is total, so the comparison is
+    // against `f64`'s equally-total arithmetic rather than against `Rat`'s
+    // partial version — the question is what totality costs.
+    // -----------------------------------------------------------------------
+
+    let exs: Vec<Q> = qs.iter().map(|x| Q::Number(*x)).collect();
+
+    header2("extended Q (total arithmetic) vs f64");
+
+    let q = time_ns(n, |i| Q::add(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] + fs[(i + 1) % n]);
+    row2("Q::add", q, f);
+
+    let q = time_ns(n, |i| Q::mul(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] * fs[(i + 1) % n]);
+    row2("Q::mul", q, f);
+
+    // Division is the headline: this one cannot panic and needs no guard,
+    // where `Rat::div` requires the caller to have ruled out a zero divisor.
+    let q = time_ns(n, |i| Q::div(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n] / fs[(i + 1) % n]);
+    row2("Q::div", q, f);
+
+    let q = time_ns(n, |i| Q::compare(exs[i % n], exs[(i + 1) % n]));
+    let f = time_ns(n, |i| fs[i % n].partial_cmp(&fs[(i + 1) % n]));
+    row2("Q::compare", q, f);
+
+    // -----------------------------------------------------------------------
+    // Transcendentals. `f64` has hardware behind these and this crate has a
+    // series in software, so a large ratio is expected; the number worth
+    // knowing is the absolute cost, and whether it is usable.
+    // -----------------------------------------------------------------------
+
+    header2("transcendentals vs f64 (hardware)");
+
+    let q = time_ns(n, |i| exs[i % n].sqrt());
+    let f = time_ns(n, |i| fs[i % n].sqrt());
+    row2("sqrt", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].exp());
+    let f = time_ns(n, |i| fs[i % n].exp());
+    row2("exp", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].ln());
+    let f = time_ns(n, |i| fs[i % n].ln());
+    row2("ln", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].sin());
+    let f = time_ns(n, |i| fs[i % n].sin());
+    row2("sin", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].cos());
+    let f = time_ns(n, |i| fs[i % n].cos());
+    row2("cos", q, f);
+
+    let q = time_ns(n, |i| exs[i % n].atan());
+    let f = time_ns(n, |i| fs[i % n].atan());
+    row2("atan", q, f);
 
     println!();
 }

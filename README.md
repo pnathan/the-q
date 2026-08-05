@@ -89,6 +89,81 @@ cell, is issue #26. `Rat` keeps its invariant verbatim, so every proof
 obligation that existed before this layer still discharges with its exact
 original statement.
 
+## Performance, measured
+
+`cargo bench` runs the numbers below (median of seven timed runs, deterministic
+inputs, `release` with `overflow-checks = true` — the configuration the crate
+actually ships, not a faster one).
+
+| operation | the-q | f64 | ratio |
+|---|---:|---:|---:|
+| `Rat::add` / `sub` | ~235 ns | 3.8 ns | 61× |
+| `Rat::mul` / `div` | ~218 ns | 3.8 ns | 57× |
+| `Q::add` (total) | 248 ns | 5.3 ns | 47× |
+| `Q::div` (total) | 226 ns | 5.3 ns | 43× |
+| `Q::compare` | 9.1 ns | 10.3 ns | **0.9×** |
+
+Two things worth reading off that table. **Totality is nearly free** — `Q::add`
+costs about 5% more than the partial `Rat::add`, so the explicit
+non-representable states are a type-level win rather than a runtime tax. And
+**comparison beats `f64`**, because it is integer cross-multiplication with no
+floating-point classification to do.
+
+The 60× on arithmetic is the price of canonical form: every operation runs a
+GCD to reduce the result, which is what makes structural equality mathematical
+equality and results bit-reproducible across machines. Against the exact
+arbitrary-precision alternative the crate is *faster* at depth — an exact
+rational's denominators grow without bound, and by a 4096-step fusion chain it
+is slower than `the-q` while carrying 8806-digit numerators.
+
+### Transcendentals
+
+| function | the-q | f64 (hardware) |
+|---|---:|---:|
+| `sqrt` | 20.6 µs | 3.3 ns |
+| `sin` / `cos` | 30.2 µs | ~14 ns |
+| `ln` | 39.5 µs | 11.0 ns |
+| `exp` | 41.0 µs | 10.1 ns |
+| `atan` | 51.1 µs | 11.3 ns |
+
+These are software series over exact rationals against silicon, so the ratio is
+large and will stay large. Tens of microseconds is usable for fusion and
+scoring work; it is not usable in an inner loop that needs millions of
+transcendental evaluations per second, and this crate will not pretend
+otherwise.
+
+Two rounds of benchmark-driven tuning are already in: `pi`, `e` and `ln2` are
+pinned constants rather than series recomputed per call (each proven
+bit-identical to its derivation by a test), and every series is sized from its
+own tail bound rather than sharing one length — `sin` needs eleven terms where
+`atan` needs thirty, because factorial denominators converge far faster than
+`1/(2k+1)`. Together those cut `sin` and `cos` by 60%, `atan` by 45% and `ln`
+by 40%, with **no change to any measured accuracy figure** — the removed terms
+were contributing nothing.
+
+### Accuracy, measured against an exact oracle
+
+| function | worst observed relative error |
+|---|---|
+| `e` | 2⁻⁶² |
+| `sqrt`, `ln2` | 2⁻⁶⁰ |
+| `pi`, `exp` (small args) | 2⁻⁵⁹ |
+| `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁸ |
+| `sin`, `cos` | 2⁻⁵⁶ |
+| `exp` (full range) | 2⁻⁵³ |
+
+Every one of those is at or better than `f64`'s 2⁻⁵³. The caveat is in the
+next section, and it matters more than the table does.
+
+### Where precision runs out
+
+R3's bound is `2^-61 · max(1, |exact|)` — **absolute** below 1, not relative.
+A value near 1 carries about 61 significant bits; a value near 2⁻⁴³ carries
+about 18. So `exp(-30)` is accurate to only ~2⁻¹⁸ relatively, and
+`ln(exp(-30))` comes back off by about 5e-6. Neither function is at fault: the
+intermediate could not carry the information. If small values matter, scale the
+problem so they are not small.
+
 ## Why
 
 Subjective-logic fusion — Jøsang cumulative and averaging belief fusion, opinion
