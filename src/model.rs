@@ -470,6 +470,14 @@ pub proof fn lemma_pow2_62()
     reveal_with_fuel(pow2, 63);
 }
 
+/// `2^63`.
+pub proof fn lemma_pow2_63()
+    ensures
+        pow2(63) == 9223372036854775808,
+{
+    reveal_with_fuel(pow2, 64);
+}
+
 /// `2^64`.
 pub proof fn lemma_pow2_64()
     ensures

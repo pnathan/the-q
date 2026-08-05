@@ -128,6 +128,7 @@ use vstd as _;
 pub mod model;
 pub mod types;
 
+pub mod fx;
 pub mod gcd;
 pub mod round;
 pub mod saturation;

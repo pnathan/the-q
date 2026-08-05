@@ -435,12 +435,6 @@ impl Q {
 /// `SERIES_TERMS - 1 = 19`, one past what is needed.
 const SERIES_TERMS: u32 = 20;
 
-/// Terms of the `exp` series, whose argument is reduced to `|z| <= 1/2`.
-///
-/// The tail at `n` is `2^-n/n!`; `n = 17` gives `2.1e-20`, under the grid,
-/// while `n = 16` gives `7.3e-19`, over it. Eighteen covers seventeen with one
-/// to spare.
-const EXP_TERMS: u32 = 18;
 
 /// Terms of the `sin` and `cos` series, whose argument is reduced to
 /// `|z| <= π/4`.
@@ -462,19 +456,130 @@ const TRIG_TERMS: u32 = 11;
 /// below the grid. Seven steps give a margin. An eighth step adds no accuracy.
 const SQRT_ITERS: u32 = 7;
 
-/// Maximum number of halvings that bring an argument into the range of the
-/// series.
-///
-/// `exp` evaluates the series only for `|x| <= 44`. Above that limit the result
-/// leaves the budget. `44 / 2^7 < 0.35`, thus seven halvings are sufficient.
-/// The constant is eight, which gives a margin. The constant also makes the
-/// reduction loop terminate.
-const MAX_HALVINGS: u32 = 8;
 
 /// Beyond `|x| > 44`, `exp(x)` leaves the budget in one direction or the other:
 /// `exp(44) > 2^63` and `exp(-44) < 2^-63`. Both are decided without summing
 /// anything.
 const EXP_ARG_LIMIT: i64 = 44;
+
+
+/// A `Rat` on the fixed-point grid: `round(num · 2^63 / den)`.
+///
+/// The receiver's magnitude is at most `EXP_ARG_LIMIT`, thus the result is at
+/// most `44 · 2^63`, which is what [`crate::fx::fx_exp_reduced`] accepts. The
+/// scaled numerator is at most `2^62 · 2^63 = 2^125` and fits `i128`.
+// `rem` is consumed by the proof block, which plain rustc erases.
+#[allow(unused_variables)]
+fn fx_to_grid(x: Rat) -> (r: i128)
+    requires
+        x.wf(),
+        crate::model::abs_int(x.n()) <= (EXP_ARG_LIMIT as int) * x.d(),
+    ensures
+        crate::model::abs_int(r as int) <= 406000000000000000000i128 as int,
+{
+    proof {
+        crate::model::lemma_max_mag_pow2();
+        crate::model::lemma_pow2_125();
+        crate::model::lemma_pow2_63();
+        assert(crate::model::abs_int((x.n()) * (crate::fx::FX_ONE as int)) <= 406000000000000000000
+            * (x.d())) by (nonlinear_arith)
+            requires
+                crate::model::abs_int(x.n()) <= (EXP_ARG_LIMIT as int) * x.d(),
+                x.d() > 0,
+                (crate::fx::FX_ONE as int) == 9223372036854775808,
+                (EXP_ARG_LIMIT as int) == 44,
+        ;
+    }
+    let scaled: i128 = (x.num as i128) * crate::fx::FX_ONE;
+    let d: i128 = x.den as i128;
+    let neg: bool = scaled < 0;
+    let m: i128 = if neg {
+        0 - scaled
+    } else {
+        scaled
+    };
+    let q: i128 = m / d;
+    let rem: i128 = m % d;
+    proof {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, d as int);
+        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(m as int, d as int);
+        vstd::arithmetic::div_mod::lemma_mod_bound(m as int, d as int);
+        assert((m as int) == (q as int) * (d as int) + (rem as int)) by (nonlinear_arith)
+            requires
+                (m as int) == (d as int) * (q as int) + (rem as int),
+        ;
+        assert((q as int) <= 406000000000000000000) by (nonlinear_arith)
+            requires
+                (m as int) == (q as int) * (d as int) + (rem as int),
+                (rem as int) >= 0,
+                (d as int) >= 1,
+                (m as int) <= 406000000000000000000 * (d as int),
+        ;
+    }
+    if neg {
+        0 - q
+    } else {
+        q
+    }
+}
+
+/// `t / 4`, rounded, which brings the fixed-point mantissa inside `i64`.
+///
+/// The mantissa is at most `1.6 · 2^63`. A quarter of that is `1.6 · 2^61`,
+/// which is below `MAX_MAG`, and the denominator becomes `2^61`.
+fn fx_quarter(t: i128) -> (r: i64)
+    requires
+        crate::model::abs_int(t as int) <= crate::fx::FX_T_MAX as int,
+    ensures
+        crate::model::abs_int(r as int) <= crate::model::max_mag(),
+{
+    proof {
+        crate::model::lemma_max_mag_pow2();
+    }
+    let neg: bool = t < 0;
+    let m: i128 = if neg {
+        0 - t
+    } else {
+        t
+    };
+    let q: i128 = (m + 2) / 4;
+    proof {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod((m as int) + 2, 4int);
+        vstd::arithmetic::div_mod::lemma_mod_bound((m as int) + 2, 4int);
+        assert((q as int) <= crate::model::max_mag()) by (nonlinear_arith)
+            requires
+                ((m as int) + 2) == 4 * (q as int) + (((m as int) + 2) % 4),
+                (((m as int) + 2) % 4) >= 0,
+                (m as int) <= 14757395258967641292,
+                crate::model::max_mag() == 4611686018427387903,
+        ;
+    }
+    if neg {
+        (0 - q) as i64
+    } else {
+        q as i64
+    }
+}
+
+/// `2^m` as a `Q`, saturating where the exponent leaves the budget.
+///
+/// `|m| <= 66`, and `2^62` is already past `MAX_MAG`, thus an exponent at or
+/// above `62` saturates and one at or below `-62` underflows to zero. Both are
+/// the same answers the argument limit gives for `exp` itself.
+fn pow2_q(m: i32) -> (r: Q)
+    ensures
+        r.wf(),
+{
+    if m >= 62 {
+        Q::PosSat
+    } else if m <= -62 {
+        Q::zero()
+    } else if m >= 0 {
+        Q::new(1i64 << (m as u32), 1)
+    } else {
+        Q::new(1, 1i64 << ((0 - m) as u32))
+    }
+}
 
 impl Q {
     /// `e^self`.
@@ -520,59 +625,39 @@ impl Q {
             Q::NegInf => Q::zero(),
             Q::Nan => Q::Nan,
             Q::Number(x) => {
-                let limit = Q::new(EXP_ARG_LIMIT, 1);
-                let q = Q::Number(x);
-                if Q::gt(q, limit) {
-                    return Q::PosSat;
+                // The argument limit, tested on the components rather than
+                // through the order. The conversion below needs the bound in
+                // exactly this form, and `|num| <= 44 · den` *is* `|x| <= 44`
+                // for a positive denominator.
+                proof {
+                    crate::model::lemma_max_mag_pow2();
+                    assert(44int * x.d() <= 202914184810805067732) by (nonlinear_arith)
+                        requires
+                            x.d() <= 4611686018427387903,
+                    ;
                 }
-                if Q::lt(q, limit.neg()) {
-                    return Q::zero();
+                let lim: i128 = (EXP_ARG_LIMIT as i128) * (x.den as i128);
+                let axn: i128 = if x.num < 0 {
+                    0 - (x.num as i128)
+                } else {
+                    x.num as i128
+                };
+                if axn > lim {
+                    return if x.num > 0 {
+                        Q::PosSat
+                    } else {
+                        Q::zero()
+                    };
                 }
-                let half = Q::new(1, 2);
-                let two = Q::new(2, 1);
-                // Range reduction: halve until |z| <= 1/2.
-                let mut z = q;
-                let mut k: u32 = 0;
-                while k < MAX_HALVINGS && Q::gt(z.abs(), half)
-                    invariant
-                        z.wf(),
-                        half.wf(),
-                        two.wf(),
-                        k <= MAX_HALVINGS,
-                    decreases MAX_HALVINGS - k,
-                {
-                    z = Q::div(z, two);
-                    k = k + 1;
-                }
-                // Maclaurin: term_{n+1} = term_n · z / (n+1).
-                let mut term = Q::one();
-                let mut sum = Q::one();
-                let mut i: u32 = 1;
-                while i <= EXP_TERMS
-                    invariant
-                        term.wf(),
-                        sum.wf(),
-                        z.wf(),
-                        1 <= i <= EXP_TERMS + 1,
-                    decreases EXP_TERMS + 1 - i,
-                {
-                    term = Q::div(Q::mul(term, z), Q::new(i as i64, 1));
-                    sum = Q::add(sum, term);
-                    i = i + 1;
-                }
-                // Undo the reduction.
-                let mut j: u32 = 0;
-                while j < k
-                    invariant
-                        sum.wf(),
-                        j <= k,
-                        k <= MAX_HALVINGS,
-                    decreases k - j,
-                {
-                    sum = Q::mul(sum, sum);
-                    j = j + 1;
-                }
-                sum
+                // The argument on the fixed-point grid. `|x| <= 44` and
+                // `x.den >= 1`, thus the scaled numerator is inside `i128`.
+                let xg: i128 = fx_to_grid(x);
+                let (t, m) = crate::fx::fx_exp_reduced(xg);
+                // `t · 2^(m-63)`, assembled as a `Rat` times a power of two.
+                // `t` is at most `1.6 · 2^63`, so a shift of two brings it
+                // inside the budget with the denominator at `2^61`.
+                let mant = Q::new(fx_quarter(t), 1i64 << 61);
+                Q::mul(pow2_q(m), mant)
             },
         }
     }

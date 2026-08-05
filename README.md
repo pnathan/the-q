@@ -168,11 +168,17 @@ is slower while carrying 8806-digit numerators.
 
 | function | the-q | f64 (hardware) | at the start |
 |---|---:|---:|---:|
+| **`exp`** | **0.55 µs** | 8.0 ns | 41.4 µs |
 | `sqrt` | 9.1 µs | 2.5 ns | 20.5 µs |
 | `sin` / `cos` | 14.9 µs | ~10 ns | 32.6 µs |
 | `ln` | 18.5 µs | 8.4 ns | 40.2 µs |
-| `exp` | 20.5 µs | 8.0 ns | 41.4 µs |
 | `atan` | 24.1 µs | 9.0 ns | 53.3 µs |
+
+`exp` is the one that has moved to the fixed-point kernel in `src/fx.rs`, which
+is why it is two orders of magnitude below the rest. It evaluates its series as
+plain `i128` integers on a `2^-63` grid instead of as `Q` values: one multiply
+and one shift-and-round per term, rather than a canonicalisation, a gcd and a
+rounding. The others still run through `Q` and are the remaining work.
 
 These are software series over exact rationals against silicon, so the ratio is
 large and will stay large. Tens of microseconds is usable for fusion and
@@ -193,12 +199,12 @@ were contributing nothing.
 
 | function | worst observed relative error |
 |---|---|
+| `exp` | 2⁻⁶¹ |
 | `e` | 2⁻⁶² |
 | `sqrt`, `ln2` | 2⁻⁶⁰ |
-| `pi`, `exp` (small args) | 2⁻⁵⁹ |
+| `pi` | 2⁻⁵⁹ |
 | `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁸ |
 | `sin`, `cos` | 2⁻⁵⁶ |
-| `exp` (full range) | 2⁻⁵³ |
 
 Every one of those is at or better than `f64`'s 2⁻⁵³. The caveat is in the
 next section, and it matters more than the table does.

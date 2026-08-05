@@ -860,6 +860,9 @@ pub proof fn lemma_gcd_cross(x1: nat, y1: nat, x2: nat, y2: nat)
 /// Termination: `x + y` decreases at each step of the main loop. A halving
 /// decreases `y`, and the subtraction decreases it again because `x > 0`. The
 /// measure is the sum rather than `y` alone, because the swap can raise `y`.
+// `kx` and `ky` below are consumed by the proof blocks, which plain rustc
+// erases. They are live in the verified build and dead in the compiled one.
+#[allow(unused_variables)]
 pub fn gcd_bin_u64(a: u64, b: u64) -> (r: u64)
     ensures
         r == gcd_nat(a as nat, b as nat),
