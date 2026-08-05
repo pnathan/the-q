@@ -409,3 +409,219 @@ fn exp_is_total_and_never_panics() {
         assert_total(Q::new(n, d).exp(), "exp");
     }
 }
+
+// ===========================================================================
+// ln
+// ===========================================================================
+
+/// `ln(x)` to high precision, via `2·atanh((x-1)/(x+1))` over exact rationals
+/// with its own binary reduction — structurally the same identity but carried
+/// to 2^-90 with no fixed term count, so a term-count or reduction-bound bug in
+/// the implementation shows up as disagreement.
+fn oracle_ln(x: &Rational) -> Rational {
+    let two = Rational::from_signeds(2i128, 1i128);
+    let half = Rational::from_signeds(1i128, 2i128);
+    let mut m = x.clone();
+    let mut k = 0i64;
+    while m > two {
+        m /= two.clone();
+        k += 1;
+    }
+    while m < half {
+        m *= two.clone();
+        k -= 1;
+    }
+    let z = (m.clone() - one()) / (m + one());
+    let z2 = z.clone() * z.clone();
+    let mut term = z.clone();
+    let mut sum = z;
+    let tol = eps(90);
+    for j in 1..400u32 {
+        term *= z2.clone();
+        let add = term.clone() / Rational::from_signeds((2 * j + 1) as i128, 1i128);
+        sum += add.clone();
+        if mag(&add) < tol {
+            break;
+        }
+    }
+    let ln_m = two.clone() * sum;
+    // ln 2 by the same series at z = 1/3.
+    let z = Rational::from_signeds(1i128, 3i128);
+    let z2 = z.clone() * z.clone();
+    let mut term = z.clone();
+    let mut s2 = z;
+    for j in 1..400u32 {
+        term *= z2.clone();
+        let add = term.clone() / Rational::from_signeds((2 * j + 1) as i128, 1i128);
+        s2 += add.clone();
+        if mag(&add) < tol {
+            break;
+        }
+    }
+    ln_m + Rational::from_signeds(k as i128, 1i128) * two * s2
+}
+
+#[test]
+fn ln2_constant_is_accurate() {
+    let want = oracle_ln(&two_rational());
+    match the_q::transcendental::ln2() {
+        Q::Number(r) => {
+            let e = rel_err(&rat(r), &want);
+            println!("ln2: relative error 2^-{}", precision_bits(&e));
+            assert!(e <= eps(55), "ln2 = {r} is not accurate enough");
+        }
+        other => panic!("ln2 must be a number, got {other}"),
+    }
+}
+
+fn two_rational() -> Rational {
+    Rational::from_signeds(2i128, 1i128)
+}
+
+#[test]
+fn ln_matches_the_derived_special_table() {
+    assert_eq!(Q::PosInf.ln(), Q::PosInf);
+    assert_eq!(Q::NegInf.ln(), Q::Nan);
+    assert_eq!(Q::Nan.ln(), Q::Nan);
+    assert_eq!(Q::NegSat.ln(), Q::Nan, "negative");
+    // ln of (MAX_MAG, inf) is about (43, inf), which reaches far below
+    // MAX_MAG, so no saturation state is sound.
+    assert_eq!(Q::PosSat.ln(), Q::Nan);
+    assert_eq!(Q::zero().ln(), Q::NegInf, "the exact limit");
+    assert_eq!(Q::neg_one().ln(), Q::Nan, "no real logarithm of a negative");
+}
+
+#[test]
+fn ln_of_one_is_zero_and_ln_is_accurate() {
+    // ln(1) should be exactly zero: z = 0 makes every series term vanish.
+    assert_eq!(Q::one().ln(), Q::zero(), "ln(1) must be exactly 0");
+
+    let mut rng = Rng::new(0x5EED_0020);
+    let mut worst = oracle_zero();
+    let mut worst_at = oracle_zero();
+    for _ in 0..2_000 {
+        let x = rng.q();
+        if x.numerator() <= 0 {
+            continue;
+        }
+        let want = oracle_ln(&rat(x));
+        if let Q::Number(r) = Q::Number(x).ln() {
+            let e = rel_err(&rat(r), &want);
+            if e > worst {
+                worst = e.clone();
+                worst_at = rat(x);
+            }
+            assert!(e <= eps(40), "ln({x}) = {r}, want ~{want}");
+        }
+    }
+    println!(
+        "ln: worst relative error 2^-{} (at x = {worst_at})",
+        precision_bits(&worst)
+    );
+}
+
+#[test]
+fn ln_inverts_exp_to_the_precision_the_grid_allows() {
+    // The round-trip check, with the *right* bound — getting this wrong is
+    // instructive, so the reasoning is written out.
+    //
+    // R3's error bound is `2^-61 · max(1, |exact|)`, which is **absolute**
+    // below 1, not relative. So a small result carries fewer significant bits
+    // than a large one: `exp(-30)` is about `2^-43`, and an absolute error of
+    // `2^-61` there is a *relative* error of only `2^-18`. Since `ln` turns a
+    // relative error in its argument into an absolute error in its result,
+    // `ln(exp(-30))` is off by roughly `2^-61 · e^30`, which is about `5e-6`.
+    //
+    // That is a real property of the type, not a defect in either function, and
+    // it is why the tolerance below scales with `max(1, e^-k)`.
+    let mut rng = Rng::new(0x5EED_0021);
+    let slack = Rational::from_signeds(1i128 << 12, 1i128);
+    let mut worst_k = 0i64;
+    let mut worst_bits = 64u32;
+    for _ in 0..2_000 {
+        let k = (rng.below(60) as i64) - 30;
+        let x = Q::Number(Rat::new(k, 1).unwrap());
+        let Q::Number(e) = x.exp() else { continue };
+        let Q::Number(back) = Q::Number(e).ln() else {
+            continue;
+        };
+        let d = mag(&(rat(back) - Rational::from_signeds(k as i128, 1i128)));
+        // How small the intermediate got, which is what sets the precision.
+        let scale = {
+            let inv = oracle_exp(&Rational::from_signeds(-k as i128, 1i128));
+            if inv > one() {
+                inv
+            } else {
+                one()
+            }
+        };
+        let bound = eps(61) * scale * slack.clone();
+        assert!(
+            d <= bound,
+            "ln(exp({k})) = {back}, off by {d}, past the grid-limited bound"
+        );
+        if k <= 0 {
+            let b = precision_bits(&d);
+            if b < worst_bits {
+                worst_bits = b;
+                worst_k = k;
+            }
+        }
+    }
+    println!(
+        "ln(exp(k)) round trip: worst absolute error 2^-{worst_bits} at k = {worst_k} \
+         (small results carry fewer significant bits — R3 is absolute below 1)"
+    );
+}
+
+#[test]
+fn ln_is_monotone() {
+    let mut rng = Rng::new(0x5EED_0022);
+    for _ in 0..3_000 {
+        let a = rng.q_nonzero();
+        let b = rng.q_nonzero();
+        if a.numerator() <= 0 || b.numerator() <= 0 {
+            continue;
+        }
+        let (lo, hi) = if Rat::le(a, b) { (a, b) } else { (b, a) };
+        if let (Q::Number(x), Q::Number(y)) = (Q::Number(lo).ln(), Q::Number(hi).ln()) {
+            assert!(
+                rat(x) <= rat(y) + eps(30),
+                "ln is not monotone: ln({lo})={x} > ln({hi})={y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ln_is_total_and_never_panics() {
+    for q in states() {
+        assert_total(q.ln(), "ln");
+    }
+    let mut rng = Rng::new(0x5EED_0023);
+    for _ in 0..20_000 {
+        let n = rng.next_u64() as i64;
+        let d = rng.next_u64() as i64;
+        assert_total(Q::new(n, d).ln(), "ln");
+    }
+}
+
+#[test]
+fn pow_i32_handles_negative_exponents_totally() {
+    let two = Q::Number(Rat::new(2, 1).unwrap());
+    assert_eq!(two.pow_i32(3), Q::Number(Rat::new(8, 1).unwrap()));
+    assert_eq!(two.pow_i32(0), Q::one());
+    assert_eq!(two.pow_i32(-3), Q::Number(Rat::new(1, 8).unwrap()));
+    // The case that would panic on a partial reciprocal.
+    assert_eq!(Q::zero().pow_i32(-1), Q::PosInf);
+    assert_eq!(Q::zero().pow_i32(0), Q::one());
+    // i32::MIN must not overflow when negated.
+    assert_total(two.pow_i32(i32::MIN), "pow_i32(i32::MIN)");
+
+    let mut rng = Rng::new(0x5EED_0024);
+    for _ in 0..5_000 {
+        let q = Q::Number(rng.q());
+        let e = (rng.below(21) as i32) - 10;
+        assert_total(q.pow_i32(e), "pow_i32");
+    }
+}

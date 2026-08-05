@@ -31,6 +31,24 @@
 //! `2^-55` rather than to the full `2^-61` of a single operation. That is still
 //! better than `f64`'s `2^-53`.
 //!
+//! # Precision degrades for results far below 1, and that is structural
+//!
+//! Read this before trusting a small result. R3's error bound is
+//! `2^-61 · max(1, |exact|)`, which is **absolute** below 1 rather than
+//! relative. A value near `1` therefore carries about 61 significant bits, but
+//! a value near `2^-43` carries only about 18: the grid spacing is the same, so
+//! there are far fewer grid points *relative to the value*.
+//!
+//! The consequence bites hardest where a function's output is tiny. `exp(-30)`
+//! is about `2^-43`, so it is accurate to roughly `2^-18` relatively, and
+//! `ln(exp(-30))` comes back off by about `5e-6` — measured at `2^-20` in
+//! `ln_inverts_exp_to_the_precision_the_grid_allows`. Neither function is at
+//! fault; the intermediate simply could not carry the information.
+//!
+//! This is the same trade the rest of the crate makes, surfaced where it is
+//! most visible. If small values matter, scale the problem so they are not
+//! small — the budget is far more generous near `1` than near `0`.
+//!
 //! # Failure is a value, never a panic
 //!
 //! Every function here is total. `sqrt` of a negative number is `Nan`, not a
@@ -429,6 +447,164 @@ impl Q {
                 }
                 sum
             },
+        }
+    }
+}
+
+/// Bound on the binary range reduction in [`Q::ln`].
+///
+/// Every representable value lies in `[1/MAX_MAG, MAX_MAG]`, and `MAX_MAG` is
+/// below `2^62`, so sixty-three doublings or halvings always reach `[1/2, 2]`.
+/// Sixty-four is carried for margin and makes the loops trivially terminating.
+const MAX_BINARY_SHIFTS: u32 = 64;
+
+/// `atanh(z) = z + z³/3 + z⁵/5 + …`, for `|z| <= 1/3`.
+///
+/// Every caller range-reduces to that interval first. At `|z| = 1/3` the
+/// twentieth odd term is `3^-39 / 39`, about `3e-21`, comfortably below the
+/// `2^-61` grid — so the truncation error is invisible and the rounding error
+/// dominates, which is the same balance every other series here strikes.
+fn atanh_series(z: Q) -> (r: Q)
+    requires
+        z.wf(),
+    ensures
+        r.wf(),
+{
+    let z2 = Q::mul(z, z);
+    let mut term = z;
+    let mut sum = z;
+    let mut k: u32 = 1;
+    while k < SERIES_TERMS
+        invariant
+            term.wf(),
+            sum.wf(),
+            z2.wf(),
+            1 <= k <= SERIES_TERMS,
+        decreases SERIES_TERMS - k,
+    {
+        term = Q::mul(term, z2);
+        sum = Q::add(sum, Q::div(term, Q::new((2 * k + 1) as i64, 1)));
+        k = k + 1;
+    }
+    sum
+}
+
+/// `ln(2)`, as `2·atanh(1/3)`.
+///
+/// Computed rather than hard-coded. A literal would be a magic constant nobody
+/// could check by inspection, and would have to be re-derived if the width
+/// budget ever changed; the series costs twenty operations and is checked
+/// against the oracle by `ln2_constant_is_accurate`.
+pub fn ln2() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::mul(Q::new(2, 1), atanh_series(Q::new(1, 3)))
+}
+
+impl Q {
+    /// The natural logarithm.
+    ///
+    /// | operand | result | why |
+    /// |---|---|---|
+    /// | `Number(x)`, `x > 0` | series | |
+    /// | `Number(0)` | `NegInf` | the exact limit |
+    /// | `Number(x)`, `x < 0` | `Nan` | no real logarithm |
+    /// | `PosSat` | `Nan` | image `(ln MAX_MAG, ∞) ≈ (43, ∞)` reaches below `MAX_MAG` |
+    /// | `NegSat` | `Nan` | negative |
+    /// | `PosInf` | `PosInf` | |
+    /// | `NegInf` | `Nan` | negative |
+    /// | `Nan` | `Nan` | |
+    ///
+    /// # Method
+    ///
+    /// Binary range reduction to `m ∈ [1/2, 2]`, then
+    /// `ln(m) = 2·atanh((m-1)/(m+1))` — whose argument is then at most `1/3` in
+    /// magnitude, which is exactly the interval the series is accurate on —
+    /// and finally `ln(x) = ln(m) + k·ln(2)`.
+    ///
+    /// The `atanh` form is used rather than the direct `ln(1+u)` series because
+    /// its terms are all odd powers of a much smaller argument: for `m` at the
+    /// end of the reduced range, `u` would be `1` and the direct series would
+    /// not converge at all.
+    pub fn ln(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            self.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        match self {
+            Q::PosSat => Q::Nan,
+            Q::NegSat => Q::Nan,
+            Q::PosInf => Q::PosInf,
+            Q::NegInf => Q::Nan,
+            Q::Nan => Q::Nan,
+            Q::Number(x) => {
+                let s = x.signum();
+                if s < 0 {
+                    return Q::Nan;
+                }
+                if s == 0 {
+                    return Q::NegInf;
+                }
+                let two = Q::new(2, 1);
+                let half = Q::new(1, 2);
+                let mut m = Q::Number(x);
+                let mut up: u32 = 0;
+                while up < MAX_BINARY_SHIFTS && Q::gt(m, two)
+                    invariant
+                        m.wf(),
+                        two.wf(),
+                        half.wf(),
+                        up <= MAX_BINARY_SHIFTS,
+                    decreases MAX_BINARY_SHIFTS - up,
+                {
+                    m = Q::div(m, two);
+                    up = up + 1;
+                }
+                let mut down: u32 = 0;
+                while down < MAX_BINARY_SHIFTS && Q::lt(m, half)
+                    invariant
+                        m.wf(),
+                        two.wf(),
+                        half.wf(),
+                        down <= MAX_BINARY_SHIFTS,
+                    decreases MAX_BINARY_SHIFTS - down,
+                {
+                    m = Q::mul(m, two);
+                    down = down + 1;
+                }
+                // z = (m - 1) / (m + 1), in [-1/3, 1/3] for m in [1/2, 2].
+                let one = Q::one();
+                let z = Q::div(Q::sub(m, one), Q::add(m, one));
+                let ln_m = Q::mul(two, atanh_series(z));
+                // k is the net number of doublings undone; `up` and `down` are
+                // never both nonzero, so this cannot overflow an i64.
+                let k = Q::sub(Q::new(up as i64, 1), Q::new(down as i64, 1));
+                Q::add(ln_m, Q::mul(k, ln2()))
+            },
+        }
+    }
+
+    /// `self` raised to the power `e`, for a negative exponent as well as a
+    /// positive one.
+    ///
+    /// `pow_i32(a, -n)` is `recip(pow_u32(a, n))`, so it inherits both the
+    /// exactness of reciprocation on nonzero rationals and the division
+    /// conventions: `pow_i32(0, -1)` is `PosInf`, not a panic.
+    pub fn pow_i32(self, e: i32) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        if e >= 0 {
+            self.pow_u32(e as u32)
+        } else {
+            // `-e` for `e == i32::MIN` would overflow, so widen first.
+            let n: i64 = -(e as i64);
+            self.pow_u32(n as u32).recip()
         }
     }
 }
