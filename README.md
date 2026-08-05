@@ -120,25 +120,32 @@ There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 inputs, `release` with `overflow-checks = true` — the configuration the crate
 actually ships, not a faster one).
 
-| operation | the-q | f64 | ratio | before Stein |
+| operation | the-q | f64 | ratio | before |
 |---|---:|---:|---:|---:|
-| `Rat::add` / `sub` | 160 ns | 3.2 ns | 50× | 273 ns |
-| `Rat::mul` / `div` | 156 ns | 3.3 ns | 47× | 260 ns |
-| `Q::add` (total) | 186 ns | 5.4 ns | 34× | 261 ns |
-| `Q::div` (total) | 172 ns | 5.1 ns | 33× | 235 ns |
-| `Q::compare` | 7.8 ns | 5.8 ns | **1.3×** | 9.3 ns |
+| `Rat::add` / `sub` | 158 ns | 3.4 ns | 46× | 273 ns |
+| `Rat::mul` / `div` | 149 ns | 3.0 ns | 50× | 260 ns |
+| `Q::add` (total) | 159 ns | 4.2 ns | 38× | 261 ns |
+| `Q::div` (total) | 152 ns | 4.2 ns | 36× | 235 ns |
+| `Q::compare` | 6.9 ns | 4.7 ns | **1.5×** | 9.3 ns |
+| chain step, `k = 4096` | 1618 ns | 4.5 ns | 357× | 3385 ns |
 
-Three things worth reading off that table. **Totality is nearly free** — `Q::add`
-costs about 15% more than the partial `Rat::add`, so the explicit
-non-representable states are a type-level win rather than a runtime tax.
-**Comparison is in the same class as `f64`**, because it is integer
-cross-multiplication with no floating-point classification to do. And the last
-column is the cost of the gcd algorithm: canonicalisation runs a gcd on every
-result, and Euclid's algorithm needs a remainder, which at `u128` width is a
-software routine rather than an instruction. Stein's binary algorithm needs only
-halving, comparison and subtraction, and it took approximately 40% off every
-operation in the crate. The proofs are in `src/gcd.rs`; the postcondition is
-unchanged, so nothing downstream moved.
+Three things worth reading off that table. **Totality is free** — `Q::add` costs
+about the same as the partial `Rat::add`, so the explicit non-representable
+states are a type-level win rather than a runtime tax. **Comparison is in the
+same class as `f64`**, because it is integer cross-multiplication with no
+floating-point classification to do. And the last column is the cost of two gcd
+changes, both of which left every postcondition verbatim:
+
+* Canonicalisation runs a gcd on every result, and Euclid's algorithm needs a
+  remainder, which at `u128` width is a software routine rather than an
+  instruction. Stein's binary algorithm needs only halving, comparison and
+  subtraction. Approximately 40% off every operation.
+* The *second* gcd, the one the dyadic snap takes against `2^s`, is not a gcd at
+  all: the answer is `2^min(v2(n), s)`, which is a loop of shifts. A further 20%
+  off the chain path, where every step snaps.
+
+The proofs are in `src/gcd.rs` and `src/round.rs`. Neither change moved a
+postcondition, so results are bit-identical to before.
 
 The remaining ~50× is the price of canonical form: the gcd itself, which is
 what makes structural equality mathematical equality and results bit-reproducible
@@ -149,13 +156,13 @@ numerators.
 
 ### Transcendentals
 
-| function | the-q | f64 (hardware) | before Stein |
+| function | the-q | f64 (hardware) | before |
 |---|---:|---:|---:|
-| `sqrt` | 12.8 µs | 2.9 ns | 20.5 µs |
-| `sin` / `cos` | 22.7 µs | ~12 ns | 32.6 µs |
-| `ln` | 28.9 µs | 9.3 ns | 40.2 µs |
-| `exp` | 30.7 µs | 8.8 ns | 41.4 µs |
-| `atan` | 36.8 µs | 9.7 ns | 53.3 µs |
+| `sqrt` | 11.2 µs | 2.7 ns | 20.5 µs |
+| `sin` / `cos` | 18.8 µs | ~11 ns | 32.6 µs |
+| `ln` | 24.2 µs | 8.9 ns | 40.2 µs |
+| `exp` | 26.2 µs | 8.4 ns | 41.4 µs |
+| `atan` | 31.2 µs | 9.2 ns | 53.3 µs |
 
 These are software series over exact rationals against silicon, so the ratio is
 large and will stay large. Tens of microseconds is usable for fusion and
@@ -648,11 +655,11 @@ the crate actually ships).
 
 | op | the-q | f64 | exact | q/f64 | exact/q |
 |---|---|---|---|---|---|
-| `add` | 156.3 ns | 3.3 ns | 91.8 ns | 47.9× | 0.6× |
-| `sub` | 163.7 ns | 3.0 ns | 95.5 ns | 54.3× | 0.6× |
-| `mul` | 149.4 ns | 3.3 ns | 120.7 ns | 45.8× | 0.8× |
-| `div` | 162.6 ns | 3.3 ns | 120.2 ns | 48.5× | 0.7× |
-| compare | 5.0 ns | 2.9 ns | 41.0 ns | 1.7× | 8.2× |
+| `add` | 158.1 ns | 3.2 ns | 90.4 ns | 49.7× | 0.6× |
+| `sub` | 157.1 ns | 3.7 ns | 93.6 ns | 42.8× | 0.6× |
+| `mul` | 149.7 ns | 3.1 ns | 108.2 ns | 48.2× | 0.7× |
+| `div` | 149.0 ns | 2.9 ns | 107.8 ns | 52.0× | 0.7× |
+| compare | 4.5 ns | 3.3 ns | 38.1 ns | 1.4× | 8.4× |
 
 On *one* operation with small operands, an exact rational is cheaper than
 `the-q`, and both cost tens of times an `f64` op. That comparison is not the
@@ -662,36 +669,37 @@ interesting one, because it is the one case where an exact rational is cheap.
 
 | depth | the-q | f64 | exact | q/f64 | exact/q | size of exact result |
 |---|---|---|---|---|---|---|
-| `k = 4` | 415.0 ns | 5.7 ns | 314.9 ns | 72.4× | 0.8× | 29 digits |
-| `k = 16` | 1624.2 ns | 5.1 ns | 361.1 ns | 318.3× | 0.2× | 88 digits |
-| `k = 64` | 2074.4 ns | 5.0 ns | 421.3 ns | 412.7× | 0.2× | 311 digits |
-| `k = 256` | 2137.7 ns | 4.9 ns | 574.7 ns | 434.2× | 0.3× | 947 digits |
-| `k = 1024` | 2120.9 ns | 4.8 ns | 1058.4 ns | 444.0× | 0.5× | 2 979 digits |
-| `k = 4096` | 2202.2 ns | 4.8 ns | 2459.0 ns | 455.9× | 1.1× | 8 806 digits |
+| `k = 4` | 380.5 ns | 5.3 ns | 275.5 ns | 71.6× | 0.7× | 29 digits |
+| `k = 16` | 1227.9 ns | 4.6 ns | 320.2 ns | 265.7× | 0.3× | 88 digits |
+| `k = 64` | 1480.3 ns | 4.6 ns | 365.5 ns | 321.8× | 0.2× | 311 digits |
+| `k = 256` | 1603.7 ns | 4.6 ns | 504.4 ns | 351.1× | 0.3× | 947 digits |
+| `k = 1024` | 1619.3 ns | 4.5 ns | 958.3 ns | 356.4× | 0.6× | 2 979 digits |
+| `k = 4096` | 1617.9 ns | 4.5 ns | 2299.5 ns | 356.6× | 1.4× | 8 806 digits |
 
 This is the whole argument for the crate, and it does not flatter it.
 
-`the-q` **rises and then plateaus**: 415 ns/step at `k = 4`, then flat within 4%
+`the-q` **rises and then plateaus**: 381 ns/step at `k = 4`, then flat within 1%
 from `k = 256` to `k = 4096`. The rise is not the chain getting longer, it is the
 operands getting *wider* — a few steps in, numerator and denominator fill the
 62-bit budget, so the GCD and the rounding division run at full width on every
 subsequent step. Once they do, depth stops mattering. Same 16 bytes at `k = 4`
-as at `k = 4096`. Stein's algorithm took roughly a third off this column too:
-the same chain cost 3 148 ns/step at `k = 64` under Euclid.
+as at `k = 4096`. This column has halved: the same chain cost 3 148 ns/step at
+`k = 64` before Stein's algorithm, and 1 801 ns/step before the snap path
+stopped taking a general gcd against `2^s`.
 
 The exact backend does not plateau, because it cannot: its result is 8 806
 decimal digits at `k = 4096` and still growing. It is **cheaper than `the-q`
 between roughly `k = 8` and `k = 2000`**, and more expensive outside that
 window — increasingly so, without limit.
 
-`f64` is flat at ~5 ns and roughly 450× faster than `the-q`. That number is
+`f64` is flat at ~4.5 ns and roughly 360× faster than `the-q`. That number is
 the price, and it is not small.
 
 **`weighted_mean` over 8 (weight, value) pairs**
 
 | the-q | f64 | exact |
 |---|---|---|
-| 12.4 µs | 21.2 ns | 5.0 µs |
+| 10.7 µs | 20.2 ns | 4.2 µs |
 
 ### What the numbers mean
 

@@ -407,6 +407,42 @@ pub proof fn lemma_gcd_half_odd_right(x: nat, y: nat)
     lemma_gcd_unique(x, y, d);
 }
 
+/// An odd number is coprime to every power of two.
+///
+/// The rounding code needs this. Its second gcd is always taken against `2^s`,
+/// thus the answer is `2^min(v2(n), s)` and no general gcd is required. This
+/// lemma is the base of that: once the common twos are gone, one side is odd
+/// and the rest of the gcd is `1`.
+pub proof fn lemma_gcd_odd_pow2(n: nat, t: nat)
+    requires
+        n % 2 == 1,
+    ensures
+        gcd_nat(n, pow2(t) as nat) == 1,
+    decreases t,
+{
+    if t == 0 {
+        assert(pow2(0) == 1);
+        // gcd(n, 1) == gcd(1, n % 1) == gcd(1, 0) == 1.
+        assert(n % 1 == 0);
+        assert(gcd_nat(n, 1) == gcd_nat(1, 0));
+    } else {
+        // `2^t` is even for `t > 0`, and `n` is odd, thus one halving step.
+        lemma_pow2_pos(t);
+        lemma_pow2_pos((t - 1) as nat);
+        assert(pow2(t) == 2 * pow2((t - 1) as nat));
+        // `(2p) % 2 == 0` and `(2p) / 2 == p` are division facts, not
+        // arithmetic ones. Uniqueness of Euclidean division supplies both.
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+            pow2(t),
+            2int,
+            pow2((t - 1) as nat),
+            0int,
+        );
+        lemma_gcd_half_odd_right(n, pow2(t) as nat);
+        lemma_gcd_odd_pow2(n, (t - 1) as nat);
+    }
+}
+
 /// The gcd is symmetric.
 pub proof fn lemma_gcd_sym(a: nat, b: nat)
     ensures
