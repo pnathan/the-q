@@ -1,15 +1,15 @@
 //! `QI` — a rational interval built on the directed rounding modes (M6).
 //!
-//! This is why R2 exists. An interval `[lo, hi]` that brackets a true value
-//! keeps bracketing it if every lower endpoint is computed with [`Dir::Down`]
-//! and every upper endpoint with [`Dir::Up`] — and R2 says exactly that those
-//! modes never cross the exact value. So the containment theorem needs **no new
-//! rounding proofs**; it is a corollary of R2 plus the monotonicity of the
-//! underlying rational operations.
+//! This module is the reason R2 exists. An interval `[lo, hi]` that brackets a
+//! true value keeps bracketing it when every lower endpoint uses [`Dir::Down`]
+//! and every upper endpoint uses [`Dir::Up`]. R2 states exactly that those
+//! modes never cross the exact value. The containment theorem therefore needs
+//! **no new rounding proofs**. It is a corollary of R2 plus the monotonicity of
+//! the underlying rational operations.
 //!
-//! The interval layer is the honest answer to "how much did rounding cost me on
-//! *this* computation": instead of a worst-case bound, the width of the result
-//! is the measured answer.
+//! The interval layer measures the rounding cost of one specific computation.
+//! The width of the result is that measurement, rather than a worst-case
+//! bound.
 
 use verus_builtin_macros::verus;
 
@@ -83,8 +83,8 @@ impl QI {
         Rat::le(self.lo, x) && Rat::le(x, self.hi)
     }
 
-    /// `hi - lo`: how much precision the computation actually lost. Zero means
-    /// the whole computation stayed on the exact path.
+    /// `hi - lo`. This is the precision the computation loses. Zero means the
+    /// whole computation stays on the exact path.
     pub fn width(&self) -> (r: Rat)
         requires
             self.wf(),
@@ -108,9 +108,9 @@ impl QI {
 
     /// Interval addition: `[a.lo + b.lo, a.hi + b.hi]` with outward rounding.
     ///
-    /// `r.wf()` — so the result composes with the next operation inside
-    /// verified code — is a corollary of R2 plus the fact that `a.wf()` and
-    /// `b.wf()` already order the exact endpoint sums; see
+    /// `r.wf()` lets the result compose with the next operation inside
+    /// verified code. It is a corollary of R2 plus the fact that `a.wf()` and
+    /// `b.wf()` order the exact endpoint sums. See
     /// `lemma_directed_round_order`.
     pub fn add(a: QI, b: QI) -> (r: QI)
         requires
@@ -140,7 +140,7 @@ impl QI {
             if !crate::round::saturated(add_n(a.hi, b.hi), prod_d(a.hi, b.hi)) {
                 crate::round::lemma_r2_directed(add_n(a.hi, b.hi), prod_d(a.hi, b.hi));
             }
-            // The exact lo-sum never exceeds the exact hi-sum: a direct
+            // The exact lo-sum never exceeds the exact hi-sum. This is a direct
             // instance of the endpoint-order lemma with x := a.hi, y := b.hi.
             lemma_add_endpoint_order(
                 a.lo.n(),
@@ -165,9 +165,10 @@ impl QI {
     /// Interval subtraction: `[a.lo - b.hi, a.hi - b.lo]` with outward
     /// rounding.
     ///
-    /// `r.wf()` for the same reason as [`QI::add`]: the exact lo-difference
-    /// never exceeds the exact hi-difference, because `a.lo - b.hi` is
-    /// `a.lo + (-b.hi)` and `-b.hi <= -b.lo` follows from `b.wf()`.
+    /// `r.wf()` holds for the same reason as in [`QI::add`]. The exact
+    /// lo-difference never exceeds the exact hi-difference, because
+    /// `a.lo - b.hi` is `a.lo + (-b.hi)` and `-b.hi <= -b.lo` follows from
+    /// `b.wf()`.
     pub fn sub(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -196,9 +197,10 @@ impl QI {
             if !crate::round::saturated(sub_n(a.hi, b.lo), prod_d(a.hi, b.lo)) {
                 crate::round::lemma_r2_directed(sub_n(a.hi, b.lo), prod_d(a.hi, b.lo));
             }
-            // The exact lo-difference never exceeds the exact hi-difference:
-            // reuse the endpoint-order lemma on (a.lo, -b.hi) vs (a.hi, -b.lo).
-            // `b.wf()` gives `b.lo <= b.hi`; negating both sides flips it.
+            // The exact lo-difference never exceeds the exact hi-difference.
+            // Apply the endpoint-order lemma to (a.lo, -b.hi) against
+            // (a.hi, -b.lo). `b.wf()` gives `b.lo <= b.hi`. Negating both sides
+            // flips that order.
             assert((-b.hi.n()) * b.lo.d() <= (-b.lo.n()) * b.hi.d()) by (nonlinear_arith)
                 requires
                     b.lo.n() * b.hi.d() <= b.hi.n() * b.lo.d(),
@@ -258,12 +260,12 @@ impl QI {
 
     /// Interval multiplication: the four corner products, outward rounded.
     ///
-    /// The corner rule (that the extremal corner products bracket the exact
-    /// product for every sign pattern) is `theorem_interval_mul_contains`.
-    /// `r.wf()` itself needs none of that case analysis: `lo` is the min and
-    /// `hi` the max over all four *rounded* corners, so any single corner's
-    /// `Down`/`Up` pair — e.g. the `ll` one — already chains `lo <= ll_lo <=
-    /// ll_hi <= hi`.
+    /// The corner rule states that the extremal corner products bracket the
+    /// exact product for every sign pattern. `theorem_interval_mul_contains`
+    /// proves it. `r.wf()` needs none of that case analysis. `lo` is the min
+    /// and `hi` the max over all four *rounded* corners. Thus any single
+    /// corner's `Down`/`Up` pair, such as the `ll` one, already chains
+    /// `lo <= ll_lo <= ll_hi <= hi`.
     pub fn mul(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -329,8 +331,7 @@ impl QI {
 /// **The containment theorem.** If the inputs bracket their true values, the
 /// interval sum brackets the true sum.
 ///
-/// This is a direct corollary of R2 — the point of having directed modes at
-/// all.
+/// This is a direct corollary of R2. It is the purpose of the directed modes.
 pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
@@ -343,7 +344,8 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
         q_le(y, b.hi),
     ensures
         // The exact sum of x and y lies between the exact sums of the
-        // endpoints, so after outward rounding it lies inside `QI::add(a, b)`.
+        // endpoints. After outward rounding it therefore lies inside
+        // `QI::add(a, b)`.
         add_n(a.lo, b.lo) * prod_d(x, y) <= add_n(x, y) * prod_d(a.lo, b.lo),
         add_n(x, y) * prod_d(a.hi, b.hi) <= add_n(a.hi, b.hi) * prod_d(x, y),
 {
@@ -363,8 +365,8 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
 /// **The containment theorem for subtraction.** If the inputs bracket their
 /// true values, the interval difference brackets the true difference.
 ///
-/// `a.lo - b.hi` is `a.lo + (-b.hi)`, so this is the same corollary of R2 as
-/// [`theorem_interval_add_contains`], applied to `a.lo`/`a.hi` and the
+/// `a.lo - b.hi` is `a.lo + (-b.hi)`. This is therefore the same corollary of
+/// R2 as [`theorem_interval_add_contains`], applied to `a.lo`/`a.hi` and the
 /// negation of `b.hi`/`b.lo`.
 pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
@@ -378,13 +380,13 @@ pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
         q_le(y, b.hi),
     ensures
         // The exact difference of x and y lies between the exact differences
-        // of the endpoints, so after outward rounding it lies inside
+        // of the endpoints. After outward rounding it therefore lies inside
         // `QI::sub(a, b)`.
         sub_n(a.lo, b.hi) * prod_d(x, y) <= sub_n(x, y) * prod_d(a.lo, b.hi),
         sub_n(x, y) * prod_d(a.hi, b.lo) <= sub_n(a.hi, b.lo) * prod_d(x, y),
 {
-    // `q_le(y, b.hi)` and `q_le(b.lo, y)` negate to the two hypotheses each
-    // call below needs.
+    // Negating `q_le(y, b.hi)` and `q_le(b.lo, y)` gives the two hypotheses
+    // that each call below needs.
     assert((-b.hi.n()) * y.d() <= (-y.n()) * b.hi.d()) by (nonlinear_arith)
         requires
             y.n() * b.hi.d() <= b.hi.n() * y.d(),
@@ -431,10 +433,10 @@ pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
 
 /// Adding two ordered pairs of fractions preserves the order.
 ///
-/// Broken into four small steps rather than handed to `nonlinear_arith` whole:
-/// scale each hypothesis by the other pair's positive denominators, then two
-/// ring identities line the sums up with the goal. The solver does badly on the
-/// combined form and fine on these.
+/// The proof uses four small steps instead of one whole `nonlinear_arith`
+/// goal. It scales each hypothesis by the other pair's positive denominators.
+/// Two ring identities then line the sums up with the goal. The solver handles
+/// these steps well and the combined form badly.
 pub proof fn lemma_add_endpoint_order(
     an: int,
     ad: int,
@@ -467,11 +469,11 @@ pub proof fn lemma_add_endpoint_order(
             ad > 0,
             xd > 0,
     ;
-    // Distribution and rearrangement are separated deliberately. Handed the
-    // combined identity, the solver has to discover the factorisation itself
-    // and burns through its budget; given distribution as its own step, each
-    // remaining goal is an associativity/commutativity shuffle of a four-factor
-    // product, which it normalises for free.
+    // Distribution and rearrangement stay separate. Given the combined
+    // identity, the solver must discover the factorisation itself, and it
+    // burns through its budget. Given distribution as its own step, each
+    // remaining goal is an associativity or commutativity shuffle of a
+    // four-factor product, which the solver normalises for free.
     assert((an * bd + bn * ad) * (xd * yd) == (an * bd) * (xd * yd) + (bn * ad) * (xd * yd))
         by (nonlinear_arith);
     assert((an * bd) * (xd * yd) == (an * xd) * (bd * yd)) by (nonlinear_arith);
@@ -485,9 +487,10 @@ pub proof fn lemma_add_endpoint_order(
 /// Chains three fraction comparisons across three different denominators:
 /// `rl <= n1/d1 <= n2/d2 <= rh` implies `rl <= rh`.
 ///
-/// This is [`crate::q::lemma_le_trans`] generalised off `Rat`: the middle link
-/// is a raw fraction inequality (as produced by [`lemma_add_endpoint_order`]),
-/// not another well-formed `Rat`, so the cancellation has to be redone by hand.
+/// This is [`crate::q::lemma_le_trans`] generalised off `Rat`. The middle link
+/// is a raw fraction inequality, as [`lemma_add_endpoint_order`] produces, not
+/// another well-formed `Rat`. The proof therefore redoes the cancellation by
+/// hand.
 pub proof fn lemma_frac_chain_le(
     rln: int,
     rld: int,
@@ -528,7 +531,7 @@ pub proof fn lemma_frac_chain_le(
             rld > 0,
     ;
     // Rewrite each of the three products above into the same six-factor
-    // normal form so the chain links up.
+    // normal form. The chain then links up.
     assert((rln * d1) * (d2 * rhd) == (rln * rhd) * (d1 * d2)) by (nonlinear_arith);
     assert((n1 * rld) * (d2 * rhd) == (n1 * d2) * (rld * rhd)) by (nonlinear_arith);
     assert((n2 * d1) * (rld * rhd) == (n2 * rhd) * (d1 * rld)) by (nonlinear_arith);
@@ -544,18 +547,17 @@ pub proof fn lemma_frac_chain_le(
 }
 
 /// If the exact `n1/d1 <= n2/d2`, then rounding the first `Down` and the
-/// second `Up` preserves the order — **even across saturation**, where R2
-/// alone does not apply.
+/// second `Up` preserves the order. This holds **even across saturation**,
+/// where R2 alone does not apply.
 ///
-/// This is the fact that makes `QI::add`, `QI::sub` and (via a single corner)
-/// `QI::mul` produce a well-formed result: each computes its `lo` and `hi`
-/// endpoints by rounding two *ordered* exact fractions in opposite
-/// directions, and this lemma is what survives the transition from "ordered
-/// inputs" to "ordered rounded outputs" regardless of whether either side
-/// saturates.
+/// This lemma makes `QI::add`, `QI::sub` and, through a single corner,
+/// `QI::mul` produce a well-formed result. Each of them computes its `lo` and
+/// `hi` endpoints by rounding two *ordered* exact fractions in opposite
+/// directions. This lemma carries the transition from ordered inputs to
+/// ordered rounded outputs, whether or not either side saturates.
 ///
-/// The saturated cases lean on I2 alone: every well-formed `Rat` lies in
-/// `[-MAX_MAG, MAX_MAG]`, so a clamped endpoint is automatically on the right
+/// The saturated cases use I2 alone. Every well-formed `Rat` lies in
+/// `[-MAX_MAG, MAX_MAG]`. A clamped endpoint therefore lies on the correct
 /// side of whatever the other endpoint rounds to.
 pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     requires
@@ -572,7 +574,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     let rhi = crate::round::round_frac(n2, d2, Dir::Up);
     crate::round::lemma_round_frac_wf(n1, d1, Dir::Down);
     crate::round::lemma_round_frac_wf(n2, d2, Dir::Up);
-    // I2 alone: every well-formed `Rat` lies in `[-MAX_MAG, MAX_MAG]`.
+    // I2 alone. Every well-formed `Rat` lies in `[-MAX_MAG, MAX_MAG]`.
     assert(rlo.n() <= max_mag() * rlo.d()) by (nonlinear_arith)
         requires
             abs_int(rlo.n()) <= max_mag(),
@@ -591,8 +593,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     } else if crate::round::saturated(n1, d1) {
         assert(n1 != 0 && !magnitude_fits(n1, d1));
         if n1 < 0 {
-            // `rlo` clamps to `-MAX_MAG`, a lower bound on every well-formed
-            // `Rat` — in particular `rhi`.
+            // `rlo` clamps to `-MAX_MAG`. That is a lower bound on every
+            // well-formed `Rat`, and in particular on `rhi`.
             assert(rlo == Rat { num: (-(MAX_MAG as int)) as i64, den: 1 });
             assert(rlo.n() == 0 - max_mag() && rlo.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
@@ -603,9 +605,9 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
                     rhi.d() > 0,
             ;
         } else {
-            // `rlo` clamps to `MAX_MAG`. Since `n1/d1 <= n2/d2` and `n1/d1`
-            // already exceeds `MAX_MAG`, so does `n2/d2` — `n2` saturates the
-            // same way, so `rhi` clamps to the same value.
+            // `rlo` clamps to `MAX_MAG`. `n1/d1 <= n2/d2` holds, and `n1/d1`
+            // exceeds `MAX_MAG`. Thus `n2/d2` exceeds `MAX_MAG` too, `n2`
+            // saturates the same way, and `rhi` clamps to the same value.
             assert(rlo == Rat { num: MAX_MAG, den: 1 });
             assert(n2 > max_mag() * d2) by (nonlinear_arith)
                 requires
@@ -630,8 +632,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
         // `saturated(n2, d2)` and `!saturated(n1, d1)`.
         assert(n2 != 0 && !magnitude_fits(n2, d2));
         if n2 > 0 {
-            // `rhi` clamps to `MAX_MAG`, an upper bound on every well-formed
-            // `Rat` — in particular `rlo`.
+            // `rhi` clamps to `MAX_MAG`. That is an upper bound on every
+            // well-formed `Rat`, and in particular on `rlo`.
             assert(rhi == Rat { num: MAX_MAG, den: 1 });
             assert(rhi.n() == max_mag() && rhi.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
@@ -642,8 +644,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
                     rhi.d() == 1,
             ;
         } else {
-            // `n2 < 0` here would force `n1/d1 <= n2/d2 < -MAX_MAG`, so `n1`
-            // would saturate too — contradicting `!saturated(n1, d1)`.
+            // `n2 < 0` here forces `n1/d1 <= n2/d2 < -MAX_MAG`. Then `n1`
+            // saturates too, which contradicts `!saturated(n1, d1)`.
             assert(n1 < 0 - max_mag() * d1) by (nonlinear_arith)
                 requires
                     n2 < 0 - max_mag() * d2,
@@ -661,9 +663,9 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
 // ---------------------------------------------------------------------------
 
 /// The smaller of the two fractions `n1/d1` and `n2/d2`, as a `(numerator,
-/// denominator)` pair equal to whichever input was smaller (ties keep the
-/// first). Used only to state the multiplication corner rule without
-/// committing to a syntactically fixed winner among the four corners.
+/// denominator)` pair equal to whichever input is smaller. A tie keeps the
+/// first input. This function only states the multiplication corner rule
+/// without committing to a syntactically fixed winner among the four corners.
 pub open spec fn frac_min(n1: int, d1: int, n2: int, d2: int) -> (int, int) {
     if n1 * d2 <= n2 * d1 {
         (n1, d1)
@@ -805,11 +807,11 @@ pub proof fn lemma_frac_max4_ge(n1: int, d1: int, n2: int, d2: int, n3: int, d3:
     lemma_frac_le_trans(n4, d4, m2.0, m2.1, mx, mxd);
 }
 
-/// For `x` between `lo` and `hi`, the exact product `x*c` is bracketed by
-/// `lo*c` and `hi*c` — which one is the lower/upper bound depends on the sign
-/// of `c`. This is the one-variable fact underlying the corner rule: `x*y` is
-/// affine in `x` for fixed `y` (and vice versa), so it is extremal at an
-/// endpoint of whichever variable is held free.
+/// For `x` between `lo` and `hi`, `lo*c` and `hi*c` bracket the exact product
+/// `x*c`. The sign of `c` decides which one is the lower bound and which the
+/// upper bound. This is the one-variable fact under the corner rule. `x*y` is
+/// affine in `x` for fixed `y`, and affine in `y` for fixed `x`. It is
+/// therefore extremal at an endpoint of whichever variable stays free.
 pub proof fn lemma_mul_scale_order(lo: Rat, hi: Rat, x: Rat, c: Rat)
     requires
         lo.wf(),
@@ -876,10 +878,10 @@ pub proof fn lemma_mul_scale_order(lo: Rat, hi: Rat, x: Rat, c: Rat)
 /// One of the four corners is a lower bound on the exact product `x*y`, for
 /// `x` in `a`'s range and `y` in `b`'s range.
 ///
-/// The winning corner is the textbook one: the `a`-endpoint is chosen by the
-/// sign of `y`, then the `b`-endpoint by the sign of that `a`-endpoint — two
-/// applications of [`lemma_mul_scale_order`] chained through
-/// [`lemma_frac_le_trans`].
+/// The winning corner is the textbook one. The sign of `y` selects the
+/// `a`-endpoint. The sign of that `a`-endpoint then selects the `b`-endpoint.
+/// The proof applies [`lemma_mul_scale_order`] twice and chains the results
+/// through [`lemma_frac_le_trans`].
 pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
@@ -987,8 +989,8 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
     }
 }
 
-/// One of the four corners is an upper bound on the exact product `x*y`. The
-/// mirror image of [`lemma_mul_corner_lower`].
+/// One of the four corners is an upper bound on the exact product `x*y`. This
+/// lemma is the mirror image of [`lemma_mul_corner_lower`].
 pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
@@ -1098,12 +1100,12 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
 
 /// **The corner rule.** The exact product `x*y`, for `x` in `a`'s range and
 /// `y` in `b`'s range, lies between the min and the max of the four exact
-/// corner products — for *every* sign pattern, with no case split visible at
-/// this level: [`lemma_mul_corner_lower`] and [`lemma_mul_corner_upper`] each
-/// hand back some corner that brackets `x*y`, and since [`frac_min`]/
-/// [`frac_max`] of all four corners are themselves bounds on every corner
-/// (`lemma_frac_min4_le` / `lemma_frac_max4_ge`), the one handed back is
-/// enough to chain through to the global min/max.
+/// corner products. This holds for *every* sign pattern, and no case split is
+/// visible at this level. [`lemma_mul_corner_lower`] and
+/// [`lemma_mul_corner_upper`] each return some corner that brackets `x*y`.
+/// [`frac_min`] and [`frac_max`] of all four corners are themselves bounds on
+/// every corner (`lemma_frac_min4_le` and `lemma_frac_max4_ge`). The returned
+/// corner therefore chains through to the global min and max.
 pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
@@ -1228,7 +1230,7 @@ pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Rat, y: Rat)
     );
     let (mx, mxd) = frac_max(mx1.0, mx1.1, mx2.0, mx2.1);
     // Chain `mn <= winning_corner <= x*y` and `x*y <= winning_corner <= mx`,
-    // whichever corner each helper handed back.
+    // for whichever corner each helper returns.
     if y.n() >= 0 && a.lo.n() >= 0 {
         lemma_frac_le_trans(mn, md, mul_n(a.lo, b.lo), prod_d(a.lo, b.lo), mul_n(x, y), prod_d(x, y));
     } else if y.n() >= 0 {

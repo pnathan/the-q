@@ -11,16 +11,15 @@
 //! | `Ord` is a total order agreeing with the ghost order | always |
 //! | `-(-a) == a`, `abs(abs(a)) == abs(a)`, `1/(1/a) == a` | always |
 //!
-//! Commutativity survives rounding because both orderings feed *provably equal*
-//! integers into the same rounding function. Associativity does not, and this
-//! crate does not pretend otherwise: rounding the inner sum first can land on a
-//! different grid point than rounding the outer one. That failure is bounded,
-//! though, not just acknowledged: `theorem_add_associativity_bound` and
-//! `theorem_mul_associativity_bound_unit_interval` below turn "not associative"
-//! into "associative up to a proven error". The consuming engine's
-//! order-independence claims therefore hold **exactly** whenever the whole
-//! computation stays inside the budget, and **up to that proven error
-//! bound** otherwise. See `README.md`.
+//! Commutativity survives rounding. Both orderings feed *provably equal*
+//! integers into the same rounding function. Associativity does not survive
+//! rounding. Rounding the inner sum first can land on a different grid point
+//! than rounding the outer one. That failure is bounded.
+//! `theorem_add_associativity_bound` and
+//! `theorem_mul_associativity_bound_unit_interval` below state associativity up
+//! to a proven error. The consuming engine's order-independence claims
+//! therefore hold **exactly** whenever the whole computation stays inside the
+//! budget, and **up to that proven error bound** otherwise. See `README.md`.
 
 use verus_builtin_macros::verus;
 
@@ -78,9 +77,9 @@ pub proof fn lemma_euclid(a: nat, b: nat, c: nat)
 /// **Canonicality.** Two well-formed `Rat` are mathematically equal exactly when
 /// they are structurally equal.
 ///
-/// This is what makes `PartialEq`, `Eq` and `Hash` safe to derive, and what
-/// makes every value have exactly one bit pattern — the property that turns
-/// "deterministic" from a hope into a fact.
+/// This property makes `PartialEq`, `Eq` and `Hash` safe to derive. It also
+/// gives every value exactly one bit pattern. Comparison and hashing are thus
+/// deterministic.
 pub proof fn lemma_canonical_eq(a: Rat, b: Rat)
     requires
         a.wf(),
@@ -92,8 +91,8 @@ pub proof fn lemma_canonical_eq(a: Rat, b: Rat)
         // a.num * b.den == b.num * a.den, with both fractions in lowest terms.
         // a.den divides b.num * a.den, hence divides a.num * b.den; a.den is
         // coprime to a.num, so a.den | b.den. Symmetrically b.den | a.den.
-        // `wf` gives gcd(|num|, den) == 1; Euclid's lemma wants the divisor
-        // first, so flip both with `lemma_gcd_sym`.
+        // `wf` gives gcd(|num|, den) == 1. Euclid's lemma takes the divisor
+        // first, so `lemma_gcd_sym` flips both.
         crate::q::lemma_gcd_sym(abs_int(a.n()) as nat, a.d() as nat);
         crate::q::lemma_gcd_sym(abs_int(b.n()) as nat, b.d() as nat);
         assert(divides(a.d(), a.n() * b.d())) by {
@@ -144,7 +143,7 @@ pub proof fn lemma_canonical_eq(a: Rat, b: Rat)
 }
 
 // ---------------------------------------------------------------------------
-// Commutativity — holds unconditionally, rounding and all
+// Commutativity: holds unconditionally, rounding included
 // ---------------------------------------------------------------------------
 
 /// **`add` is commutative**, bit-for-bit, rounding included.
@@ -179,8 +178,8 @@ pub proof fn theorem_mul_commutative(a: Rat, b: Rat, dir: Dir)
 // ---------------------------------------------------------------------------
 
 /// **The exactness theorem (R1, lifted).** If every exact intermediate of a
-/// computation fits the budget, the computation is end-to-end exact — not
-/// "accurate to within a bound", *exact*.
+/// computation fits the budget, the computation is end-to-end exact. The result
+/// is not merely accurate to within a bound. It is *exact*.
 ///
 /// Stated here for a single operation; [`crate::nary::theorem_exact_fold_is_exact`]
 /// lifts it to folds, and composing the two covers any expression tree.
@@ -279,12 +278,12 @@ pub proof fn lemma_same_value_eq(x: Rat, y: Rat, n: int, d: int)
 /// Take the outer step's cross-multiplication, scale it by `a.d·b.d`,
 /// substitute the inner step, and cancel the positive `ab.d`.
 ///
-/// Two disciplines make this go through, and both were learned the hard way:
-/// a `by (nonlinear_arith)` block sees **only** what its own `requires` lists —
-/// it does not inherit the surrounding context — so every step that combines
-/// earlier facts is a plain `assert`, and only pure ring identities are handed
-/// to the nonlinear tactic. And those identities are kept small by naming
-/// subterms, because a five-variable degree-five goal exhausts the budget.
+/// Two rules make this proof go through. First, a `by (nonlinear_arith)` block
+/// sees only the facts in its own `requires` clause. It does not inherit the
+/// surrounding context. Thus each step that combines earlier facts is a plain
+/// `assert`, and only pure ring identities go to the nonlinear tactic. Second,
+/// named subterms keep those identities small. A goal with five variables and
+/// degree five exhausts the solver budget.
 pub proof fn lemma_left_assoc_value(a: Rat, b: Rat, c: Rat, ab: Rat, left: Rat, sn: int, sd: int)
     requires
         a.wf(),
@@ -342,11 +341,9 @@ pub proof fn lemma_left_assoc_value(a: Rat, b: Rat, c: Rat, ab: Rat, left: Rat, 
 
 /// The right bracketing of `a + b + c` denotes the same common sum.
 ///
-/// The explicit `rlimit` is a pre-existing tuning knob, not new to this
-/// proof: this identity was already at the edge of the default resource
-/// budget (as the sibling lemmas' comments about "exhausts the rlimit" note),
-/// and the file's growth pushed it just over. The statement and proof steps
-/// below are unchanged; only the solver's time budget is raised.
+/// The explicit `rlimit` raises the solver budget for this identity. The
+/// identity is at the edge of the default budget. The sibling lemmas carry the
+/// same note about the rlimit.
 #[verifier::rlimit(20)]
 pub proof fn lemma_right_assoc_value(a: Rat, b: Rat, c: Rat, bc: Rat, right: Rat, sn: int, sd: int)
     requires
@@ -797,8 +794,8 @@ pub proof fn lemma_round_of_wf_is_self(a: Rat, dir: Dir)
 
 /// **`Ord` is a total order** and it agrees with the ghost order.
 ///
-/// Totality is where `Rat` beats `f64` outright: there is no `NaN`, so there is
-/// no incomparable pair, so `PartialOrd` is never `None`.
+/// `Rat` has no `NaN`. There is therefore no incomparable pair, and
+/// `PartialOrd` never returns `None`.
 pub proof fn theorem_order_total(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -836,8 +833,8 @@ pub proof fn theorem_neg_abs_involution(a: Rat)
 {
 }
 
-/// `1/(1/a) == a` for non-zero `a`. Reciprocal is exact in both directions, so
-/// this is a genuine involution — no rounding anywhere.
+/// `1/(1/a) == a` for non-zero `a`. Reciprocal is exact in both directions.
+/// This is thus a genuine involution, with no rounding at any step.
 pub proof fn theorem_recip_involution(a: Rat, r: Rat, rr: Rat)
     requires
         a.wf(),
@@ -907,20 +904,21 @@ pub proof fn theorem_div_is_mul_recip(a: Rat, b: Rat, rb: Rat)
 // ---------------------------------------------------------------------------
 // Associativity up to a proven error bound
 //
-// `theorem_add_associative_exact` above is the honest statement on the exact
-// path. This section answers the harder question the README leaves open:
-// when rounding *does* bite, how far apart can `(a+b)+c` and `a+(b+c)` get?
+// `theorem_add_associative_exact` above states the exact-path case. This
+// section bounds the distance between `(a+b)+c` and `a+(b+c)` when rounding
+// occurs.
 //
 // Both bracketings round the *same* exact value `a+b+c` through two rounding
-// steps apiece. Each step costs at most one R3 unit against whatever it was
-// fed, and error propagates through exact addition untouched (the same fact
-// `crate::lipschitz::lemma_abs_error_step` uses for the V8 fold bound), so the
-// two 2-unit paths are at most `4` units apart by the triangle inequality.
+// steps apiece. Each step costs at most one R3 unit against its own input.
+// Error propagates through exact addition unchanged. This is the fact
+// `crate::lipschitz::lemma_abs_error_step` uses for the V8 fold bound. The two
+// 2-unit paths are therefore at most `4` units apart, by the triangle
+// inequality.
 // ---------------------------------------------------------------------------
 
 /// A value equal to itself carries zero accumulated error against any budget.
-/// The base case every chain below starts from — `a` is not the output of any
-/// rounding, so it is a perfect approximation of itself.
+/// Every chain below starts from this base case. A value `a` is not the output
+/// of any rounding, and is thus a perfect approximation of itself.
 pub proof fn lemma_self_zero_error(x: Rat, m: int)
     requires
         x.wf(),
@@ -931,9 +929,9 @@ pub proof fn lemma_self_zero_error(x: Rat, m: int)
     assert(abs_int(0) == 0);
 }
 
-/// `|x| == |-x|`, spelled out for [`abs_int`] specifically because it is
-/// defined by a sign case split rather than by a property Verus's nonlinear
-/// tactic picks up on its own.
+/// `|x| == |-x|`, stated for [`abs_int`] specifically. [`abs_int`] is defined
+/// by a sign case split. Verus's nonlinear tactic does not derive this fact on
+/// its own.
 pub proof fn lemma_abs_int_neg(x: int)
     ensures
         abs_int(-x) == abs_int(x),
@@ -942,9 +940,9 @@ pub proof fn lemma_abs_int_neg(x: int)
 
 /// The ring identity underlying both bracketings of `a + b + c`: combining
 /// `a, b` first and then folding in `c` reaches the same numerator/denominator
-/// pair (up to the obvious reassociation) as combining `b, c` first and
-/// folding in `a`. Neither side needs to be exact — this is pure algebra on
-/// the *exact* numerators and denominators the two additions would compute.
+/// pair (up to reassociation) as combining `b, c` first and folding in `a`.
+/// Neither side has to be exact. This is pure algebra on the *exact* numerators
+/// and denominators that the two additions compute.
 pub proof fn lemma_sum3_ring(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -968,7 +966,7 @@ pub proof fn lemma_sum3_ring(a: Rat, b: Rat, c: Rat)
     assert(add_n(b, c) == bn * cd + cn * bd);
     assert(prod_d(b, c) == bd * cd);
     // The two three-monomial expansions match term for term, up to
-    // reassociation — a single ring identity over six named atoms.
+    // reassociation. This is a single ring identity over six named atoms.
     assert((an * bd + bn * ad) * cd + cn * (ad * bd) == (bn * cd + cn * bd) * ad + an * (bd * cd))
         by (nonlinear_arith);
     assert(ad * bd * cd == bd * cd * ad) by (nonlinear_arith);
@@ -976,27 +974,23 @@ pub proof fn lemma_sum3_ring(a: Rat, b: Rat, c: Rat)
 
 /// **Associativity up to a proven error, for `add`.**
 ///
-/// `(a+b)+c` and `a+(b+c)` are both rounded approximations of the same exact
-/// value `a + b + c`, each reached by exactly two rounding steps. By R3, each
-/// step contributes at most one unit of `2^-61 · m` error against whatever it
-/// was fed, where `m` bounds the magnitude of that step's exact input; the
-/// error already carried passes through exact addition untouched, because
-/// addition is exactly 1-Lipschitz. That makes each bracketing land within
-/// `2` units of the true sum, and the triangle inequality bounds their
-/// mutual distance by `4` units:
+/// `(a+b)+c` and `a+(b+c)` are rounded approximations of the same exact value
+/// `a + b + c`. Each bracketing does exactly two rounding steps. By R3, each
+/// step adds at most one unit of `2^-61 · m` error to its own input, where `m`
+/// bounds the magnitude of that input. Addition is exactly 1-Lipschitz, so an
+/// error that is already present passes through the exact addition unchanged.
+/// Each bracketing is thus within `2` units of the true sum. The triangle
+/// inequality bounds the distance between the two bracketings by `4` units:
 ///
 /// `|((a+b)+c) - (a+(b+c))| <= 4 · 2^-61 · m`.
 ///
-/// The hypotheses are exactly the per-step non-saturation and magnitude
-/// bounds R3 needs, for all four additions the two bracketings perform —
-/// the same shape [`crate::nary::fold_bounded`] uses for the V8 sum bound,
-/// specialised to a tree of depth two instead of a left fold. No `[0, 1]`
-/// assumption is required: `m` is a free parameter, chosen by the caller to
-/// fit whatever domain it works in. (In the consuming engine's domain,
-/// opinion components live in `[0, 1]`, partial sums of up to three of them
-/// fit comfortably under `m == 3`, giving a defect of at most
-/// `12 · 2^-61 ≈ 5.2 · 10^-18` — far below the unit of least precision that
-/// matters to a subjective-logic fusion.)
+/// The hypotheses are the per-step non-saturation and magnitude bounds that R3
+/// needs, for all four additions in the two bracketings. This is the shape that
+/// [`crate::nary::fold_bounded`] uses for the V8 sum bound, applied to a tree of
+/// depth two instead of a left fold. The bound needs no `[0, 1]` hypothesis.
+/// The caller selects `m` to fit its own domain. For example, opinion
+/// components are in `[0, 1]`, and partial sums of three of them stay below
+/// `m == 3`. The defect is then at most `12 · 2^-61 ≈ 5.2 · 10^-18`.
 pub proof fn theorem_add_associativity_bound(a: Rat, b: Rat, c: Rat, dir: Dir, m: int)
     requires
         a.wf(),
@@ -1051,10 +1045,9 @@ pub proof fn theorem_add_associativity_bound(a: Rat, b: Rat, c: Rat, dir: Dir, m
     let sd = prod_d(a, b) * c.d();
     assert(within_abs_error(left, sn, sd, 2, m));
 
-    // --- right bracketing: b (0 units) -> bc (1 unit) -> right (2 units),
-    // reached by folding `a` into `bc` on the right, using that `add_n` and
-    // `prod_d` are already symmetric formulas to identify the result with
-    // `right`. ---
+    // --- right bracketing: b (0 units) -> bc (1 unit) -> right (2 units).
+    // The step folds `a` into `bc` on the right. `add_n` and `prod_d` are
+    // symmetric formulas, which identifies the result with `right`. ---
     lemma_self_zero_error(b, m);
     crate::round::lemma_r3_error(add_n(b, c), prod_d(b, c), dir);
     crate::lipschitz::lemma_abs_error_step(b, b.n(), b.d(), c, bc, 0, m);
@@ -1106,18 +1099,17 @@ pub proof fn theorem_add_associativity_bound(a: Rat, b: Rat, c: Rat, dir: Dir, m
 // ---------------------------------------------------------------------------
 // Associativity up to a proven error, for `mul`
 //
-// `mul`'s error does not accumulate the same way `add`'s does. Addition's
-// Lipschitz constant is exactly `1` in each argument, so magnitude bounds on
-// the *sums* were all `theorem_add_associativity_bound` needed. Multiplication
-// scales an existing error by the *other* factor's magnitude
-// (`crate::lipschitz::lemma_mul_lipschitz`), so a general bound would need a
-// magnitude parameter for both the products *and* the individual factors, and
-// the defect would grow with the square of that bound rather than linearly.
+// `mul` accumulates error differently from `add`. Addition has a Lipschitz
+// constant of exactly `1` in each argument. Thus magnitude bounds on the sums
+// are sufficient for `theorem_add_associativity_bound`. Multiplication scales
+// an existing error by the magnitude of the other factor
+// (`crate::lipschitz::lemma_mul_lipschitz`). A general bound thus needs a
+// magnitude parameter for the products and for the individual factors, and the
+// defect grows with the square of that bound.
 //
-// The consuming engine's actual domain sidesteps this: opinion components live
-// in `[0, 1]`, and on `[0, 1]` every relevant magnitude is at most `1` (or, for
-// a once-rounded intermediate, boundedly close to it), which is exactly the
-// hypothesis this section proves the bound under.
+// On `[0, 1]` this effect disappears. Every relevant magnitude is at most `1`,
+// or is close to `1` for a once-rounded intermediate. This section proves the
+// bound under that hypothesis.
 // ---------------------------------------------------------------------------
 
 /// A cross-multiplied inequality survives cancelling a shared positive factor.
@@ -1135,8 +1127,9 @@ pub proof fn lemma_cancel_pos_le(x: int, y: int, c: int)
     ;
 }
 
-/// `|x·y| == |x|·y` for `y >= 0` — [`crate::model::lemma_abs_mul_pos`] widened
-/// to cover the `y == 0` edge, which that lemma's strict `c > 0` excludes.
+/// `|x·y| == |x|·y` for `y >= 0`. This lemma widens
+/// [`crate::model::lemma_abs_mul_pos`] to cover the `y == 0` edge, which that
+/// lemma's strict `c > 0` excludes.
 pub proof fn lemma_abs_mul_nonneg(x: int, y: int)
     requires
         y >= 0,
@@ -1275,10 +1268,10 @@ pub proof fn lemma_rounded_product_bound(a: Rat, b: Rat, dir: Dir)
     assert(abs_int(ab.n()) <= 2 * ab.d());
 }
 
-/// Scaling a bounded rational error by a `[0, 1]` value cannot make it worse:
-/// if `|X - Y| <= e/ed` and `0 <= C <= 1`, then `|X·C - Y·C| <= e/ed` too,
-/// stated division-free with both fractions scaled by `C`'s numerator and
-/// denominator.
+/// Scaling a bounded rational error by a `[0, 1]` value does not increase it.
+/// If `|X - Y| <= e/ed` and `0 <= C <= 1`, then `|X·C - Y·C| <= e/ed` as well.
+/// The statement is division-free. Both fractions carry a scaling by `C`'s
+/// numerator and denominator.
 pub proof fn lemma_frac_scale_nonneg(xn: int, xd: int, yn: int, yd: int, cn: int, cd: int, e: int, ed: int)
     requires
         xd > 0,
@@ -1293,9 +1286,9 @@ pub proof fn lemma_frac_scale_nonneg(xn: int, xd: int, yn: int, yd: int, cn: int
 {
     let diffx = xn * yd - yn * xd;
     let k = cn * cd;
-    // Split into three small ring steps — bundling the reassociation and the
-    // distribution over the difference into one call is a degree-4 identity
-    // over six atoms, past what `nonlinear_arith` reliably closes in one bite.
+    // The proof splits into three small ring steps. One call that bundles the
+    // reassociation and the distribution over the difference is a degree-4
+    // identity over six atoms. `nonlinear_arith` does not close that reliably.
     assert((xn * cn) * (yd * cd) == k * (xn * yd)) by (nonlinear_arith)
         requires
             k == cn * cd,
@@ -1351,8 +1344,9 @@ pub proof fn lemma_frac_scale_nonneg(xn: int, xd: int, yn: int, yd: int, cn: int
 }
 
 /// If `x`'s numerator is within `k` denominator-widths of zero and `y` is a
-/// `[0, 1]` value, the exact product `x·y` is within `k` widths of zero too —
-/// the magnitude bound R3 needs for a second rounding step on top of `x`.
+/// `[0, 1]` value, the exact product `x·y` is within `k` widths of zero as
+/// well. R3 needs this magnitude bound for a second rounding step on top of
+/// `x`.
 pub proof fn lemma_prod_magnitude_bound(x: Rat, y: Rat, k: int)
     requires
         x.wf(),
@@ -1429,26 +1423,26 @@ pub proof fn lemma_mul3_ring(a: Rat, b: Rat, c: Rat)
 /// **Associativity up to a proven error, for `mul`, on `[0, 1]`.**
 ///
 /// `(a·b)·c` and `a·(b·c)` are both rounded approximations of the same exact
-/// product `a·b·c`. Each bracketing costs two things: the R3 error of its own
-/// final rounding step (at most `2` units, because a once-rounded `[0, 1]`
-/// product can have magnitude up to `2`, not `1`), and the error already
-/// carried by its first rounding step, scaled by the *other*, exact factor —
-/// which is at most `1` unit, because that factor is itself in `[0, 1]`
-/// (`crate::lipschitz::lemma_mul_lipschitz`'s bounded-domain case, specialised
-/// to a coefficient of exactly `1`). That puts each bracketing within `3`
-/// units of the exact product, and the triangle inequality bounds their
-/// mutual distance by `6`:
+/// product `a·b·c`. Each bracketing costs two things. The first cost is the R3
+/// error of its own final rounding step. That cost is at most `2` units,
+/// because a once-rounded `[0, 1]` product can have magnitude up to `2`, not
+/// `1`. The second cost is the error already carried by the first rounding
+/// step, scaled by the *other*, exact factor. That cost is at most `1` unit,
+/// because that factor is itself in `[0, 1]`. This is the bounded-domain case
+/// of `crate::lipschitz::lemma_mul_lipschitz`, with a coefficient of exactly
+/// `1`. Each bracketing is thus within `3` units of the exact product. The
+/// triangle inequality bounds their mutual distance by `6`:
 ///
 /// `|((a·b)·c) - (a·(b·c))| <= 6 · 2^-61 ≈ 2.6 · 10^-18`.
 ///
-/// This is the `[0, 1]`-domain case the module doc promises in place of a
-/// fully general, magnitude-parameterised bound: unlike `add`, `mul`'s error
-/// does not simply add across steps — it is weighted by the *other* factor's
-/// magnitude at each step, so a general bound would grow with the *square* of
-/// a free magnitude parameter `m`, not linearly in it. On the engine's actual
-/// domain that magnitude is always `1`, so the distinction is invisible here,
-/// but it is the reason this theorem is stated for `[0, 1]` rather than for
-/// an arbitrary `m` the way [`theorem_add_associativity_bound`] is.
+/// This theorem covers the `[0, 1]` domain, in place of a fully general,
+/// magnitude-parameterised bound. Unlike `add`, `mul` does not simply add its
+/// error across steps. Each step weights the error by the *other* factor's
+/// magnitude. A general bound would therefore grow with the *square* of a free
+/// magnitude parameter `m`, not linearly in it. On the engine's domain that
+/// magnitude is always `1`, so the distinction has no effect there. It is the
+/// reason this theorem holds for `[0, 1]` rather than for an arbitrary `m`, as
+/// [`theorem_add_associativity_bound`] does.
 pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Rat, dir: Dir)
     requires
         a.wf(),
@@ -1505,7 +1499,7 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Ra
     ;
 
     // --- left: ab (1 unit) scaled by the exact, unrounded c, then left's own
-    // R3 step (2 units against a magnitude-2 target) ---
+    // R3 step (2 units against a magnitude-2 target). ---
     lemma_frac_scale_nonneg(ab.n(), ab.d(), mul_n(a, b), prod_d(a, b), c.n(), c.d(), 1, pow2(
         precision_b(),
     ));
@@ -1520,9 +1514,9 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Ra
 
     lemma_prod_magnitude_bound(ab, c, 2);
     crate::round::lemma_r3_error(mul_n(ab, c), prod_d(ab, c), dir);
-    // within_error_bound gives `left.d() * max_int(...)`; the magnitude bound
-    // gives `max_int(...) <= 2 * prod_d(ab,c)`, and it takes one reordering
-    // step to see that as `2 * (left.d() * prod_d(ab,c))`.
+    // within_error_bound gives `left.d() * max_int(...)`. The magnitude bound
+    // gives `max_int(...) <= 2 * prod_d(ab,c)`. One reordering step turns that
+    // into `2 * (left.d() * prod_d(ab,c))`.
     assert(left.d() * (2 * prod_d(ab, c)) == 2 * (left.d() * prod_d(ab, c))) by (nonlinear_arith);
     assert(abs_int(left.n() * prod_d(ab, c) - mul_n(ab, c) * left.d()) * pow2(precision_b())
         <= left.d() * max_int(prod_d(ab, c), abs_int(mul_n(ab, c))));
@@ -1550,8 +1544,9 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Ra
     assert(within_abs_error(left, pn, pd, 3, 1));
 
     // --- right: bc (1 unit) scaled by the exact, unrounded a, then right's
-    // own R3 step, reached through `bc·a` and identified with `right` via the
-    // same symmetric-formula trick `theorem_add_associativity_bound` uses ---
+    // own R3 step. The step goes through `bc·a`. The symmetric formulas
+    // identify the result with `right`, as in
+    // `theorem_add_associativity_bound`. ---
     lemma_frac_scale_nonneg(bc.n(), bc.d(), mul_n(b, c), prod_d(b, c), a.n(), a.d(), 1, pow2(
         precision_b(),
     ));
@@ -1632,25 +1627,24 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Ra
 // ---------------------------------------------------------------------------
 // Order compatibility: the ordered-field laws
 //
-// `theorem_order_total` above says `q_le` is a total order; this section says
-// the order is compatible with the arithmetic — negation reverses it, addition
-// and multiplication by a non-negative value preserve it, squares sit above
-// zero, and reciprocal reverses it on positives. These are the axioms of an
-// ordered field, stated on the exact fractions the operations compute before
-// rounding, and they are what downstream monotonicity arguments ("a larger
-// input cannot decrease this sum") bottom out in.
+// `theorem_order_total` above states that `q_le` is a total order. This section
+// states that the order is compatible with the arithmetic. Negation reverses
+// the order. Addition and multiplication by a non-negative value preserve it.
+// Squares sit above zero. Reciprocal reverses the order on positives. These are
+// the axioms of an ordered field, stated on the exact fractions the operations
+// compute before rounding. Downstream monotonicity arguments, such as "a larger
+// input cannot decrease this sum", rest on them.
 // ---------------------------------------------------------------------------
 
 /// **Negation reverses the order** (and stays inside the type): the
 /// numerator-negated mirror of a well-formed `Rat` is well-formed, and
 /// `a <= b` holds exactly when `-b <= -a`.
 ///
-/// The `wf` half is what lets ghost code build negations at all — canonicality
-/// and the budget are both invariant under flipping the numerator's sign. The
-/// antitonicity half is the ordered-group law `Rat::neg` relies on but nothing
-/// previously stated: it is what turns every lower-bound fact into an
-/// upper-bound fact about the negation, e.g. a proven `min` bound into a `max`
-/// bound for negated data.
+/// The `wf` half lets ghost code build negations. Canonicality and the budget
+/// are invariant under a change of sign of the numerator. The antitonicity half
+/// is the ordered-group law that `Rat::neg` relies on. It turns a lower-bound
+/// fact into an upper-bound fact about the negation. For example, it turns a
+/// proven `min` bound into a `max` bound for negated data.
 pub proof fn theorem_neg_antitone(a: Rat, b: Rat)
     requires
         a.wf(),
@@ -1677,14 +1671,13 @@ pub proof fn theorem_neg_antitone(a: Rat, b: Rat)
 /// **`abs` is the join of `a` and `-a`**: it dominates both, and anything that
 /// dominates both dominates it.
 ///
-/// The two upper-bound clauses plus the minimality clause pin `|a|` uniquely
-/// up to `q_eq` (hence, by canonicality, uniquely) — this is the
-/// specification-pinning discipline applied to `abs`: "non-negative and equal
-/// to `a` or `-a`" would already fail to be satisfiable by anything else, but
-/// the join characterisation is the form order reasoning consumes, e.g.
-/// `|a| <= m` from the two one-sided bounds `-m <= a <= m`. The evenness
-/// clause (`|-a| == |a|`, bit for bit) completes what
-/// [`theorem_neg_abs_involution`]'s doc comment promises but its statement
+/// The two upper-bound clauses and the minimality clause pin `|a|` uniquely up
+/// to `q_eq`, and thus, by canonicality, uniquely. The alternative
+/// specification "non-negative and equal to `a` or `-a`" also admits no other
+/// value. The join characterisation, however, is the form that order reasoning
+/// uses. For example, it gives `|a| <= m` from the two one-sided bounds
+/// `-m <= a <= m`. The evenness clause (`|-a| == |a|`, bit for bit) states what
+/// [`theorem_neg_abs_involution`]'s doc comment describes but its own statement
 /// omits.
 pub proof fn theorem_abs_is_join(a: Rat, b: Rat)
     requires
@@ -1729,10 +1722,9 @@ pub proof fn theorem_abs_is_join(a: Rat, b: Rat)
 /// `(a + c) <= (b + c)` as cross-multiplied exact sums.
 ///
 /// This is the translation-invariance axiom of an ordered group. It concerns
-/// three independent values — the conclusion compares six-term products the
-/// hypothesis never mentions — and holds with no exactness or budget
-/// hypothesis at all, because it is a fact about the mathematical sums, prior
-/// to any rounding.
+/// three independent values. The conclusion compares six-term products that the
+/// hypothesis does not mention. It needs no exactness or budget hypothesis,
+/// because it states a fact about the mathematical sums, prior to any rounding.
 pub proof fn theorem_add_monotone_exact(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -1762,7 +1754,7 @@ pub proof fn theorem_add_monotone_exact(a: Rat, b: Rat, c: Rat)
             s > 0,
     ;
     // Unfold the operation specs to plain arithmetic before any nonlinear
-    // step — the tactic sees function applications as opaque terms.
+    // step. The tactic sees function applications as opaque terms.
     assert(add_n(a, c) == an * cd + cn * ad);
     assert(prod_d(b, c) == bd * cd);
     assert(add_n(b, c) == bn * cd + cn * bd);
@@ -1797,10 +1789,10 @@ pub proof fn theorem_add_monotone_exact(a: Rat, b: Rat, c: Rat)
 /// **Multiplying both sides by a non-negative value preserves the order**,
 /// stated on the exact fractions `mul` computes.
 ///
-/// The other half of ordered-field compatibility, and the non-negativity
-/// hypothesis is exactly the honest one: for `c < 0` the conclusion is false
-/// (the order flips, by [`theorem_neg_antitone`] composed with this theorem),
-/// so no stronger statement exists to make.
+/// This is the other half of ordered-field compatibility. The non-negativity
+/// hypothesis is necessary. For `c < 0` the conclusion is false, because the
+/// order flips. [`theorem_neg_antitone`] composed with this theorem gives that
+/// case.
 pub proof fn theorem_mul_monotone_nonneg_exact(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -1846,11 +1838,11 @@ pub proof fn theorem_mul_monotone_nonneg_exact(a: Rat, b: Rat, c: Rat)
 /// **Squares are non-negative, and vanish only at zero**: the exact square
 /// `a · a` has a non-negative numerator, zero exactly when `a` is zero.
 ///
-/// The remaining ordered-field axiom after translation and scaling
-/// compatibility. The "only at zero" half is the field-theoretic content — a
-/// nonzero element's square is strictly positive, which is what makes
-/// sum-of-squares magnitudes (`hypot`'s `x·x + y·y`) definite rather than
-/// merely non-negative.
+/// This is the remaining ordered-field axiom after translation and scaling
+/// compatibility. The "only at zero" half carries the field-theoretic content.
+/// The square of a nonzero element is strictly positive. Sum-of-squares
+/// magnitudes, such as `hypot`'s `x·x + y·y`, are therefore definite rather
+/// than merely non-negative.
 pub proof fn theorem_square_sign(a: Rat)
     requires
         a.wf(),
@@ -1873,14 +1865,13 @@ pub proof fn theorem_square_sign(a: Rat)
 }
 
 /// **Reciprocal reverses the order on positives**: for `0 < a <= b`,
-/// `1/b <= 1/a` — and both reciprocals are themselves positive.
+/// `1/b <= 1/a`. Both reciprocals are themselves positive.
 ///
-/// Stated through [`q_is_recip`], the same division-free relation
-/// [`theorem_recip_involution`] uses, so it applies to the actual output of
-/// `Rat::recip`. This is the monotonicity fact division-based bounds reduce
-/// to — "a larger denominator gives a smaller quotient" — and it is genuinely
-/// conditional: on mixed signs the conclusion is false, so the positivity
-/// hypotheses are load-bearing, not decorative.
+/// The statement uses [`q_is_recip`], the division-free relation that
+/// [`theorem_recip_involution`] also uses. It therefore applies to the output of
+/// `Rat::recip`. Division-based bounds reduce to this monotonicity fact: a
+/// larger denominator gives a smaller quotient. The positivity hypotheses are
+/// necessary. On mixed signs the conclusion is false.
 pub proof fn theorem_recip_antitone(a: Rat, b: Rat, ra: Rat, rb: Rat)
     requires
         a.wf(),
@@ -1926,9 +1917,9 @@ pub proof fn theorem_recip_antitone(a: Rat, b: Rat, ra: Rat, rb: Rat)
             rb.d() > 0,
     ;
     // Scale the goal by the positive p == a.n·b.n and substitute both
-    // reciprocal relations; what remains is the hypothesis a <= b scaled by
+    // reciprocal relations. What remains is the hypothesis a <= b, scaled by
     // the positive ra.d·rb.d. Each step is a small ring identity or a
-    // congruence, in the file's usual style.
+    // congruence.
     assert((rb.n() * ra.d()) * p == (rb.n() * b.n()) * (a.n() * ra.d())) by (nonlinear_arith)
         requires
             p == a.n() * b.n(),

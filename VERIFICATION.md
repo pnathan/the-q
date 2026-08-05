@@ -6,14 +6,13 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  819 verified, 0 errors     <- the-q
+verification results::  871 verified, 0 errors     <- the-q
 ```
 
-That second line is the number that matters, and it is the one to quote. Do not
-count `error:` lines in the log: Verus prints callee context lines that also
-start with `error`, so grepping inflates the total by roughly half. (I did
-exactly that for several rounds and reported numbers 60–80% too high. The
-authoritative figure is the `verification results` line.)
+That second line is the number to quote. Do not count `error:` lines in the log:
+Verus prints callee context lines that also start with `error`, thus a grep
+inflates the total by approximately half. The authoritative figure is the
+`verification results` line.
 
 The `verus verify` job is a **required** CI check.
 
@@ -38,7 +37,8 @@ The trajectory, one row per CI round:
 | `6c73847` (`main`) | 443 | 0 |
 | `5edea2e` (five merged lines of work) | 665 | 0 |
 | `b27d913` (ingestion contracts, #9) | 691 | 0 |
-| this branch (extended `Q`, #26 stages 1–5) | **819** | **0** |
+| `#27` branch, pre-merge (extended `Q`, #26 stages 1–5) | 819 | 0 |
+| `a19f07e` (`main`, after that merge) | **871** | **0** |
 
 Verified conditions rose monotonically. The error count did not, and both
 directions had honest causes: it rose when a fixed well-formedness failure

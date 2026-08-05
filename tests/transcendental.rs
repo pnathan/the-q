@@ -1,19 +1,20 @@
-//! Root and transcendental functions: accuracy against an exact oracle, and
-//! totality over every state.
+//! Root and transcendental functions. These tests check accuracy against an
+//! exact oracle, and totality over every state.
 //!
-//! These functions have no exact rational answer, so the checks are of two
-//! kinds. **Accuracy** is measured by inverting the function exactly — `sqrt`'s
-//! result is squared and compared to the input, `exp`'s is checked against a
-//! series computed at far higher precision — so the oracle never needs to
-//! compute an irrational value it cannot represent. **Totality** is checked by
-//! sweeping every state and every awkward input and asserting only that a value
-//! comes back well-formed and classified, never a panic.
+//! These functions have no exact rational answer. The checks are therefore of
+//! two kinds. **Accuracy** comes from inverting the function exactly. The test
+//! squares `sqrt`'s result and compares it to the input. The test checks
+//! `exp`'s result against a series computed at far higher precision. The oracle
+//! thus never computes an irrational value it cannot represent. **Totality**
+//! comes from sweeping every state and every awkward input. Those checks assert
+//! only that a well-formed and classified value comes back, and that no call
+//! panics.
 
 mod common;
 
-use common::{rat, zero as oracle_zero, Rng};
+use common::{Rng, rat, zero as oracle_zero};
 use malachite_q::Rational;
-use the_q::{Rat, MAX_MAG, Q};
+use the_q::{MAX_MAG, Q, Rat};
 
 fn one() -> Rational {
     Rational::from_signeds(1i128, 1i128)
@@ -27,28 +28,24 @@ fn mag(r: &Rational) -> Rational {
     }
 }
 
-/// Relative error of `got` against `want`, as an exact rational.
+/// Returns the relative error of `got` against `want`, as an exact rational.
 fn rel_err(got: &Rational, want: &Rational) -> Rational {
     let d = mag(&(got.clone() - want.clone()));
     let scale = {
         let m = mag(want);
-        if m > one() {
-            m
-        } else {
-            one()
-        }
+        if m > one() { m } else { one() }
     };
     d / scale
 }
 
-/// `2^-k` as an exact rational, for stating tolerances.
+/// Returns `2^-k` as an exact rational. Tolerances use this function.
 fn eps(k: u32) -> Rational {
     Rational::from_signeds(1i128, 1i128 << k)
 }
 
-/// The largest `k` with `e <= 2^-k`, i.e. how many bits of precision a worst
-/// observed relative error corresponds to. Printing the raw rational is
-/// useless — these have hundreds of digits.
+/// Returns the largest `k` with `e <= 2^-k`. That value is the number of bits
+/// of precision that a worst observed relative error corresponds to. The raw
+/// rational has hundreds of digits, so printing it gives no useful information.
 fn precision_bits(e: &Rational) -> u32 {
     let mut k = 0u32;
     while k < 62 && *e <= eps(k + 1) {
@@ -75,8 +72,8 @@ fn states() -> Vec<Q> {
     v
 }
 
-/// Every result must be well-formed and in exactly one class. This is the
-/// no-panic, no-malformed-value guarantee, checked on the artifact.
+/// Asserts that a result is well-formed and in exactly one class. This checks
+/// the no-panic and no-malformed-value guarantee on the artifact.
 fn assert_total(q: Q, what: &str) {
     if let Q::Number(x) = q {
         common::assert_wf(x, what);
@@ -98,8 +95,8 @@ fn sqrt_matches_the_derived_special_table() {
     assert_eq!(Q::NegInf.sqrt(), Q::Nan, "no real root of -inf");
     assert_eq!(Q::Nan.sqrt(), Q::Nan);
     assert_eq!(Q::NegSat.sqrt(), Q::Nan, "negative");
-    // The one that surprises people: sqrt of (MAX_MAG, inf) is (2^31, inf),
-    // which reaches far below MAX_MAG, so no saturation state is sound.
+    // The sqrt of (MAX_MAG, inf) is (2^31, inf). That interval reaches far
+    // below MAX_MAG. Therefore no saturation state is sound.
     assert_eq!(
         Q::PosSat.sqrt(),
         Q::Nan,
@@ -120,7 +117,7 @@ fn sqrt_is_exact_on_perfect_squares() {
             k * k
         );
     }
-    // Perfect squares of rationals too.
+    // Perfect squares of rationals are also exact.
     assert_eq!(
         Q::Number(Rat::new(9, 16).unwrap()).sqrt(),
         Q::Number(Rat::new(3, 4).unwrap())
@@ -129,8 +126,8 @@ fn sqrt_is_exact_on_perfect_squares() {
 
 #[test]
 fn sqrt_squared_recovers_the_input() {
-    // The accuracy check that needs no irrational oracle: square the result and
-    // compare against the input exactly.
+    // This accuracy check needs no irrational oracle. It squares the result and
+    // compares it against the input exactly.
     let mut rng = Rng::new(0x5EED_0001);
     let mut worst = oracle_zero();
     for _ in 0..20_000 {
@@ -162,7 +159,8 @@ fn sqrt_squared_recovers_the_input() {
 
 #[test]
 fn sqrt_is_accurate_in_the_unit_interval() {
-    // The crate's actual working domain, where accuracy matters most.
+    // The unit interval is the crate's working domain. Accuracy matters most
+    // there.
     let mut rng = Rng::new(0x5EED_0002);
     for _ in 0..20_000 {
         let x = rng.q_unit();
@@ -190,7 +188,8 @@ fn sqrt_is_monotone() {
         let (lo, hi) = if Rat::le(a, b) { (a, b) } else { (b, a) };
         let (sl, sh) = (Q::Number(lo).sqrt(), Q::Number(hi).sqrt());
         if let (Q::Number(x), Q::Number(y)) = (sl, sh) {
-            // Allow the rounding slack: monotone up to the grid.
+            // The bound allows rounding slack. Monotonicity holds up to the
+            // grid.
             let slack = eps(40);
             assert!(
                 rat(x) <= rat(y) + slack,
@@ -216,7 +215,8 @@ fn sqrt_is_total_and_never_panics() {
 #[test]
 fn isqrt_is_correct() {
     use the_q::transcendental::isqrt_i64;
-    // Exhaustive over a dense low range, then the boundaries.
+    // The test is exhaustive over a dense low range. It then covers the
+    // boundaries.
     for n in 0i64..10_000 {
         let r = isqrt_i64(n);
         assert!(r * r <= n, "isqrt({n}) = {r} is too large");
@@ -255,9 +255,10 @@ fn isqrt_is_correct() {
 // exp
 // ===========================================================================
 
-/// `exp(x)` to far higher precision than the crate can represent, by summing
-/// the Maclaurin series over exact rationals until the term is below `2^-90`.
-/// Independent of the implementation: no range reduction, no fixed term count.
+/// Returns `exp(x)` to far higher precision than the crate can represent. It
+/// sums the Maclaurin series over exact rationals until the term is below
+/// `2^-90`. It is independent of the implementation. It uses no range reduction
+/// and no fixed term count.
 fn oracle_exp(x: &Rational) -> Rational {
     let mut term = one();
     let mut sum = one();
@@ -277,11 +278,11 @@ fn exp_matches_the_derived_special_table() {
     assert_eq!(Q::PosInf.exp(), Q::PosInf);
     assert_eq!(Q::NegInf.exp(), Q::zero(), "exp(-inf) is exactly 0");
     assert_eq!(Q::Nan.exp(), Q::Nan);
-    // exp of (MAX_MAG, inf) is (exp(MAX_MAG), inf), astronomically inside
-    // PosSat's denotation.
+    // The exp of (MAX_MAG, inf) is (exp(MAX_MAG), inf). That interval lies far
+    // inside PosSat's denotation.
     assert_eq!(Q::PosSat.exp(), Q::PosSat);
-    // But exp of (-inf, -MAX_MAG) is (0, exp(-MAX_MAG)) — an interval that does
-    // NOT contain zero, so Number(0) would be an unsound denotation.
+    // The exp of (-inf, -MAX_MAG) is (0, exp(-MAX_MAG)). That interval does NOT
+    // contain zero. Therefore Number(0) is an unsound denotation.
     assert_eq!(
         Q::NegSat.exp(),
         Q::Nan,
@@ -296,8 +297,8 @@ fn exp_is_accurate_against_a_high_precision_series() {
     let mut worst = oracle_zero();
     let mut worst_at = oracle_zero();
     for _ in 0..600 {
-        // Arguments across the whole usable range, including the large ones
-        // where range reduction and squaring do the most work.
+        // The arguments span the whole usable range. This includes the large
+        // arguments, where range reduction and squaring do the most work.
         let x = rng.q_unit();
         let scale = (rng.below(80) as i64) - 40;
         let arg = Rat::new(scale, 1).unwrap();
@@ -317,7 +318,7 @@ fn exp_is_accurate_against_a_high_precision_series() {
                 );
             }
             other => {
-                // Only legitimate near the ends of the range.
+                // A non-Number result is valid only near the ends of the range.
                 assert!(
                     rat(xv) > Rational::from_signeds(40i128, 1i128)
                         || rat(xv) < Rational::from_signeds(-40i128, 1i128),
@@ -334,8 +335,8 @@ fn exp_is_accurate_against_a_high_precision_series() {
 
 #[test]
 fn exp_is_very_accurate_on_small_arguments() {
-    // No range reduction happens for |x| <= 1/2, so no squaring amplifies the
-    // error, and the result should be near the grid resolution.
+    // No range reduction happens for |x| <= 1/2. No squaring therefore
+    // amplifies the error. The result stays near the grid resolution.
     let mut rng = Rng::new(0x5EED_0011);
     let mut worst = oracle_zero();
     for _ in 0..5_000 {
@@ -365,8 +366,8 @@ fn exp_saturates_and_underflows_at_the_stated_thresholds() {
     assert_eq!(Q::Number(Rat::new(100, 1).unwrap()).exp(), Q::PosSat);
     assert_eq!(Q::Number(Rat::new(-45, 1).unwrap()).exp(), Q::zero());
     assert_eq!(Q::Number(Rat::new(-100, 1).unwrap()).exp(), Q::zero());
-    // `ln(MAX_MAG)` is about 42.98, so 43 genuinely overflows — the `44`
-    // constant is only a cheap pre-check, and arguments between 42.98 and 44
+    // `ln(MAX_MAG)` is about 42.98. An argument of 43 therefore overflows. The
+    // `44` constant is only a cheap pre-check. Arguments between 42.98 and 44
     // saturate through the ordinary arithmetic instead. 42 is the last integer
     // whose exponential fits.
     assert!(
@@ -414,10 +415,11 @@ fn exp_is_total_and_never_panics() {
 // ln
 // ===========================================================================
 
-/// `ln(x)` to high precision, via `2·atanh((x-1)/(x+1))` over exact rationals
-/// with its own binary reduction — structurally the same identity but carried
-/// to 2^-90 with no fixed term count, so a term-count or reduction-bound bug in
-/// the implementation shows up as disagreement.
+/// Returns `ln(x)` to high precision. It uses `2·atanh((x-1)/(x+1))` over exact
+/// rationals with its own binary reduction. It applies the same identity as the
+/// implementation, but carries it to 2^-90 with no fixed term count. A
+/// term-count or reduction-bound defect in the implementation therefore appears
+/// as a disagreement.
 fn oracle_ln(x: &Rational) -> Rational {
     let two = Rational::from_signeds(2i128, 1i128);
     let half = Rational::from_signeds(1i128, 2i128);
@@ -445,7 +447,7 @@ fn oracle_ln(x: &Rational) -> Rational {
         }
     }
     let ln_m = two.clone() * sum;
-    // ln 2 by the same series at z = 1/3.
+    // This block computes ln 2 with the same series at z = 1/3.
     let z = Rational::from_signeds(1i128, 3i128);
     let z2 = z.clone() * z.clone();
     let mut term = z.clone();
@@ -484,8 +486,8 @@ fn ln_matches_the_derived_special_table() {
     assert_eq!(Q::NegInf.ln(), Q::Nan);
     assert_eq!(Q::Nan.ln(), Q::Nan);
     assert_eq!(Q::NegSat.ln(), Q::Nan, "negative");
-    // ln of (MAX_MAG, inf) is about (43, inf), which reaches far below
-    // MAX_MAG, so no saturation state is sound.
+    // The ln of (MAX_MAG, inf) is about (43, inf). That interval reaches far
+    // below MAX_MAG. Therefore no saturation state is sound.
     assert_eq!(Q::PosSat.ln(), Q::Nan);
     assert_eq!(Q::zero().ln(), Q::NegInf, "the exact limit");
     assert_eq!(Q::neg_one().ln(), Q::Nan, "no real logarithm of a negative");
@@ -493,7 +495,7 @@ fn ln_matches_the_derived_special_table() {
 
 #[test]
 fn ln_of_one_is_zero_and_ln_is_accurate() {
-    // ln(1) should be exactly zero: z = 0 makes every series term vanish.
+    // ln(1) is exactly zero. At z = 0 every series term vanishes.
     assert_eq!(Q::one().ln(), Q::zero(), "ln(1) must be exactly 0");
 
     let mut rng = Rng::new(0x5EED_0020);
@@ -522,18 +524,18 @@ fn ln_of_one_is_zero_and_ln_is_accurate() {
 
 #[test]
 fn ln_inverts_exp_to_the_precision_the_grid_allows() {
-    // The round-trip check, with the *right* bound — getting this wrong is
-    // instructive, so the reasoning is written out.
+    // This is the round-trip check. The reasoning behind its bound follows.
     //
-    // R3's error bound is `2^-61 · max(1, |exact|)`, which is **absolute**
-    // below 1, not relative. So a small result carries fewer significant bits
-    // than a large one: `exp(-30)` is about `2^-43`, and an absolute error of
-    // `2^-61` there is a *relative* error of only `2^-18`. Since `ln` turns a
-    // relative error in its argument into an absolute error in its result,
-    // `ln(exp(-30))` is off by roughly `2^-61 · e^30`, which is about `5e-6`.
+    // R3's error bound is `2^-61 · max(1, |exact|)`. That bound is **absolute**
+    // below 1, and is not relative. A small result therefore carries fewer
+    // significant bits than a large one. For example, `exp(-30)` is about
+    // `2^-43`. An absolute error of `2^-61` there is a *relative* error of only
+    // `2^-18`. `ln` turns a relative error in its argument into an absolute
+    // error in its result. Therefore `ln(exp(-30))` is off by roughly
+    // `2^-61 · e^30`, which is about `5e-6`.
     //
-    // That is a real property of the type, not a defect in either function, and
-    // it is why the tolerance below scales with `max(1, e^-k)`.
+    // That is a property of the type, and not a defect in either function. For
+    // that reason the tolerance below scales with `max(1, e^-k)`.
     let mut rng = Rng::new(0x5EED_0021);
     let slack = Rational::from_signeds(1i128 << 12, 1i128);
     let mut worst_k = 0i64;
@@ -546,14 +548,10 @@ fn ln_inverts_exp_to_the_precision_the_grid_allows() {
             continue;
         };
         let d = mag(&(rat(back) - Rational::from_signeds(k as i128, 1i128)));
-        // How small the intermediate got, which is what sets the precision.
+        // The size of the intermediate sets the precision.
         let scale = {
             let inv = oracle_exp(&Rational::from_signeds(-k as i128, 1i128));
-            if inv > one() {
-                inv
-            } else {
-                one()
-            }
+            if inv > one() { inv } else { one() }
         };
         let bound = eps(61) * scale * slack.clone();
         assert!(
@@ -612,10 +610,10 @@ fn pow_i32_handles_negative_exponents_totally() {
     assert_eq!(two.pow_i32(3), Q::Number(Rat::new(8, 1).unwrap()));
     assert_eq!(two.pow_i32(0), Q::one());
     assert_eq!(two.pow_i32(-3), Q::Number(Rat::new(1, 8).unwrap()));
-    // The case that would panic on a partial reciprocal.
+    // A partial reciprocal panics on this case.
     assert_eq!(Q::zero().pow_i32(-1), Q::PosInf);
     assert_eq!(Q::zero().pow_i32(0), Q::one());
-    // i32::MIN must not overflow when negated.
+    // Negation of i32::MIN must not overflow.
     assert_total(two.pow_i32(i32::MIN), "pow_i32(i32::MIN)");
 
     let mut rng = Rng::new(0x5EED_0024);
@@ -630,7 +628,7 @@ fn pow_i32_handles_negative_exponents_totally() {
 // pi, sin, cos, tan, atan
 // ===========================================================================
 
-/// `atan(z)` over exact rationals, to 2^-90, for `|z| <= 1/2`.
+/// Returns `atan(z)` over exact rationals, to 2^-90, for `|z| <= 1/2`.
 fn oracle_atan_small(z: &Rational) -> Rational {
     let z2 = z.clone() * z.clone();
     let mut term = z.clone();
@@ -651,15 +649,16 @@ fn oracle_atan_small(z: &Rational) -> Rational {
     sum
 }
 
-/// `π` by Machin, at 2^-90.
+/// Returns `π` by Machin's formula, at 2^-90.
 fn oracle_pi() -> Rational {
     Rational::from_signeds(16i128, 1i128) * oracle_atan_small(&Rational::from_signeds(1i128, 5i128))
         - Rational::from_signeds(4i128, 1i128)
             * oracle_atan_small(&Rational::from_signeds(1i128, 239i128))
 }
 
-/// `sin(x)` (or `cos`) by direct Maclaurin over exact rationals, no reduction.
-/// Only usable for modest `|x|`, which is exactly where it is used.
+/// Returns `sin(x)`, or `cos(x)`, by a direct Maclaurin series over exact
+/// rationals, with no reduction. It is usable only for modest `|x|`. The tests
+/// call it only in that range.
 fn oracle_sin_cos(x: &Rational, want_cos: bool) -> Rational {
     let x2 = x.clone() * x.clone();
     let (mut term, mut sum) = if want_cos {
@@ -702,7 +701,7 @@ fn pi_is_accurate() {
 
 #[test]
 fn atan_is_accurate_and_matches_known_points() {
-    // atan(1) == pi/4 and atan(0) == 0 are the anchors.
+    // The anchors are atan(1) == pi/4 and atan(0) == 0.
     let quarter_pi = oracle_pi() / Rational::from_signeds(4i128, 1i128);
     if let Q::Number(r) = Q::one().atan() {
         assert!(
@@ -714,7 +713,7 @@ fn atan_is_accurate_and_matches_known_points() {
     }
     assert_eq!(Q::zero().atan(), Q::zero(), "atan(0) is exactly 0");
 
-    // Both infinities have exact limits, which is unusual here.
+    // Both infinities have exact limits. Few functions here have that property.
     if let Q::Number(r) = Q::PosInf.atan() {
         let half_pi = oracle_pi() / two_rational();
         assert!(rel_err(&rat(r), &half_pi) <= eps(45), "atan(+inf) = pi/2");
@@ -728,8 +727,9 @@ fn atan_is_accurate_and_matches_known_points() {
     let mut worst = oracle_zero();
     for _ in 0..2_000 {
         let x = rng.q();
-        // The oracle series needs |z| <= 1/2, so check there directly and rely
-        // on the reduction identities elsewhere (covered by tan/atan round trip).
+        // The oracle series needs |z| <= 1/2. This test therefore checks that
+        // range directly. The reduction identities cover the rest of the range,
+        // and the tan/atan round trip test covers them.
         let half = Rational::from_signeds(1i128, 2i128);
         if mag(&rat(x)) > half {
             continue;
@@ -751,8 +751,8 @@ fn sin_and_cos_match_a_direct_series() {
     let mut rng = Rng::new(0x5EED_0031);
     let (mut ws, mut wc) = (oracle_zero(), oracle_zero());
     for _ in 0..2_000 {
-        // Modest arguments, where a reduction-free oracle is tractable. The
-        // reduction path itself is exercised by the identity tests below.
+        // The arguments stay modest, where a reduction-free oracle is
+        // tractable. The identity tests below exercise the reduction path.
         let k = (rng.below(21) as i64) - 10;
         let frac = rng.q_unit();
         let q = Q::add(Q::Number(Rat::new(k, 1).unwrap()), Q::Number(frac));
@@ -783,9 +783,9 @@ fn sin_and_cos_match_a_direct_series() {
 
 #[test]
 fn pythagorean_identity_holds() {
-    // sin^2 + cos^2 == 1 across the whole accepted range, including where
-    // argument reduction does the most work. This is what a shared reduction
-    // between sin and cos buys.
+    // sin^2 + cos^2 == 1 holds across the whole accepted range. That range
+    // includes the arguments where reduction does the most work. A reduction
+    // shared between sin and cos gives this property.
     let mut rng = Rng::new(0x5EED_0032);
     let mut worst = oracle_zero();
     for _ in 0..5_000 {
@@ -813,7 +813,8 @@ fn sin_and_cos_at_the_landmark_angles() {
     let half_pi = Q::div(pi, Q::new(2, 1));
     assert_eq!(Q::zero().sin(), Q::zero(), "sin(0) is exactly 0");
     assert_eq!(Q::zero().cos(), Q::one(), "cos(0) is exactly 1");
-    // sin(pi/2) ~ 1, cos(pi/2) ~ 0, sin(pi) ~ 0, cos(pi) ~ -1.
+    // The landmarks are sin(pi/2) ~ 1, cos(pi/2) ~ 0, sin(pi) ~ 0 and
+    // cos(pi) ~ -1.
     for (val, want, what) in [
         (half_pi.sin(), one(), "sin(pi/2)"),
         (pi.cos(), -one(), "cos(pi)"),
@@ -856,16 +857,17 @@ fn sin_and_cos_stay_within_minus_one_and_one() {
 
 #[test]
 fn trig_refuses_arguments_it_cannot_reduce() {
-    // Past 2^20 the reduction error swamps the answer, so a Nan is returned
-    // rather than a plausible-looking number. f64 does the opposite.
+    // Past 2^20 the reduction error exceeds the answer. The functions therefore
+    // return Nan instead of a plausible-looking number. `f64` returns a number
+    // in this range.
     let big = Q::Number(Rat::new((1i64 << 20) + 1, 1).unwrap());
     assert_eq!(big.sin(), Q::Nan);
     assert_eq!(big.cos(), Q::Nan);
     assert_eq!(big.neg().sin(), Q::Nan);
-    // Just inside the limit it still answers.
+    // Just inside the limit the functions still return a number.
     let ok = Q::Number(Rat::new((1i64 << 20) - 1, 1).unwrap());
     assert!(ok.sin().is_number() && ok.cos().is_number());
-    // No limit at infinity: a genuine non-answer, not a shortcoming.
+    // sin and cos have no limit at infinity. Nan is the correct result there.
     assert_eq!(Q::PosInf.sin(), Q::Nan);
     assert_eq!(Q::NegInf.cos(), Q::Nan);
     assert_eq!(Q::PosSat.sin(), Q::Nan);
@@ -880,8 +882,8 @@ fn tan_matches_sin_over_cos_and_handles_its_poles() {
         assert_eq!(q.tan(), Q::div(q.sin(), q.cos()), "tan must be sin/cos");
         assert_total(q.tan(), "tan");
     }
-    // Near a pole the quotient blows up rather than trapping, which is the
-    // honest answer since tan genuinely has one there.
+    // Near a pole the quotient grows without bound, and does not trap. tan has
+    // a pole there, so that result is correct.
     let half_pi = Q::div(the_q::transcendental::pi(), Q::new(2, 1));
     assert_total(half_pi.tan(), "tan(pi/2)");
 }
@@ -890,7 +892,7 @@ fn tan_matches_sin_over_cos_and_handles_its_poles() {
 fn atan_inverts_tan_on_the_principal_branch() {
     let mut rng = Rng::new(0x5EED_0035);
     for _ in 0..2_000 {
-        // Stay well inside (-pi/2, pi/2), where atan(tan(x)) == x.
+        // The arguments stay well inside (-pi/2, pi/2). There atan(tan(x)) == x.
         let k = (rng.below(2_800) as i64) - 1_400;
         let x = Q::Number(Rat::new(k, 1000).unwrap());
         if let Q::Number(t) = x.tan() {
@@ -929,12 +931,12 @@ fn trig_is_total_and_never_panics() {
 // ===========================================================================
 // The pinned constants
 //
-// `pi`, `e` and `ln2` return literals rather than summing a series on every
-// call — benchmarking showed the series dominating every function that used
-// them. A hard-coded constant is only acceptable if it can be re-derived and
-// is checked, so each of these asserts the literal is **bit-identical** to what
-// its series produces. If the series, the width budget or the rounding
-// contract ever changes, these fail rather than silently drifting.
+// `pi`, `e` and `ln2` return literals. They do not sum a series on every call.
+// Benchmarks show the series dominating every function that calls them. A
+// hard-coded constant requires a re-derivation and a check. Each test below
+// therefore asserts that the literal is **bit-identical** to the value its
+// series produces. A change to the series, the width budget or the rounding
+// contract makes these tests fail, and prevents a silent drift.
 // ===========================================================================
 
 #[test]
@@ -966,7 +968,7 @@ fn ln2_is_the_series_value() {
 
 #[test]
 fn e_is_accurate_and_consistent_with_exp_and_ln() {
-    // Independently: e must match the oracle's exponential at 1...
+    // First, e matches the oracle's exponential at 1.
     let want = oracle_exp(&one());
     match the_q::transcendental::e() {
         Q::Number(r) => {
@@ -976,7 +978,7 @@ fn e_is_accurate_and_consistent_with_exp_and_ln() {
         }
         other => panic!("e must be a number, got {other}"),
     }
-    // ...and ln(e) must come back to 1.
+    // Second, ln(e) returns to 1.
     if let Q::Number(r) = the_q::transcendental::e().ln() {
         assert!(
             mag(&(rat(r) - one())) <= eps(45),
@@ -1009,7 +1011,7 @@ fn logarithms_in_other_bases_are_consistent() {
             continue;
         }
         let q = Q::Number(x);
-        // log2(x)·ln2 == ln(x), and likewise for log10.
+        // log2(x)·ln2 == ln(x). The same relation holds for log10 and ln10.
         if let (Q::Number(l2), Q::Number(ln)) = (q.log2(), q.ln()) {
             let lhs = rat(l2)
                 * rat(match the_q::transcendental::ln2() {
@@ -1033,7 +1035,7 @@ fn logarithms_in_other_bases_are_consistent() {
             );
         }
     }
-    // Landmark values.
+    // These are the landmark values.
     for (n, want) in [(2i64, 1i64), (8, 3), (1024, 10)] {
         if let Q::Number(r) = Q::Number(Rat::new(n, 1).unwrap()).log2() {
             let d = mag(&(rat(r) - Rational::from_signeds(want as i128, 1i128)));
@@ -1059,7 +1061,7 @@ fn exp2_and_powf_agree_with_integer_powers() {
             );
         }
     }
-    // powf against the exact integer power.
+    // This block checks powf against the exact integer power.
     let mut rng = Rng::new(0x5EED_0041);
     for _ in 0..1_000 {
         let base = rng.q_unit();
@@ -1078,7 +1080,7 @@ fn exp2_and_powf_agree_with_integer_powers() {
             );
         }
     }
-    // The conventions.
+    // These are the conventions for powf at zero.
     assert_eq!(Q::zero().powf(Q::zero()), Q::one(), "0^0 is 1");
     assert_eq!(Q::zero().powf(Q::one()), Q::zero());
 }
@@ -1100,7 +1102,7 @@ fn cbrt_cubes_back_and_handles_negatives() {
             );
         }
     }
-    // Unlike sqrt, the whole real line is in the domain.
+    // The domain of cbrt is the whole real line. The domain of sqrt is not.
     if let Q::Number(r) = Q::Number(Rat::new(-8, 1).unwrap()).cbrt() {
         assert!(
             mag(&(rat(r) + Rational::from_signeds(2i128, 1i128))) <= eps(30),
@@ -1114,8 +1116,8 @@ fn cbrt_cubes_back_and_handles_negatives() {
 
 #[test]
 fn hypot_avoids_the_overflow_the_naive_form_hits() {
-    // The point of the identity: a² + b² can leave the budget when
-    // sqrt(a² + b²) comfortably fits.
+    // The identity exists because a² + b² can leave the budget while
+    // sqrt(a² + b²) fits.
     let big = Q::Number(Rat::new(MAX_MAG / 2, 1).unwrap());
     let naive = Q::add(Q::mul(big, big), Q::mul(big, big));
     assert!(
@@ -1128,7 +1130,7 @@ fn hypot_avoids_the_overflow_the_naive_form_hits() {
         "hypot must survive where a²+b² does not, got {h}"
     );
 
-    // 3-4-5 and its scalings.
+    // This block covers the 3-4-5 triangle and its scalings.
     for k in 1i64..1000 {
         let (a, b) = (
             Q::Number(Rat::new(3 * k, 1).unwrap()),
@@ -1147,7 +1149,7 @@ fn hypot_avoids_the_overflow_the_naive_form_hits() {
 
 #[test]
 fn hyperbolics_satisfy_their_identity() {
-    // cosh² - sinh² == 1.
+    // The identity is cosh² - sinh² == 1.
     let mut rng = Rng::new(0x5EED_0043);
     let mut worst = oracle_zero();
     for _ in 0..2_000 {
@@ -1173,7 +1175,7 @@ fn hyperbolics_satisfy_their_identity() {
 
 #[test]
 fn tanh_has_no_poles_and_stays_bounded() {
-    // cosh is never zero, so unlike tan this never blows up.
+    // cosh is never zero. Therefore tanh stays bounded, and tan does not.
     let mut rng = Rng::new(0x5EED_0044);
     for _ in 0..5_000 {
         let k = (rng.below(8_000) as i64) - 4_000;
@@ -1214,7 +1216,7 @@ fn asin_and_acos_invert_sin_and_cos() {
             );
         }
     }
-    // Endpoints and the domain boundary.
+    // This block covers the endpoints and the domain boundary.
     let half_pi = oracle_pi() / two_rational();
     if let Q::Number(r) = Q::one().asin() {
         assert!(rel_err(&rat(r), &half_pi) <= eps(45), "asin(1) = pi/2");
@@ -1232,7 +1234,7 @@ fn asin_and_acos_invert_sin_and_cos() {
 
 #[test]
 fn atan2_gets_the_quadrant_right() {
-    // The whole reason atan2 exists: atan(y/x) cannot tell these apart.
+    // atan2 exists because atan(y/x) cannot distinguish these cases.
     let p = oracle_pi();
     let one_q = Q::one();
     let neg_q = Q::neg_one();
@@ -1267,9 +1269,10 @@ fn atan2_gets_the_quadrant_right() {
             other => panic!("atan2({y}, {x}) = {other}"),
         }
     }
-    // The origin has no angle; returning zero would invent one.
+    // The origin has no angle. A result of zero would state an angle that does
+    // not exist.
     assert_eq!(Q::zero().atan2(Q::zero()), Q::Nan);
-    // On the axes.
+    // This block covers a point on the axes.
     if let Q::Number(r) = Q::one().atan2(Q::zero()) {
         assert!(mag(&(rat(r) - p.clone() / two_rational())) <= eps(30));
     } else {
@@ -1279,8 +1282,8 @@ fn atan2_gets_the_quadrant_right() {
 
 #[test]
 fn the_whole_function_set_is_total() {
-    // Every function, every state, plus a wide random sweep. Nothing panics and
-    // nothing returns a malformed or unclassified value.
+    // The sweep covers every function and every state, and adds a wide random
+    // sweep. No call panics. No call returns a malformed or unclassified value.
     let mut rng = Rng::new(0x5EED_0046);
     let mut all: Vec<Q> = states();
     for _ in 0..2_000 {

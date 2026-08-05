@@ -1,68 +1,66 @@
 //! Transcendental and root functions on the extended [`Q`].
 //!
-//! # These are not rational-closed, and that is the whole difficulty
+//! # These functions are not rational-closed
 //!
-//! `sqrt(2)`, `exp(1)` and `sin(1)` are irrational, so no rational type can
-//! return them. What this module returns is the nearest representable rational
-//! to the true value, with a stated error bound — the same bargain the rest of
-//! the crate makes for arithmetic, extended to functions that have no exact
-//! answer at all.
+//! `sqrt(2)`, `exp(1)` and `sin(1)` are irrational. No rational type can return
+//! them. This module returns the nearest representable rational to the true
+//! value, with a stated error bound. This is the same contract that the
+//! arithmetic makes, applied to functions that have no exact answer.
 //!
-//! # Termination is structural, not conditional
+//! # Termination is structural
 //!
-//! Every iteration here runs a **fixed** number of steps rather than looping
-//! until a convergence test passes. That is deliberate on two counts: a fixed
-//! count is trivially terminating, which is what lets Verus discharge these at
-//! all; and it makes the cost of every call identical and predictable, which a
-//! convergence test does not. The counts are chosen so that the iteration has
-//! provably converged to within the representable grid before it stops.
+//! Each iteration runs a fixed number of steps. No iteration loops until a
+//! convergence test passes. A fixed count terminates trivially, which lets
+//! Verus discharge these functions. A fixed count also makes the cost of each
+//! call constant and predictable. The counts are large enough for the iteration
+//! to converge to within the representable grid.
 //!
-//! # Where the error comes from
+//! # Sources of error
 //!
-//! Two independent sources, and they are worth separating:
+//! There are two independent sources:
 //!
-//! * **Truncation** — the series or iteration is cut off. Bounded by choosing
-//!   enough terms that the tail is below the grid resolution.
-//! * **Rounding** — every intermediate `Q` operation rounds, contributing at
-//!   most `2^-61 · max(1, |value|)` each, accumulating additively over `k`
-//!   operations exactly as `nary`'s V8 bound describes.
+//! * Truncation. The series or the iteration stops after a fixed number of
+//!   terms. The term count keeps the tail below the grid resolution.
+//! * Rounding. Each intermediate `Q` operation rounds and adds at most
+//!   `2^-61 · max(1, |value|)`. Over `k` operations these errors accumulate
+//!   additively, as the V8 bound in `nary` states.
 //!
-//! The second dominates, and it is why these functions are accurate to roughly
-//! `2^-55` rather than to the full `2^-61` of a single operation. That is still
-//! better than `f64`'s `2^-53`.
+//! Rounding is the larger source. Thus these functions are accurate to
+//! approximately `2^-55`, and not to the `2^-61` of a single operation. This
+//! accuracy is better than the `2^-53` of `f64`.
 //!
-//! # Precision degrades for results far below 1, and that is structural
+//! # Precision decreases for results far below 1
 //!
-//! Read this before trusting a small result. R3's error bound is
-//! `2^-61 · max(1, |exact|)`, which is **absolute** below 1 rather than
-//! relative. A value near `1` therefore carries about 61 significant bits, but
-//! a value near `2^-43` carries only about 18: the grid spacing is the same, so
-//! there are far fewer grid points *relative to the value*.
+//! The R3 error bound is `2^-61 · max(1, |exact|)`. Below 1 this bound is
+//! absolute, not relative. A value near `1` thus carries approximately 61
+//! significant bits, but a value near `2^-43` carries approximately 18. The
+//! grid spacing is constant, so a small value has fewer grid points relative to
+//! its own magnitude.
 //!
-//! The consequence bites hardest where a function's output is tiny. `exp(-30)`
-//! is about `2^-43`, so it is accurate to roughly `2^-18` relatively, and
-//! `ln(exp(-30))` comes back off by about `5e-6` — measured at `2^-20` in
-//! `ln_inverts_exp_to_the_precision_the_grid_allows`. Neither function is at
-//! fault; the intermediate simply could not carry the information.
+//! The effect is largest when the output of a function is small. `exp(-30)` is
+//! approximately `2^-43`, thus its relative accuracy is approximately `2^-18`.
+//! `ln(exp(-30))` differs from `-30` by approximately `5e-6`. The test
+//! `ln_inverts_exp_to_the_precision_the_grid_allows` measures this difference
+//! at `2^-20`. The cause is the intermediate value, which cannot carry the
+//! information.
 //!
-//! This is the same trade the rest of the crate makes, surfaced where it is
-//! most visible. If small values matter, scale the problem so they are not
-//! small — the budget is far more generous near `1` than near `0`.
+//! If small values are important, scale the problem so that the values are not
+//! small. The budget is larger near `1` than near `0`.
 //!
-//! # Failure is a value, never a panic
+//! # Failure is a value, not a panic
 //!
-//! Every function here is total. `sqrt` of a negative number is `Nan`, not a
-//! panic; `ln(0)` is `NegInf`; arguments whose result cannot be represented
-//! saturate. The special-value results are derived from the §2 denotations in
-//! issue #26 the same way the arithmetic tables are — a result is sound only if
-//! its denotation contains the true image of the operand's denotation.
+//! Each function is total. `sqrt` of a negative number is `Nan`. `ln(0)` is
+//! `NegInf`. An argument whose result is not representable gives a saturated
+//! result. The special-value results come from the §2 denotations in issue #26,
+//! as the arithmetic tables do. A result is sound only if its denotation
+//! contains the true image of the denotation of the operand.
 //!
-//! One consequence is worth stating because it surprises people: **`sqrt` of a
-//! saturated value is `Nan`**, not `PosSat`. `PosSat` denotes `(MAX_MAG, ∞)`,
-//! whose image under `sqrt` is `(2^31, ∞)` — which reaches far below `MAX_MAG`
-//! and therefore includes representable values. Answering `PosSat` there would
-//! claim a magnitude the value need not have. The same reasoning makes
-//! `ln(PosSat)` and `atan(PosSat)` `Nan`.
+//! One result of that rule is important: `sqrt` of a saturated value is `Nan`,
+//! and not `PosSat`. `PosSat` denotes `(MAX_MAG, ∞)`. The image of that
+//! interval under `sqrt` is `(2^31, ∞)`, which extends far below `MAX_MAG` and
+//! thus contains representable values. A `PosSat` result would claim a
+//! magnitude that the value can fail to have. The same rule makes `ln(PosSat)`
+//! and `atan(PosSat)` `Nan`.
 
 use verus_builtin_macros::verus;
 
@@ -78,27 +76,27 @@ verus! {
 
 /// Integer square root: the largest `r >= 0` with `r*r <= n`.
 ///
-/// Newton's method on integers. Each step strictly decreases the estimate until
-/// it settles, which is what `decreases` keys on; the classic formulation would
-/// loop `while y < x`, and the guard is exactly the "still decreasing" test.
+/// The function uses Newton's method on integers. Each step decreases the
+/// estimate until the estimate settles. The `decreases` clause uses that
+/// property. The classic formulation loops `while y < x`, and that guard is the
+/// same "still decreasing" test.
 ///
-/// `n < 0` yields `0` rather than panicking — callers here never pass one, and
-/// a total function is easier to reason about than a guarded one.
-/// The postcondition is the *defining* property of an integer square root, not
-/// a bound on it: `r*r <= n < (r+1)*(r+1)` pins `r` uniquely.
+/// For `n < 0` the function returns `0` and does not panic. No caller in this
+/// crate passes a negative argument, and a total function is easier to reason
+/// about than a guarded one.
 ///
-/// That matters here for a concrete reason. An earlier version of this function
-/// used the seed `n/2 + 1` instead of `(n+1)/2` and returned `2` for
-/// `isqrt(2)`. It carried the weak postcondition `r >= 0 && r <= n`, which that
-/// wrong answer satisfies, so **verification passed** and only a test caught it.
-/// A specification that admits the bug is not a specification.
+/// The postcondition is the defining property of an integer square root, and
+/// not a bound on it: `r*r <= n < (r+1)*(r+1)` pins `r` to one value. A weaker
+/// postcondition such as `r >= 0 && r <= n` also holds for wrong answers, for
+/// example `isqrt(2) == 2`, and thus verifies against a defective
+/// implementation.
 ///
-/// The implementation is Newton for speed followed by a bounded correction.
-/// Newton alone lands on the answer, but proving *that* needs AM-GM reasoning
-/// over integer division, which is a great deal of proof for no extra
-/// behaviour. The correction loops establish the postcondition directly from
-/// their own exit conditions, run at most once each in practice, and cost two
-/// `i128` multiplications.
+/// The implementation runs Newton's method for speed, then a bounded
+/// correction. Newton's method alone reaches the answer, but a proof of that
+/// property needs AM-GM reasoning over integer division. The correction loops
+/// establish the postcondition directly from their own exit conditions. In
+/// practice each loop runs at most one time and costs two `i128`
+/// multiplications.
 pub fn isqrt_i64(n: i64) -> (r: i64)
     requires
         // Every caller passes a `Rat` component, which the type invariant
@@ -156,11 +154,11 @@ pub fn isqrt_i64(n: i64) -> (r: i64)
     // Correction, in `i128` so the squares cannot overflow: `r <= n <= 2^62`
     // gives `r*r <= 2^124`.
     let mut r: i64 = x;
-    // The squares live in variables rather than in the loop guards. Two
-    // reasons, both necessary: `r*r` fitting `i128` is a nonlinear fact the
-    // prover needs a proof block to reach, and a `while` guard's *negation* is
-    // what carries the postcondition out of the loop — a `loop`/`break` form
-    // discards exactly that.
+    // The squares are in variables and not in the loop guards, for two reasons.
+    // First, `r*r` fits `i128` only as a nonlinear fact, which the prover
+    // reaches only in a proof block. Second, the negation of a `while` guard
+    // carries the postcondition out of the loop, and a `loop`/`break` form
+    // discards that negation.
     proof {
         assert(0 <= (r as int) * (r as int) <= (crate::types::MAX_MAG as int) * (crate::types::MAX_MAG as int))
             by (nonlinear_arith)
@@ -237,11 +235,10 @@ pub fn isqrt_i64(n: i64) -> (r: i64)
 /// **`isqrt`'s contract pins its answer**: any two non-negative integers
 /// satisfying `r·r <= n < (r+1)·(r+1)` for the same `n` are equal.
 ///
-/// This is the categoricity proof for the very specification the `isqrt(2)`
-/// episode above motivated. The old contract (`0 <= r <= n`) admitted wrong
-/// answers; this theorem is the machine-checked statement that the current one
-/// admits exactly one, so no future bug can satisfy it with anything but the
-/// true floor of the square root.
+/// This is the categoricity proof for the `isqrt` specification. A weaker
+/// contract such as `0 <= r <= n` holds for more than one value. This theorem
+/// states that the specification in use holds for exactly one value, which is
+/// the true floor of the square root.
 pub proof fn theorem_isqrt_unique(n: int, r1: int, r2: int)
     requires
         0 <= r1,
@@ -274,11 +271,11 @@ pub proof fn theorem_isqrt_unique(n: int, r1: int, r2: int)
 /// **`isqrt` is monotone**: a larger radicand cannot have a smaller integer
 /// square root.
 ///
-/// Stated on the contract rather than the code — any results satisfying the
-/// pinned specification for `n1 <= n2` are ordered — so it applies to every
-/// call site for free. This is the fact that lets `sqrt_seed`'s quality be
-/// reasoned about componentwise: growing a numerator can only grow the seed's
-/// numerator, independently of how Newton refines it afterwards.
+/// The theorem speaks about the contract and not about the code: results that
+/// satisfy the specification for `n1 <= n2` are ordered. It thus applies at
+/// each call site. It also permits componentwise reasoning about the quality of
+/// `sqrt_seed`: a larger numerator gives a seed numerator that is not smaller,
+/// independently of the later Newton refinement.
 pub proof fn theorem_isqrt_monotone(n1: int, n2: int, r1: int, r2: int)
     requires
         n1 <= n2,
@@ -304,10 +301,10 @@ pub proof fn theorem_isqrt_monotone(n1: int, n2: int, r1: int, r2: int)
 /// **`isqrt` inverts squaring exactly**: on a perfect square `k·k` the
 /// contract forces the answer `k`.
 ///
-/// The one input family where the floor and the true square root coincide, so
-/// "nearest grid point" degenerates to "exact". Not an unfolding of the
-/// contract — it takes `k·k < (k+1)·(k+1)` (a nonlinear fact) plus
-/// categoricity to collapse the result onto `k`.
+/// Perfect squares are the one input family where the floor and the true square
+/// root are equal, thus the nearest grid point is the exact value. The proof is
+/// not an unfolding of the contract. It uses the nonlinear fact
+/// `k·k < (k+1)·(k+1)` together with categoricity to fix the result at `k`.
 pub proof fn theorem_isqrt_of_square(k: int, r: int)
     requires
         0 <= k,
@@ -367,9 +364,9 @@ impl Q {
     /// | `NegInf` | `Nan` | negative |
     /// | `Nan` | `Nan` | |
     ///
-    /// Newton's iteration `y <- (y + x/y)/2` converges quadratically, so a fixed
-    /// seven steps from the integer-root seed is past the point where
-    /// further steps cannot change the rounded answer.
+    /// The Newton iteration `y <- (y + x/y)/2` converges quadratically. From
+    /// the integer-root seed, seven steps are more than sufficient: a further
+    /// step cannot change the rounded answer.
     pub fn sqrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -398,9 +395,9 @@ impl Q {
                             i <= SQRT_ITERS,
                         decreases SQRT_ITERS - i,
                     {
-                        // y <- (y + x/y) / 2. If `y` ever became zero or a
-                        // special the division would report it rather than
-                        // trapping, and the result would stay a value.
+                        // y <- (y + x/y) / 2. A zero or special `y` gives a
+                        // division that reports the state and does not trap.
+                        // The result stays a value.
                         y = Q::div(Q::add(y, Q::div(q, y)), two);
                         i = i + 1;
                     }
@@ -408,7 +405,7 @@ impl Q {
                 }
             },
             // The image of (MAX_MAG, inf) under sqrt is (2^31, inf), which
-            // reaches far below MAX_MAG — so no saturation state is sound.
+            // extends far below MAX_MAG. No saturation state is thus sound.
             Q::PosSat => Q::Nan,
             Q::NegSat => Q::Nan,
             Q::PosInf => Q::PosInf,
@@ -421,13 +418,13 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Series lengths
 //
-// Each count is derived from its own tail bound against the grid resolution
-// `2^-61` (about `4.34e-19`), not shared. A uniform count would be wrong in
-// both directions at once: too short for `atan`, whose coefficients are
-// `1/(2k+1)`, and nearly twice as long as `sin` needs, whose coefficients are
-// `1/(2k+1)!`. Benchmarking made the second cost visible.
+// Each series has its own count. The count comes from the tail bound of that
+// series against the grid resolution `2^-61`, which is approximately
+// `4.34e-19`. A shared count is wrong in two directions at the same time. It is
+// too short for `atan`, whose coefficients are `1/(2k+1)`. It is almost twice
+// the necessary length for `sin`, whose coefficients are `1/(2k+1)!`.
 //
-// Every count is fixed rather than derived from a convergence test, so that
+// Each count is a constant and does not come from a convergence test. Thus
 // termination is structural and the cost of a call is constant.
 // ---------------------------------------------------------------------------
 
@@ -452,25 +449,26 @@ const EXP_TERMS: u32 = 18;
 /// the grid, while `k = 8` gives `4.6e-17`, well over it. The loop covers `k`
 /// up to `TRIG_TERMS - 1 = 10`.
 ///
-/// This is the count that most rewards being derived rather than shared: the
-/// factorial denominators make it converge far faster than `atan`, so reusing
-/// `atan`'s length here would have doubled the cost of every `sin` and `cos`
-/// for no accuracy at all.
+/// A dedicated count is most valuable here. The factorial denominators make
+/// this series converge much faster than the `atan` series. The `atan` length
+/// thus doubles the cost of each `sin` and `cos` call and adds no accuracy.
 const TRIG_TERMS: u32 = 11;
 
 /// Newton iterations in [`Q::sqrt`].
 ///
 /// The integer-root seed is within a factor of two, so the initial relative
 /// error is at most about `1/2`. Newton squares it each step:
-/// `0.5 → 0.125 → 7.8e-3 → 3.1e-5 → 4.6e-10 → 1.1e-19`, which is past the grid
-/// by the sixth. Seven leaves a margin; eight was simply wasted work.
+/// `0.5 → 0.125 → 7.8e-3 → 3.1e-5 → 4.6e-10 → 1.1e-19`. The sixth step is thus
+/// below the grid. Seven steps give a margin. An eighth step adds no accuracy.
 const SQRT_ITERS: u32 = 7;
 
-/// Maximum halvings used to bring an argument into the series' comfort zone.
+/// Maximum number of halvings that bring an argument into the range of the
+/// series.
 ///
-/// `exp` is only evaluated for `|x| <= 44` (beyond that the result leaves the
-/// budget), and `44 / 2^7 < 0.35`, so seven always suffices; eight is carried
-/// for margin. The bound also makes the reduction loop trivially terminating.
+/// `exp` evaluates the series only for `|x| <= 44`. Above that limit the result
+/// leaves the budget. `44 / 2^7 < 0.35`, thus seven halvings are sufficient.
+/// The constant is eight, which gives a margin. The constant also makes the
+/// reduction loop terminate.
 const MAX_HALVINGS: u32 = 8;
 
 /// Beyond `|x| > 44`, `exp(x)` leaves the budget in one direction or the other:
@@ -492,23 +490,22 @@ impl Q {
     /// | `NegInf` | `Number(0)` | exact limit |
     /// | `Nan` | `Nan` | |
     ///
-    /// `exp(NegSat)` is `Nan` rather than zero, and the asymmetry with
-    /// `exp(Number(-50))` is deliberate. The image of `(-∞, -MAX_MAG)` is
-    /// `(0, exp(-MAX_MAG))`, an interval that does **not** contain zero, so
-    /// `Number(0)` would be unsound as a denotation — it would assert an exact
-    /// value the true result provably is not. For a `Number` argument the
-    /// rounding contract applies instead and underflow-to-zero is inside it
-    /// (#26 §11), which is why that case may answer zero and this one may not.
-    /// It is also the same call §11 makes for `recip(Sat)`: a computation
-    /// continuing past an overflow is one option (A) declines to serve.
+    /// `exp(NegSat)` is `Nan` and not zero. The difference from
+    /// `exp(Number(-50))` is intentional. The image of `(-∞, -MAX_MAG)` is
+    /// `(0, exp(-MAX_MAG))`, and that interval does not contain zero. A
+    /// `Number(0)` result is thus unsound, because it asserts an exact value
+    /// that the true result does not have. For a `Number` argument the rounding
+    /// contract applies instead, and underflow to zero is inside that contract
+    /// (#26 §11). Section 11 makes the same decision for `recip(Sat)`: option
+    /// (A) does not continue a computation past an overflow.
     ///
     /// # Method
     ///
-    /// `exp(x) = exp(x / 2^k)^(2^k)`, with `k` chosen as the smallest value
-    /// bringing `|x|` to at most `1/2`, then twenty Maclaurin terms, then `k`
-    /// squarings. `k` is adaptive rather than fixed because each squaring
-    /// doubles the relative error: a fixed `k = 8` would cost every small
-    /// argument a factor of 256 in accuracy it does not need.
+    /// The method is `exp(x) = exp(x / 2^k)^(2^k)`. The function selects the
+    /// smallest `k` that brings `|x|` to at most `1/2`, then sums twenty
+    /// Maclaurin terms, then applies `k` squarings. `k` is adaptive and not
+    /// constant, because each squaring doubles the relative error. A constant
+    /// `k = 8` costs each small argument a factor of 256 in accuracy.
     pub fn exp(self) -> (r: Q)
         requires
             self.wf(),
@@ -590,10 +587,11 @@ const MAX_BINARY_SHIFTS: u32 = 64;
 
 /// `atanh(z) = z + z³/3 + z⁵/5 + …`, for `|z| <= 1/3`.
 ///
-/// Every caller range-reduces to that interval first. At `|z| = 1/3` the
-/// twentieth odd term is `3^-39 / 39`, about `3e-21`, comfortably below the
-/// `2^-61` grid — so the truncation error is invisible and the rounding error
-/// dominates, which is the same balance every other series here strikes.
+/// Each caller reduces its argument into that interval first. At `|z| = 1/3`
+/// the twentieth odd term is `3^-39 / 39`, which is approximately `3e-21` and
+/// thus below the `2^-61` grid. The truncation error is therefore not visible,
+/// and the rounding error is the larger source. Each other series here has the
+/// same balance.
 fn atanh_series(z: Q) -> (r: Q)
     requires
         z.wf(),
@@ -621,9 +619,10 @@ fn atanh_series(z: Q) -> (r: Q)
 
 /// `e`, by the series `Σ 1/n!`.
 ///
-/// Kept as the *derivation* of [`e`]. Summed directly rather than as `exp(1)`
-/// so that the constant and the function that would otherwise produce it are
-/// independent — a bug in `exp`'s range reduction cannot hide inside `e`.
+/// This function is the derivation of [`e`]. It sums the series directly and
+/// does not call `exp(1)`. The constant and the `exp` function are thus
+/// independent, and a defect in the range reduction of `exp` cannot hide in
+/// the value of `e`.
 pub fn e_series() -> (r: Q)
     ensures
         r.wf(),
@@ -647,9 +646,9 @@ pub fn e_series() -> (r: Q)
 
 /// `e`, the base of the natural logarithm.
 ///
-/// The literal is exactly what [`e_series`] computes — `e_is_the_series_value`
-/// asserts they are bit-identical. See [`ln2`] for why a checked literal is
-/// preferable to recomputing a series on every call.
+/// The literal is the value that [`e_series`] computes. The test
+/// `e_is_the_series_value` asserts that the two are bit-identical. See [`ln2`]
+/// for the reason to use a checked literal instead of a series call.
 pub fn e() -> (r: Q)
     ensures
         r.wf(),
@@ -659,9 +658,9 @@ pub fn e() -> (r: Q)
 
 /// `ln(2)`, by the series `2·atanh(1/3)`.
 ///
-/// Kept as the *derivation* of [`ln2`], which returns the same value as a
-/// literal. Benchmarking showed why: recomputing twenty series terms on every
-/// call dominated the cost of everything that used it.
+/// This function is the derivation of [`ln2`], which returns the same value as
+/// a literal. Twenty series terms on each call dominate the cost of each
+/// caller, thus [`ln2`] uses the literal.
 pub fn ln2_series() -> (r: Q)
     ensures
         r.wf(),
@@ -671,11 +670,11 @@ pub fn ln2_series() -> (r: Q)
 
 /// `ln(2)`.
 ///
-/// The literal is exactly what [`ln2_series`] computes — `ln2_is_the_series_value`
-/// asserts the two are bit-identical, so the constant is derived and checked
-/// rather than asserted. That test is what makes a hard-coded value acceptable
-/// here: it can be re-derived by running the suite, and it fails loudly if the
-/// series, the width budget or the rounding contract ever changes.
+/// The literal is the value that [`ln2_series`] computes. The test
+/// `ln2_is_the_series_value` asserts that the two are bit-identical, thus the
+/// constant is derived and checked. The test suite re-derives the value, and
+/// the test fails if the series, the width budget or the rounding contract
+/// changes.
 pub fn ln2() -> (r: Q)
     ensures
         r.wf(),
@@ -699,15 +698,15 @@ impl Q {
     ///
     /// # Method
     ///
-    /// Binary range reduction to `m ∈ [1/2, 2]`, then
-    /// `ln(m) = 2·atanh((m-1)/(m+1))` — whose argument is then at most `1/3` in
-    /// magnitude, which is exactly the interval the series is accurate on —
-    /// and finally `ln(x) = ln(m) + k·ln(2)`.
+    /// The method has three steps. First, binary range reduction to
+    /// `m ∈ [1/2, 2]`. Second, `ln(m) = 2·atanh((m-1)/(m+1))`, whose argument
+    /// has a magnitude of at most `1/3`, which is the interval where the series
+    /// is accurate. Third, `ln(x) = ln(m) + k·ln(2)`.
     ///
-    /// The `atanh` form is used rather than the direct `ln(1+u)` series because
-    /// its terms are all odd powers of a much smaller argument: for `m` at the
-    /// end of the reduced range, `u` would be `1` and the direct series would
-    /// not converge at all.
+    /// The method uses the `atanh` form and not the direct `ln(1+u)` series.
+    /// The terms of the `atanh` form are odd powers of a much smaller argument.
+    /// For `m` at the end of the reduced range, `u` is `1`, and the direct
+    /// series does not converge.
     pub fn ln(self) -> (r: Q)
         requires
             self.wf(),
@@ -792,31 +791,31 @@ impl Q {
 
 /// Terms of the `atan` series, whose argument is reduced to `|z| <= 1/2`.
 ///
-/// The tail at `k` is `2^-(2k+1)/(2k+1)`; `k = 28` gives `1.2e-19`, under the
-/// grid, while `k = 27` gives `5.1e-19`, over it. This is by far the longest
-/// series here — `atan`'s coefficients are `1/(2k+1)`, so it converges
-/// geometrically where `sin` and `exp` converge factorially.
+/// The tail at `k` is `2^-(2k+1)/(2k+1)`. At `k = 28` the tail is `1.2e-19`,
+/// which is below the grid. At `k = 27` the tail is `5.1e-19`, which is above
+/// the grid. This is the longest series in this module. The coefficients of
+/// `atan` are `1/(2k+1)`, thus the series converges geometrically. The `sin`
+/// and `exp` series converge factorially.
 const ATAN_TERMS: u32 = 30;
 
 /// The largest argument `sin`, `cos` and `tan` will accept.
 ///
-/// Beyond this the answer is not merely inaccurate, it is meaningless, and the
-/// functions return `Nan` rather than a number nobody should trust. Argument
-/// reduction needs `x mod (π/2)`, and `π` is known here only to a relative
-/// `2^-61`, so the reduced argument carries an absolute error of about
-/// `|x| · 2^-61`. At `|x| = 2^20` that is `2^-41`, which still leaves the
-/// result usable; at `|x| = 2^61` it exceeds `π` itself and every digit of the
-/// answer is noise.
+/// Above this limit the result has no meaning, and the functions return `Nan`.
+/// Argument reduction needs `x mod (π/2)`. This module knows `π` to a relative
+/// error of `2^-61`, thus the reduced argument has an absolute error of
+/// approximately `|x| · 2^-61`. At `|x| = 2^20` that error is `2^-41`, and the
+/// result is still usable. At `|x| = 2^61` the error is larger than `π`, and
+/// each digit of the answer is noise.
 ///
-/// `f64` returns a plausible-looking value in that regime. This returns `Nan`,
-/// which is the same choice the rest of the crate makes: an explicit
-/// non-answer beats a silent wrong one.
+/// `f64` returns a plausible value in that range. This module returns `Nan`,
+/// which is the convention of the crate: an explicit non-answer instead of a
+/// silent wrong answer.
 const TRIG_ARG_LIMIT: i64 = 1 << 20;
 
 /// `atan(z) = z − z³/3 + z⁵/5 − …`, for `|z| <= 1/2`.
 ///
-/// The alternating sibling of [`atanh_series`]; subtraction and addition
-/// alternate rather than every term adding.
+/// This series is the alternating form of [`atanh_series`]. Subtraction and
+/// addition alternate between terms.
 fn atan_series(z: Q) -> (r: Q)
     requires
         z.wf(),
@@ -849,14 +848,14 @@ fn atan_series(z: Q) -> (r: Q)
 
 /// `π`, by Machin's formula `π = 16·atan(1/5) − 4·atan(1/239)`.
 ///
-/// Machin's form is chosen because both arguments sit deep in the series'
-/// comfortable range — the naive `π/4 = atan(1)` would put the argument exactly
-/// where the series barely converges.
+/// Machin's formula keeps both arguments well inside the range of the series.
+/// The simpler form `π/4 = atan(1)` puts the argument at the point where the
+/// series converges slowest.
 ///
-/// Kept as the *derivation* of [`pi`], which returns the same value as a
-/// literal. This costs two full series — about sixty-four terms — and
-/// benchmarking showed it dominating `sin`, `cos` and `atan`, each of which
-/// needed it on every call.
+/// This function is the derivation of [`pi`], which returns the same value as a
+/// literal. This function evaluates two full series, which is approximately
+/// sixty-four terms. That cost dominates `sin`, `cos` and `atan`, which each
+/// need `π` on every call.
 pub fn pi_series() -> (r: Q)
     ensures
         r.wf(),
@@ -868,9 +867,9 @@ pub fn pi_series() -> (r: Q)
 
 /// `π`.
 ///
-/// The literal is exactly what [`pi_series`] computes — `pi_is_the_series_value`
-/// asserts they are bit-identical. See [`ln2`] for why a checked literal is
-/// preferable to recomputing here.
+/// The literal is the value that [`pi_series`] computes. The test
+/// `pi_is_the_series_value` asserts that the two are bit-identical. See [`ln2`]
+/// for the reason to use a checked literal.
 pub fn pi() -> (r: Q)
     ensures
         r.wf(),
@@ -990,11 +989,10 @@ fn cos_series(z: Q) -> (r: Q)
 impl Q {
     /// The arctangent, in `(-π/2, π/2)`.
     ///
-    /// `atan(±∞)` is `±π/2` exactly — the limit exists and is representable, so
-    /// unlike most functions here the infinite cases carry real information.
-    /// `atan(PosSat)` is `Nan`: the image of `(MAX_MAG, ∞)` is a sliver just
-    /// below `π/2`, which contains representable values and so cannot be
-    /// reported as any saturation state.
+    /// `atan(±∞)` is exactly `±π/2`. The limit exists and is representable,
+    /// thus the infinite cases carry information. `atan(PosSat)` is `Nan`. The
+    /// image of `(MAX_MAG, ∞)` is a narrow interval below `π/2` that contains
+    /// representable values, thus no saturation state is sound.
     ///
     /// # Method
     ///
@@ -1056,10 +1054,9 @@ impl Q {
 
     /// The sine.
     ///
-    /// `Nan` for `|self| > 2^20`, for every special, and for anything else whose
-    /// argument cannot be reduced meaningfully — the limit is `2^20`. Both
-    /// infinities are `Nan` because `sin` has no limit at infinity, which is a
-    /// genuine non-answer rather than a limitation of this implementation.
+    /// The result is `Nan` for `|self| > 2^20` and for each special value. The
+    /// reduction limit is `2^20`. Both infinities give `Nan`, because `sin` has
+    /// no limit at infinity.
     ///
     /// # Method
     ///
@@ -1086,10 +1083,9 @@ impl Q {
 
     /// The shared reduction for [`Q::sin`] and [`Q::cos`].
     ///
-    /// `want_cos` selects which of the pair is returned; both need the identical
-    /// argument reduction, and doing it once keeps them exactly consistent —
-    /// `sin(x)² + cos(x)² == 1` would be at the mercy of two separate reductions
-    /// otherwise.
+    /// `want_cos` selects the function to return. Both functions need the same
+    /// argument reduction. One shared reduction keeps them consistent, which
+    /// the identity `sin(x)² + cos(x)² == 1` needs.
     fn sin_cos(self, want_cos: bool) -> (r: Q)
         requires
             self.wf(),
@@ -1133,9 +1129,9 @@ impl Q {
 
     /// The tangent, as `sin/cos`.
     ///
-    /// At an odd multiple of `π/2` the cosine is near zero and the quotient
-    /// saturates or reports an infinity rather than trapping — which is the
-    /// honest answer, since `tan` genuinely has a pole there.
+    /// At an odd multiple of `π/2` the cosine is near zero. The quotient then
+    /// saturates or gives an infinity, and does not trap. `tan` has a pole at
+    /// those points.
     pub fn tan(self) -> (r: Q)
         requires
             self.wf(),
@@ -1159,10 +1155,10 @@ pub fn ln10_series() -> (r: Q)
 
 /// `ln(10)`.
 ///
-/// Pinned like [`ln2`], and `ln10_is_the_series_value` checks it. That test
-/// earned its place immediately: the literal was first written from a
-/// remembered decimal expansion and was wrong in the seventh significant
-/// figure. A constant nobody can check is a constant nobody should trust.
+/// The value is a literal, as for [`ln2`], and `ln10_is_the_series_value`
+/// checks it against the derivation. The test is necessary: a literal that
+/// comes from a decimal expansion can be wrong in an early significant
+/// figure.
 pub fn ln10() -> (r: Q)
     ensures
         r.wf(),
@@ -1193,8 +1189,8 @@ impl Q {
 
     /// The logarithm in an arbitrary base, as `ln(self) / ln(base)`.
     ///
-    /// A base of `1` gives a zero denominator and therefore an infinity or
-    /// `Nan` — which is the honest answer, since `log_1` is undefined.
+    /// A base of `1` gives a zero denominator, thus an infinity or `Nan`. The
+    /// function `log_1` is undefined.
     pub fn log(self, base: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1217,12 +1213,11 @@ impl Q {
 
     /// `self^exponent` for a real exponent, as `exp(exponent · ln(self))`.
     ///
-    /// Defined only for a positive base: `ln` of a negative is `Nan`, which
-    /// propagates. That is the same domain `f64::powf` has trouble with, made
-    /// explicit rather than special-cased — `(-8)^(1/3)` has a real answer but
-    /// `(-8)^(1/2)` does not, and this does not attempt to tell them apart.
-    /// Use [`Q::pow_i32`] for integer exponents, which is exact and handles
-    /// negative bases.
+    /// The function is defined only for a positive base. `ln` of a negative
+    /// value is `Nan`, and that state propagates. `(-8)^(1/3)` has a real
+    /// answer and `(-8)^(1/2)` does not, and this function does not separate
+    /// the two cases. Use [`Q::pow_i32`] for integer exponents. That function
+    /// is exact and accepts negative bases.
     ///
     /// `0^0` is `1`, matching [`Q::pow_u32`] and IEEE.
     pub fn powf(self, exponent: Q) -> (r: Q)
@@ -1243,10 +1238,11 @@ impl Q {
 
     /// The cube root, defined for negative arguments as well as positive.
     ///
-    /// `cbrt(-x) == -cbrt(x)`, so unlike [`Q::sqrt`] the whole real line is in
-    /// the domain. Computed as `exp(ln|x| / 3)` with the sign reapplied, so it
-    /// carries `exp` and `ln`'s accuracy rather than `sqrt`'s — about `2^-53`
-    /// against `sqrt`'s `2^-60`.
+    /// `cbrt(-x) == -cbrt(x)`, thus the domain is the whole real line, unlike
+    /// the domain of [`Q::sqrt`]. The function computes `exp(ln|x| / 3)` and
+    /// then applies the sign. Its accuracy is thus the accuracy of `exp` and
+    /// `ln`, which is approximately `2^-53`. The accuracy of `sqrt` is
+    /// approximately `2^-60`.
     pub fn cbrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -1281,9 +1277,9 @@ impl Q {
     /// `sqrt(self² + other²)`, without the intermediate overflowing where the
     /// naive form would.
     ///
-    /// Computed as `|a|·sqrt(1 + (b/a)²)` with `a` the larger magnitude, which
-    /// keeps the squared term at most `1` and so representable even when
-    /// `a² + b²` is not.
+    /// The function computes `|a|·sqrt(1 + (b/a)²)`, where `a` is the operand
+    /// with the larger magnitude. The squared term is thus at most `1` and
+    /// stays representable when `a² + b²` does not.
     pub fn hypot(self, other: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1327,8 +1323,8 @@ impl Q {
 
     /// The hyperbolic tangent, `sinh / cosh`.
     ///
-    /// `cosh` is never zero, so unlike [`Q::tan`] this has no poles; large
-    /// arguments approach `±1`.
+    /// `cosh` is never zero, thus this function has no poles, unlike
+    /// [`Q::tan`]. Large arguments give results near `±1`.
     pub fn tanh(self) -> (r: Q)
         requires
             self.wf(),
@@ -1340,9 +1336,9 @@ impl Q {
 
     /// The arcsine, in `[-π/2, π/2]`.
     ///
-    /// `Nan` outside `[-1, 1]`, where there is no real answer. The endpoints
-    /// are handled directly rather than through the identity below, which would
-    /// divide by zero there.
+    /// The result is `Nan` outside `[-1, 1]`, where there is no real answer.
+    /// The function computes the endpoints directly. The identity below divides
+    /// by zero at those two points.
     pub fn asin(self) -> (r: Q)
         requires
             self.wf(),
@@ -1386,9 +1382,9 @@ impl Q {
     /// The two-argument arctangent: the angle of `(x, y)` from the positive
     /// x-axis, in `(-π, π]`.
     ///
-    /// The quadrant corrections are what distinguish this from `atan(y/x)`,
-    /// which cannot tell `(-1, -1)` from `(1, 1)`. `atan2(0, 0)` is `Nan`: the
-    /// origin has no angle, and returning zero would invent one.
+    /// The quadrant corrections distinguish this function from `atan(y/x)`,
+    /// which gives the same result for `(-1, -1)` and `(1, 1)`. `atan2(0, 0)`
+    /// is `Nan`, because the origin has no angle.
     pub fn atan2(self, x: Q) -> (r: Q)
         requires
             self.wf(),

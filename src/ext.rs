@@ -1,22 +1,21 @@
 //! The extended `Q`: a rational, or an explicit non-representable state.
 //!
-//! This is an extension layer *over* the proven kernel, not a rewrite of it.
-//! [`Rat`] keeps its invariant unchanged, so every obligation stated about it
-//! keeps its exact statement; what this module adds is a discriminant that makes
-//! "not a representable rational" an observable state instead of something the
-//! caller is trusted to have ruled out.
+//! This module is an extension layer over the proven kernel. It is not a
+//! rewrite of the kernel. [`Rat`] keeps its invariant, thus each obligation
+//! about `Rat` keeps its statement. This module adds a discriminant. The
+//! discriminant makes the condition "not a representable rational" an
+//! observable state, and not a condition that the caller must rule out.
 //!
-//! The design is issue #26. Two points from it are load-bearing here:
+//! Issue #26 holds the design. Two points from that design apply here:
 //!
-//! * **A special carries no `num`/`den`,** so no operation can misread one as a
-//!   number. That is the `recip(0)` defect class, and it dies with the encoding.
-//!   The discriminant also makes an omitted case a *compile* error rather than a
-//!   discipline every future author has to remember — which a sentinel
-//!   `den == 0` encoding would not.
-//! * **There is deliberately no `is_finite()`.** `PosSat` denotes genuinely
-//!   finite reals — a magnitude above the budget is still a real number — so
-//!   "finite" is the wrong axis to split this type on. The four predicates below
-//!   split it on the axis that actually exists.
+//! * A special value carries no `num` or `den`. No operation can thus read a
+//!   special value as a number. This encoding removes the `recip(0)` class of
+//!   defect. The discriminant also makes an omitted case a compile error. A
+//!   sentinel `den == 0` encoding does not.
+//! * There is no `is_finite()`. `PosSat` denotes finite reals, because a
+//!   magnitude above the budget is still a real number. "Finite" is thus the
+//!   wrong axis for this type. The four predicates below use the axis that
+//!   exists.
 
 use verus_builtin_macros::verus;
 
@@ -31,10 +30,10 @@ verus! {
 
 /// The sign of a value that has one.
 ///
-/// [`Q::signum`] returns `Option<Sign>` rather than an integer because
-/// `signum(Nan)` has no answer: `Nan` denotes all of `ℝ ∪ {±∞}`, so no sign is
-/// sound. `None` is exactly the `Nan` case — every other state, including both
-/// saturations and both infinities, is sign-definite.
+/// [`Q::signum`] returns `Option<Sign>` and not an integer, because
+/// `signum(Nan)` has no answer. `Nan` denotes all of `ℝ ∪ {±∞}`, thus no sign
+/// is sound. `None` is the `Nan` case only. Each other state has a definite
+/// sign, including both saturations and both infinities.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Sign {
     /// Strictly less than zero.
@@ -58,26 +57,25 @@ pub enum Sign {
 /// | `NegInf` | `{-∞}` |
 /// | `Nan` | `ℝ ∪ {±∞}` — no information |
 ///
-/// The open endpoint is forced by the code rather than chosen:
-/// `magnitude_fits` in [`crate::model`] is `|n| <= MAX_MAG · d`, so saturation
-/// triggers strictly *above* `MAX_MAG`, and `MAX_MAG` itself is representable as
-/// `MAX_MAG/1`.
+/// The code forces the open endpoint. `magnitude_fits` in [`crate::model`] is
+/// `|n| <= MAX_MAG · d`, thus saturation starts above `MAX_MAG`, and `MAX_MAG`
+/// is representable as `MAX_MAG/1`.
 ///
-/// `PosSat` and `NegSat` denoting reals only — never `±∞` — is not a detail. It
-/// is what makes `Number(0) · PosSat` exactly `Number(0)`, where `0 · ±∞` is
-/// `Nan`. Saturation is strictly better behaved than infinity, and that is the
-/// reason both exist as separate states.
+/// `PosSat` and `NegSat` denote reals only, and never `±∞`. That property makes
+/// `Number(0) · PosSat` exactly `Number(0)`, where `0 · ±∞` is `Nan`.
+/// Saturation is thus better behaved than infinity, and the type keeps the two
+/// as separate states.
 ///
 /// # Equality
 ///
-/// `PartialEq` is derived, and that is deliberate. `Rat` is canonical, so its
-/// structural equality is mathematical equality; the specials carry no payload,
-/// so there is no "two distinct NaNs" problem and `Nan == Nan` is true. That
-/// reflexivity is what keeps `Eq` lawful, `Hash` consistent with `Eq`, and the
-/// order in `Ord` total. It is a deliberate departure from IEEE 754, which makes
+/// `PartialEq` is derived. `Rat` is canonical, thus its structural equality is
+/// mathematical equality. The special values carry no payload, thus there are
+/// no two distinct `Nan` values and `Nan == Nan` is true. That reflexivity
+/// keeps `Eq` lawful, keeps `Hash` consistent with `Eq`, and keeps the `Ord`
+/// order total. This is an intentional departure from IEEE 754, where
 /// `NaN != NaN`.
 ///
-/// `Ord` is **not** derived — see the `Ord` impl. The derived order would follow
+/// `Ord` is not derived. See the `Ord` implementation. A derived order follows
 /// the declaration order of the variants below, which is not the order on
 /// values.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -101,9 +99,8 @@ impl Q {
     /// and the specials are unconditionally well-formed because they carry
     /// nothing that could be malformed.
     ///
-    /// This is the enum-level counterpart of `Rat::wf`, and it is deliberately
-    /// this weak: the whole point of the specials is that they have no
-    /// representation invariant to violate.
+    /// This is the enum-level counterpart of `Rat::wf`. It is intentionally
+    /// weak, because a special value has no representation invariant.
     pub open spec fn wf(self) -> bool {
         match self {
             Q::Number(x) => x.wf(),
@@ -114,16 +111,14 @@ impl Q {
     // -----------------------------------------------------------------------
     // Classification
     //
-    // These four `ensures` clauses restate their own bodies, and that is
-    // honest rather than circular *here*: a discriminant test has no content
-    // beyond which variant it accepts, so the specification and the
-    // implementation are the same statement. Nothing is being proven; the
-    // clauses exist so that callers in verified code can reason about the
-    // result at all.
+    // These four `ensures` clauses restate their own bodies. A discriminant
+    // test has no content beyond the variant that it accepts, thus the
+    // specification and the implementation are the same statement. The clauses
+    // prove nothing. They exist so that a caller in verified code can reason
+    // about the result.
     //
-    // The predicates further down (`is_zero`, `signum`, ...) are a different
-    // matter — they have real content, and they delegate to the verified
-    // kernel rather than restating it.
+    // The predicates below (`is_zero`, `signum` and others) are different. They
+    // have content, and they delegate to the verified kernel.
     // -----------------------------------------------------------------------
 
     /// Whether this is a representable rational.
@@ -163,7 +158,7 @@ impl Q {
     /// Whether this is a representable rational.
     ///
     /// The four classification predicates are mutually exclusive and jointly
-    /// exhaustive — see `theorem_classification_partitions`.
+    /// exhaustive. See `theorem_classification_partitions`.
     pub fn is_number(self) -> (r: bool)
         ensures
             r == self.spec_is_number(),
@@ -173,9 +168,9 @@ impl Q {
 
     /// Whether the true magnitude is known to exceed `MAX_MAG`.
     ///
-    /// Note this is *not* the negation of `is_number`: it distinguishes an
-    /// overflow from a division by zero, which is the diagnostic value that
-    /// earns the saturation states their place in the type.
+    /// This predicate is not the negation of `is_number`. It separates an
+    /// overflow from a division by zero. That distinction is the purpose of the
+    /// saturation states.
     pub fn is_saturated(self) -> (r: bool)
         ensures
             r == self.spec_is_saturated(),
@@ -202,9 +197,9 @@ impl Q {
     // -----------------------------------------------------------------------
     // Constructors
     //
-    // Each establishes `wf`. The specials do so trivially, which is the point:
-    // there is no way to build a malformed special, so the constructors for
-    // them cannot fail and need no `Option`.
+    // Each constructor establishes `wf`. A special value establishes `wf`
+    // trivially. There is no malformed special value, thus these constructors
+    // cannot fail and need no `Option`.
     // -----------------------------------------------------------------------
 
     /// Lift a kernel rational into the extended type.
@@ -253,29 +248,28 @@ impl Q {
 
     /// The rational `num / den`, or the special that stands for it.
     ///
-    /// Unlike [`Rat::new`] this is **total**: `den == 0` is no longer a failure
-    /// to be reported out-of-band but a value in the type, resolved by the
-    /// IEEE 754 convention of issue #26 §4 — `x/0` takes the positive-side limit
-    /// by fiat, exactly as IEEE does for `+0`, and `0/0` carries no information.
+    /// This constructor is total, unlike [`Rat::new`]. `den == 0` is a value in
+    /// the type and not an out-of-band failure. Issue #26 §4 applies the
+    /// IEEE 754 convention: `x/0` takes the positive-side limit, as IEEE does
+    /// for `+0`, and `0/0` carries no information.
     ///
-    /// # Saturation is judged on the value, not on the components
+    /// # Saturation applies to the value, not to the components
     ///
-    /// This distinction is load-bearing and easy to get wrong. `Rat::new`
-    /// returns `None` for two quite different reasons: the *value* exceeds the
-    /// budget (`i64::MAX / 1`), or the *reduced denominator* exceeds it while
-    /// the value itself is tiny (`1 / i64::MIN`, which is about `-1.08e-19`).
-    /// Only the first is saturation. Treating the second as `NegSat` would
-    /// claim `|value| > MAX_MAG` of a value in `(-1, 0)` — an unsound denotation,
-    /// and exactly the class of silent wrong answer this type exists to remove.
+    /// `Rat::new` returns `None` for two different reasons. The value exceeds
+    /// the budget, as in `i64::MAX / 1`. Or the reduced denominator exceeds the
+    /// budget while the value is small, as in `1 / i64::MIN`, which is
+    /// approximately `-1.08e-19`. Only the first reason is saturation. A
+    /// `NegSat` result for the second reason claims `|value| > MAX_MAG` for a
+    /// value in `(-1, 0)`, which is an unsound denotation.
     ///
-    /// So the test here is [`crate::model`]'s `magnitude_fits` on the value, and
-    /// a pair that fits in magnitude but not in its components is **rounded**
-    /// rather than saturated. That is sound under R3, and #26 §11 makes the same
-    /// call in rejecting a `Tiny` state: underflow-to-zero is inside the
-    /// rounding contract, not a defect to surface.
+    /// The test here is thus `magnitude_fits` from [`crate::model`], applied to
+    /// the value. A pair that fits in magnitude but not in its components is
+    /// rounded, and not saturated. R3 makes that result sound. Issue #26 §11
+    /// makes the same decision when it rejects a `Tiny` state: underflow to
+    /// zero is inside the rounding contract.
     ///
-    /// Where [`Rat::new`] succeeds, this agrees with it exactly — rounding a
-    /// value that is already representable returns it unchanged (R1).
+    /// Where [`Rat::new`] succeeds, this constructor returns the same value.
+    /// Rounding a representable value returns it unchanged (R1).
     pub fn new(num: i64, den: i64) -> (r: Q)
         ensures
             r.wf(),
@@ -361,15 +355,14 @@ impl Q {
     // -----------------------------------------------------------------------
     // Value predicates (issue #26 §5)
     //
-    // Every one of these is `false` on `Nan`, which is stated in the design
-    // rather than left emergent: `Nan` denotes every value, so no non-trivial
-    // predicate can soundly hold of it.
+    // Each predicate is `false` on `Nan`. The design states that result.
+    // `Nan` denotes every value, thus no non-trivial predicate holds of it.
     //
-    // These delegate to the verified kernel predicates on `Rat` instead of
-    // reimplementing the arithmetic. Reimplementation is what makes a
-    // postcondition that mirrors its own body dangerous — a typo duplicated
-    // into both still verifies. Delegation means the content is carried by
-    // `Rat`'s own proven contract.
+    // These predicates delegate to the verified kernel predicates on `Rat` and
+    // do not reimplement the arithmetic. A reimplementation makes a
+    // postcondition that mirrors its own body, and a defect that is present in
+    // both still verifies. Delegation puts the content in the proven contract
+    // of `Rat`.
     // -----------------------------------------------------------------------
 
     /// Whether this is exactly zero.
@@ -390,9 +383,9 @@ impl Q {
 
     /// Whether this is `Number(x)` with `x` the exact rational `n / d`.
     ///
-    /// Constructors state their result with this rather than by naming a
-    /// kernel constructor, because `Rat::zero()` and friends are `exec` and so
-    /// cannot appear in a specification.
+    /// A constructor states its result with this predicate and does not name a
+    /// kernel constructor. `Rat::zero()` and the other kernel constructors are
+    /// `exec` functions and thus cannot appear in a specification.
     pub open spec fn spec_is_value(self, n: int, d: int) -> bool {
         match self {
             Q::Number(x) => x.n() == n && x.d() == d,
@@ -410,9 +403,9 @@ impl Q {
 
     /// `self == 0`.
     ///
-    /// False on every special. `PosSat` denotes `(MAX_MAG, +∞)`, which does not
-    /// contain zero, so this is not merely a convention there — it is the
-    /// answer. On `Nan` it is a convention, and the one the design fixes.
+    /// The result is false for each special value. `PosSat` denotes
+    /// `(MAX_MAG, +∞)`, which does not contain zero, thus false is the true
+    /// answer there. For `Nan` the result is a convention from the design.
     pub fn is_zero(self) -> (r: bool)
         requires
             self.wf(),
@@ -440,9 +433,8 @@ impl Q {
 
     /// `0 <= self <= 1`.
     ///
-    /// False on every special, and on the saturations that is again the true
-    /// answer rather than a convention: both saturation ranges lie entirely
-    /// outside `[0, 1]`.
+    /// The result is false for each special value. For the saturations false is
+    /// the true answer, because both saturation ranges are outside `[0, 1]`.
     pub fn in_unit_interval(self) -> (r: bool)
         requires
             self.wf(),
@@ -457,9 +449,9 @@ impl Q {
 
     /// The sign, where one exists.
     ///
-    /// `None` exactly on `Nan`. Both saturations and both infinities are
-    /// sign-definite and answer `Some`, which is the whole reason the sign is
-    /// carried in the discriminant rather than discarded.
+    /// The result is `None` for `Nan` only. Both saturations and both
+    /// infinities have a definite sign and give `Some`. The discriminant
+    /// carries that sign for this purpose.
     pub fn signum(self) -> (r: Option<Sign>)
         requires
             self.wf(),
@@ -490,18 +482,19 @@ impl Q {
 // ---------------------------------------------------------------------------
 // N-ary folds (issue #26 §10.5)
 //
-// The kernel's `nary::sum`/`product`/`weighted_mean` clamp: `sum(&[M, M, -M])`
-// clamps to `M`, then subtracts, and returns `0` — silently wrong, since the
-// true total is `M`. These fold with the enum's operations instead, so an
-// overflow anywhere in the chain is reported rather than absorbed.
+// The kernel folds `nary::sum`, `nary::product` and `nary::weighted_mean`
+// clamp. For example, `sum(&[M, M, -M])` clamps to `M`, then subtracts, and
+// returns `0`, but the true total is `M`. The folds below use the operations of
+// this enum, thus an overflow at any point in the chain is reported and not
+// absorbed.
 //
-// #26 §9.2 is honest about the cost and so is this: once a partial fold
-// saturates, `PosSat + Number(-M)` is `Nan` and the fold never recovers. A
-// sequence of representable numbers whose exact total is representable can
-// still yield `Nan`. That is strictly less useful than `f64`'s sticky
-// infinities — but it is *honest*, where the kernel's `0` is not. Callers who
-// need the exact-path guarantee should check `is_number()` on the result, which
-// is exactly the "all partial folds are `Number`" hypothesis §9.2 calls for.
+// Issue #26 §9.2 states the cost. After a partial fold saturates,
+// `PosSat + Number(-M)` is `Nan`, and the fold does not recover. A sequence of
+// representable numbers with a representable total can thus give `Nan`. This
+// behaviour is less useful than the sticky infinities of `f64`, but it does not
+// give a wrong number. A caller that needs the exact-path guarantee must check
+// `is_number()` on the result. That check is the hypothesis "all partial folds
+// are `Number`" from §9.2.
 // ---------------------------------------------------------------------------
 
 /// Every element satisfies the type invariant.
@@ -518,9 +511,9 @@ pub open spec fn all_wf_q_pairs(s: Seq<(Q, Q)>) -> bool {
 impl Q {
     /// `xs[0] + xs[1] + ...`, left to right. An empty slice gives `0`.
     ///
-    /// Left-to-right is part of the contract, not an implementation detail:
-    /// with rounding, addition is not associative, so the order fixes the
-    /// answer and is what makes the result reproducible.
+    /// The left-to-right order is part of the contract and not an
+    /// implementation detail. With rounding, addition is not associative, thus
+    /// the order fixes the answer and makes the result reproducible.
     pub fn sum(xs: &[Q]) -> (r: Q)
         requires
             all_wf_q(xs@),
@@ -570,11 +563,12 @@ impl Q {
 
     /// `sum(w_i · x_i) / sum(w_i)` over `(weight, value)` pairs.
     ///
-    /// **Total**, where the kernel's returns `Option`. A zero total weight is no
-    /// longer an out-of-band failure: it is `Nan` when the weighted numerator is
-    /// also zero (`0/0` carries no information) and a signed infinity otherwise,
-    /// by the same #26 §4 convention every other division follows. An empty
-    /// slice is `Nan` for that reason, not by special case.
+    /// This function is total. The kernel function returns `Option`. A zero
+    /// total weight is not an out-of-band failure here. The result is `Nan`
+    /// when the weighted numerator is also zero, because `0/0` carries no
+    /// information. Otherwise the result is a signed infinity, by the #26 §4
+    /// convention that each division follows. An empty slice gives `Nan` for
+    /// that reason, and not by a special case.
     pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Q)
         requires
             all_wf_q_pairs(pairs@),
@@ -604,16 +598,15 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Addition, subtraction, multiplication (issue #26 §10.3)
 //
-// Saturation moves into the enum here. The kernel silently returns
-// `±MAX_MAG/1` when a sum or product leaves the budget — `Rat::add(M, M)` is
-// `M`, wrong by a factor of two and indistinguishable from a real result — and
-// this layer reports `PosSat`/`NegSat` instead.
+// Saturation becomes visible in the enum here. The kernel returns `±MAX_MAG/1`
+// when a sum or a product leaves the budget. For example, `Rat::add(M, M)` is
+// `M`, which is wrong by a factor of two and looks like a true result. This
+// layer reports `PosSat` or `NegSat` instead.
 //
-// The precision cliffs marked below are option (A) from §6, taken knowingly:
-// the lattice has no element for "sign known, magnitude unknown", so a few
-// cells must answer `Nan` where a `PosUnknown`/`NegUnknown` state would answer
-// precisely. A cliff only bites a computation that continues *after* an
-// overflow, which arguably it should not.
+// The precision cliffs below are option (A) from §6. The lattice has no element
+// for "sign known, magnitude unknown", thus some cells give `Nan` where a
+// `PosUnknown` or `NegUnknown` state gives a precise answer. A cliff affects
+// only a computation that continues after an overflow.
 // ---------------------------------------------------------------------------
 
 impl Q {
@@ -669,10 +662,11 @@ impl Q {
 
     /// `Number(x) + Sat`, where `sat_pos` says which saturation.
     ///
-    /// `Number(x) + PosSat` denotes `(MAX_MAG + x, +∞)`. For `x >= 0` that is
-    /// contained in `⟦PosSat⟧` and the answer is sound. For `x < 0` the lower
-    /// endpoint `MAX_MAG + x` can fall as low as `0`, so the image includes
-    /// representable values and `PosSat` would be **unsound** — hence the cliff.
+    /// `Number(x) + PosSat` denotes `(MAX_MAG + x, +∞)`. For `x >= 0` that
+    /// interval is inside `⟦PosSat⟧`, and the answer is sound. For `x < 0` the
+    /// lower endpoint `MAX_MAG + x` can be as low as `0`. The image then
+    /// contains representable values, and a `PosSat` result is unsound. This is
+    /// the cliff.
     fn number_plus_sat(x: Rat, sat_pos: bool) -> (r: Q)
         requires
             x.wf(),
@@ -699,16 +693,16 @@ impl Q {
 
     /// `Number(x) * Sat`, where `sat_pos` says which saturation.
     ///
-    /// The boundary is **inclusive**: at `|x| == 1` the image is exactly
-    /// `1 · (MAX_MAG, ∞) = (MAX_MAG, ∞)`, so saturation is sound and minimal
+    /// The boundary is inclusive. At `|x| == 1` the image is exactly
+    /// `1 · (MAX_MAG, ∞) = (MAX_MAG, ∞)`, thus saturation is sound and minimal
     /// there. The cliff is the open interval `0 < |x| < 1`, where the image
-    /// `(MAX_MAG·|x|, ∞)` dips below `MAX_MAG`. (An earlier draft of §5 wrote
-    /// the condition as `x > 1`, which gratuitously sent `one() * PosSat` to
-    /// `Nan` and contradicted `neg(PosSat) == NegSat`.)
+    /// `(MAX_MAG·|x|, ∞)` extends below `MAX_MAG`. The condition must not be
+    /// `x > 1`: that form sends `one() * PosSat` to `Nan` and contradicts
+    /// `neg(PosSat) == NegSat`.
     ///
-    /// `Number(0) * Sat` is exactly `Number(0)` — **not** `Nan` — because `Sat`
-    /// denotes finite reals only. This is the clearest case of saturation being
-    /// better behaved than infinity, where `0 · ±∞` genuinely is indeterminate.
+    /// `Number(0) * Sat` is exactly `Number(0)`, and not `Nan`, because `Sat`
+    /// denotes finite reals only. This is the clearest case where saturation is
+    /// better behaved than infinity, because `0 · ±∞` is indeterminate.
     fn number_times_sat(x: Rat, sat_pos: bool) -> (r: Q)
         requires
             x.wf(),
@@ -737,10 +731,10 @@ impl Q {
 
     /// `a + b`, total.
     ///
-    /// Replaces a kernel `add` that silently clamps: `Rat::add(MAX_MAG,
-    /// MAX_MAG)` returns `MAX_MAG/1`, wrong by a factor of two, carrying no
-    /// error guarantee and indistinguishable from a real result unless the
-    /// caller happened to reach for `checked_add`.
+    /// This operation replaces the kernel `add`, which clamps.
+    /// `Rat::add(MAX_MAG, MAX_MAG)` returns `MAX_MAG/1`. That result is wrong
+    /// by a factor of two, carries no error guarantee, and looks like a true
+    /// result unless the caller uses `checked_add`.
     pub fn add(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -753,9 +747,9 @@ impl Q {
             // infinite and never lose all information.
             (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
                 || r.spec_is_saturated()),
-            // An infinity out requires an infinity in — addition cannot
-            // manufacture one, which is what keeps `is_infinite()` meaning
-            // "a division by zero happened somewhere upstream".
+            // An infinite result needs an infinite operand. Addition cannot
+            // create one. `is_infinite()` thus keeps the meaning "a division by
+            // zero occurred upstream".
             r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
             // ...and conversely an infinite operand always survives, so no
             // representable sum can come out of one.
@@ -787,8 +781,8 @@ impl Q {
 
     /// `a - b`, total.
     ///
-    /// Defined as `a + (-b)`, exactly as §5 specifies, so the two can never
-    /// disagree about an overflowing difference.
+    /// The definition is `a + (-b)`, as §5 specifies. The two operations thus
+    /// agree for an overflowing difference.
     pub fn sub(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -813,8 +807,8 @@ impl Q {
             (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
                 || r.spec_is_saturated()),
             r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_infinite()),
-            // An infinite operand yields an infinity or `Nan`, never a
-            // representable product — even against zero, where it is `Nan`.
+            // An infinite operand gives an infinity or `Nan`, and never a
+            // representable product. Against zero the result is `Nan`.
             (a.spec_is_infinite() || b.spec_is_infinite()) ==> !r.spec_is_number(),
     {
         match (a, b) {
@@ -825,14 +819,13 @@ impl Q {
             (Q::Number(x), Q::NegSat) => Q::number_times_sat(x, false),
             (Q::PosSat, Q::Number(y)) => Q::number_times_sat(y, true),
             (Q::NegSat, Q::Number(y)) => Q::number_times_sat(y, false),
-            // `0 · ±∞` is genuinely indeterminate — unlike `0 · Sat`, which is
-            // exactly zero.
+            // `0 · ±∞` is indeterminate. `0 · Sat` is exactly zero.
             (Q::Number(x), Q::PosInf) => Q::number_times_inf(x, true),
             (Q::Number(x), Q::NegInf) => Q::number_times_inf(x, false),
             (Q::PosInf, Q::Number(y)) => Q::number_times_inf(y, true),
             (Q::NegInf, Q::Number(y)) => Q::number_times_inf(y, false),
-            // Saturations multiply by sign and stay saturated: a product of two
-            // magnitudes above MAX_MAG is far above it.
+            // Two saturations give a saturation with the product sign. A
+            // product of two magnitudes above MAX_MAG is far above MAX_MAG.
             (Q::PosSat, Q::PosSat) => Q::PosSat,
             (Q::PosSat, Q::NegSat) => Q::NegSat,
             (Q::NegSat, Q::PosSat) => Q::NegSat,
@@ -854,16 +847,15 @@ impl Q {
 
     /// `self` raised to `e`, total.
     ///
-    /// `pow_u32(a, 0)` is `Number(1)` for **every** `a`, including `Nan` —
-    /// matching IEEE's `NaN^0 == 1`, which #26 §5 calls out rather than leaving
-    /// emergent. The exponent is a count, not a value, so the base's
-    /// informativeness is irrelevant when it is used zero times.
+    /// `pow_u32(a, 0)` is `Number(1)` for each `a`, including `Nan`. This
+    /// result matches `NaN^0 == 1` in IEEE 754, and #26 §5 states it. The
+    /// exponent is a count and not a value, thus the information in the base
+    /// does not apply when the base is used zero times.
     ///
-    /// A left fold of [`Q::mul`], the same shape as the kernel's `pow_u32`, so
-    /// the two associate their roundings identically. That matters: with
-    /// rounding, multiplication is *not* associative in general, so a
-    /// square-and-multiply implementation would not merely be faster, it could
-    /// give a different answer.
+    /// The implementation is a left fold of [`Q::mul`], with the same shape as
+    /// the kernel `pow_u32`. The two thus associate their roundings in the same
+    /// way. With rounding, multiplication is not associative, thus a
+    /// square-and-multiply implementation can give a different answer.
     pub fn pow_u32(self, e: u32) -> (r: Q)
         requires
             self.wf(),
@@ -889,11 +881,11 @@ impl Q {
 
     /// `a + b` when the result is a representable rational, `None` otherwise.
     ///
-    /// #26 §3: the kernel's four `checked_*` contracts are literally
-    /// `r.is_none() <==> saturated(...)`, so the discriminant carries precisely
-    /// the same information and these collapse to sugar. A provable
-    /// equivalence, not an approximation — and unlike the kernel's versions
-    /// these cannot panic.
+    /// Issue #26 §3 applies. The four kernel `checked_*` contracts are
+    /// `r.is_none() <==> saturated(...)`, thus the discriminant carries the
+    /// same information and these functions are a convenience. The equivalence
+    /// is provable. These functions also cannot panic, unlike the kernel
+    /// versions.
     pub fn checked_add(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -928,9 +920,9 @@ impl Q {
     /// `a * b` when the result is a representable rational. See
     /// [`Q::checked_add`].
     ///
-    /// Note this can succeed with a *saturated* operand: `Number(0) * PosSat`
-    /// is exactly `Number(0)`, so unlike `checked_add` there is no "a saturated
-    /// input means `None`" rule to state.
+    /// This function can succeed with a saturated operand. `Number(0) * PosSat`
+    /// is exactly `Number(0)`. There is thus no rule "a saturated input gives
+    /// `None`", which `checked_add` has.
     pub fn checked_mul(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -969,18 +961,18 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Negation and absolute value (issue #26 §5)
 //
-// The only entries in the whole design that are exact and total with no
-// precision cliff anywhere: negation is a bijection on every state, and
-// absolute value maps the two sign-definite pairs onto their positive halves.
+// These two operations are the only entries in the design that are exact and
+// total and have no precision cliff. Negation is a bijection on each state.
+// Absolute value maps the two sign-definite pairs onto their positive halves.
 // ---------------------------------------------------------------------------
 
 impl Q {
     /// `-self`. Exact and total.
     ///
-    /// Negation is sound on the saturations because `⟦PosSat⟧ = (MAX_MAG, ∞)`
-    /// negates exactly onto `⟦NegSat⟧ = (-∞, -MAX_MAG)` — the denotation is
-    /// symmetric, so nothing is lost. The kernel negation cannot overflow
-    /// either: `|num| <= MAX_MAG` keeps it well clear of `i64::MIN`.
+    /// Negation is sound on the saturations. `⟦PosSat⟧ = (MAX_MAG, ∞)` negates
+    /// onto `⟦NegSat⟧ = (-∞, -MAX_MAG)`, thus the denotation is symmetric and
+    /// the operation loses no information. The kernel negation cannot overflow:
+    /// `|num| <= MAX_MAG` keeps the result clear of `i64::MIN`.
     pub fn neg(self) -> (r: Q)
         requires
             self.wf(),
@@ -1005,9 +997,10 @@ impl Q {
 
     /// `|self|`. Exact and total.
     ///
-    /// Note `abs` is *not* injective — it maps both saturations to `PosSat` and
-    /// both infinities to `PosInf` — which is correct and is why `neg` above
-    /// carries the class-preservation postconditions and this one does not.
+    /// `abs` is not injective. It maps both saturations to `PosSat` and both
+    /// infinities to `PosInf`. This behaviour is correct, and it is the reason
+    /// that `neg` above carries the class-preservation postconditions and this
+    /// function does not.
     pub fn abs(self) -> (r: Q)
         requires
             self.wf(),
@@ -1036,30 +1029,30 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Selection: min, max, clamp (issue #26 §5)
 //
-// These propagate `Nan`, and are therefore NOT the `Ord`-based selection that
-// `slice.iter().min()` performs. The design is explicit that deriving them from
-// the order would be a defect: `Ord`-based selection gives
-// `min(Nan, Number(5)) == Number(5)`, asserting the true value is exactly 5
-// when it could be anything — reintroducing, through the side door, the precise
-// class of silent wrong answer this type exists to remove.
+// These operations propagate `Nan`. They are thus not the `Ord`-based selection
+// that `slice.iter().min()` performs. A selection that comes from the order is
+// a defect: `Ord`-based selection gives `min(Nan, Number(5)) == Number(5)`,
+// which asserts that the true value is exactly 5 when the value can be
+// anything.
 //
-// IEEE fought and settled this. 754-2008's `minNum`/`maxNum` returned the
-// non-NaN operand and were **withdrawn** in 754-2019, replaced by
-// NaN-propagating `minimum`/`maximum` with the ignore-NaN behaviour given the
-// separate explicit names `minimumNumber`/`maximumNumber`. Since §4 takes IEEE
-// as the reference model, these are `minimum` semantics.
+// IEEE 754 has settled this question. The `minNum` and `maxNum` operations of
+// 754-2008 returned the non-NaN operand. 754-2019 withdrew them and replaced
+// them with the NaN-propagating `minimum` and `maximum`. The ignore-NaN
+// behaviour has the separate names `minimumNumber` and `maximumNumber`.
+// Section 4 takes IEEE 754 as the reference model, thus these operations have
+// `minimum` semantics.
 //
-// On the sign-definite specials they follow the §5 order, which is sound there
-// because those variants really do sit where the order puts them.
+// For the sign-definite special values these operations follow the §5 order.
+// That order is sound for those variants.
 // ---------------------------------------------------------------------------
 
 impl Q {
     /// The smaller of `a` and `b`, propagating `Nan`.
     ///
-    /// **Deliberately disagrees with `Ord`-based selection.** A fold of this is
-    /// not `slice.iter().min()`, and the difference is the point: this returns
-    /// `Nan` if any input is `Nan`, where `Ord` would quietly pick the other
-    /// operand and assert a value it does not have.
+    /// This function does not agree with `Ord`-based selection, by design. A
+    /// fold of this function is not `slice.iter().min()`. This function returns
+    /// `Nan` if any input is `Nan`. `Ord`-based selection returns the other
+    /// operand and thus asserts a value that the result does not have.
     pub fn min(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1071,16 +1064,14 @@ impl Q {
                 &&& (r == a || r == b)
                 &&& Q::spec_le(r, a)
                 &&& Q::spec_le(r, b)
-                // ...and *which* argument, so the contract names the result
-                // rather than merely constraining it.
+                // ...and which argument. The contract thus names the result
+                // and does not only constrain it.
                 //
-                // The three clauses above already pin the answer uniquely —
-                // that is `theorem_min_spec_categorical`. But uniqueness is a
-                // property of the contract, and connecting it to *this*
-                // function's output was left to a reader's inference. These two
-                // clauses make that connection machine-checked instead: the
-                // postcondition now determines the result for every input, so
-                // no bridging step is needed.
+                // The three clauses above fix the answer uniquely, which is
+                // `theorem_min_spec_categorical`. That uniqueness is a property
+                // of the contract. These two clauses connect it to the output
+                // of this function, thus the postcondition determines the
+                // result for each input.
                 &&& Q::spec_le(a, b) ==> r == a
                 &&& !Q::spec_le(a, b) ==> r == b
             },
@@ -1122,15 +1113,15 @@ impl Q {
 
     /// `a` clamped into `[lo, hi]`, propagating `Nan`.
     ///
-    /// `Nan` in any of the three arguments — including a bound — yields `Nan`.
-    /// Clamping into a range whose endpoint carries no information cannot
-    /// produce an informative answer, and returning `hi` there would be the
-    /// `clamp(Nan, lo, hi) == hi` defect §5 calls out by name.
+    /// A `Nan` in any of the three arguments gives `Nan`. This includes a
+    /// bound. A range whose endpoint carries no information gives no
+    /// informative answer. A `hi` result there is the `clamp(Nan, lo, hi) == hi`
+    /// defect that §5 names.
     ///
-    /// Unlike the kernel's `clamp` this does **not** require `lo <= hi`: with
-    /// `Nan` admissible as a bound the precondition could not be stated on the
-    /// order alone. An inverted range yields `Nan` rather than an arbitrary
-    /// endpoint, which is the only answer that does not assert something false.
+    /// This function does not require `lo <= hi`, unlike the kernel `clamp`.
+    /// `Nan` is an admissible bound, thus the order alone cannot state the
+    /// precondition. An inverted range gives `Nan` and not an endpoint, because
+    /// an endpoint asserts a false statement.
     pub fn clamp(a: Q, lo: Q, hi: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1143,16 +1134,14 @@ impl Q {
                 &&& (r == a || r == lo || r == hi)
                 &&& Q::spec_le(lo, r)
                 &&& Q::spec_le(r, hi)
-                // ...and *which* of the three, pinned exactly. Without these
-                // three clauses the contract above is satisfied by a `clamp`
-                // that always returns `lo`: for `lo < a < hi`, `r == lo` is one
-                // of the three permitted values and does lie in `[lo, hi]`.
+                // ...and which of the three values. Without these three
+                // clauses a `clamp` that always returns `lo` satisfies the
+                // contract above: for `lo < a < hi`, `r == lo` is one of the
+                // three permitted values and lies in `[lo, hi]`.
                 //
-                // That is the same weakness the old `isqrt_i64` spec had — a
-                // postcondition wide enough to admit a wrong answer — and it
-                // was found the same way, by trying to prove the contract
-                // categorical and discovering it is not. A specification that
-                // admits the bug is not a specification.
+                // A postcondition that is wide enough to admit a wrong answer
+                // is not a specification. A proof that the contract is
+                // categorical finds this class of weakness.
                 &&& (Q::spec_le(lo, a) && Q::spec_le(a, hi)) ==> r == a
                 &&& !Q::spec_le(lo, a) ==> r == lo
                 &&& !Q::spec_le(a, hi) ==> r == hi
@@ -1161,8 +1150,8 @@ impl Q {
         if a.is_nan() || lo.is_nan() || hi.is_nan() {
             Q::Nan
         } else if Q::lt(hi, lo) {
-            // An inverted range has no consistent answer; saying so beats
-            // silently returning an endpoint.
+            // An inverted range has no consistent answer. `Nan` states that
+            // condition. An endpoint result does not.
             Q::Nan
         } else if Q::lt(a, lo) {
             proof {
@@ -1185,28 +1174,28 @@ impl Q {
 // ---------------------------------------------------------------------------
 // Total division (issue #26 §10.2)
 //
-// This closes the three defects that open #26, all of which reproduce on the
-// kernel today:
+// This section closes the three defects that open #26. Each defect is present
+// in the kernel:
 //
-//   * `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }` — a value that
-//     violates the type invariant and detonates later, far from the cause.
+//   * `Rat::zero().recip()` returns `Rat { num: -1, den: 0 }`. That value
+//     violates the type invariant and fails later, far from the cause.
 //   * `Rat::div(x, 0)` panics.
-//   * `Rat::checked_div(x, 0)` panics, where std and `num-traits` both return
-//     `None` for exactly this case.
+//   * `Rat::checked_div(x, 0)` panics. `std` and `num-traits` both return
+//     `None` for this case.
 //
-// Every cell below is derived from the denotations in §2 rather than chosen:
-// the result is the smallest state whose denotation contains the true image
-// `{ x/y : x ∈ ⟦a⟧, y ∈ ⟦b⟧ }`. `Nan` is always sound because it denotes
-// everything, so precision is the only thing that has to be argued.
+// Each cell below comes from the denotations in §2. The result is the smallest
+// state whose denotation contains the true image
+// `{ x/y : x ∈ ⟦a⟧, y ∈ ⟦b⟧ }`. `Nan` is always sound, because it denotes
+// every value. Precision is thus the only property to argue.
 // ---------------------------------------------------------------------------
 
 impl Q {
     /// `x / y` for two representable rationals with `y != 0`.
     ///
-    /// Saturates rather than clamping. The kernel's `Rat::div` silently returns
-    /// `±MAX_MAG/1` when the exact quotient leaves the budget, which is a
-    /// singleton denotation that does not contain the true value; reporting
-    /// `PosSat`/`NegSat` instead keeps the denotation honest.
+    /// This operation saturates and does not clamp. The kernel `Rat::div`
+    /// returns `±MAX_MAG/1` when the exact quotient leaves the budget. That
+    /// result is a singleton denotation that does not contain the true value. A
+    /// `PosSat` or `NegSat` result keeps the denotation sound.
     fn div_numbers(x: Rat, y: Rat) -> (r: Q)
         requires
             x.wf(),
@@ -1234,12 +1223,12 @@ impl Q {
 
     /// A saturation divided by a representable rational.
     ///
-    /// `pos` says which saturation the numerator is. The image of
-    /// `(MAX_MAG, ∞) / y` is `(MAX_MAG/y, ∞)` for `y > 0`, which stays inside
-    /// `⟦PosSat⟧` only while `MAX_MAG/y >= MAX_MAG` — that is, while `y <= 1`.
-    /// Past the unit boundary the image dips into representable territory and
-    /// no saturation state is sound, which is the precision cliff §6 accepts.
-    /// The boundary is inclusive: at `y == 1` the image is exactly `⟦PosSat⟧`.
+    /// `pos` selects the saturation of the numerator. For `y > 0` the image of
+    /// `(MAX_MAG, ∞) / y` is `(MAX_MAG/y, ∞)`. That image stays inside
+    /// `⟦PosSat⟧` while `MAX_MAG/y >= MAX_MAG`, thus while `y <= 1`. Above the
+    /// unit boundary the image contains representable values, and no saturation
+    /// state is sound. This is the precision cliff of §6. The boundary is
+    /// inclusive: at `y == 1` the image is exactly `⟦PosSat⟧`.
     fn sat_div_number(pos: bool, y: Rat) -> (r: Q)
         requires
             y.wf(),
@@ -1255,8 +1244,9 @@ impl Q {
     {
         let s = y.signum();
         if s == 0 {
-            // A saturation is sign-definite and nonzero, so this is `x/0` with
-            // `x != 0`: the IEEE convention of §4 gives a signed infinity.
+            // A saturation has a definite sign and is nonzero, thus this case
+            // is `x/0` with `x != 0`. The IEEE convention of §4 gives a signed
+            // infinity.
             if pos {
                 Q::PosInf
             } else {
@@ -1287,21 +1277,19 @@ impl Q {
 
     /// `a / b`, total.
     ///
-    /// Never panics and never returns a value outside the type invariant. The
-    /// division-by-zero cases follow issue #26 §4's decision to take IEEE 754 as
-    /// the reference model, applied **uniformly** — an earlier draft of the
-    /// design used the IEEE rule for `x/0` but a limit-rigorous `Nan` for
-    /// `recip(0)` and `±∞/0`, which broke `recip(x) == div(one, x)` at `x = 0`
-    /// for no reason.
+    /// This operation never panics and never returns a value outside the type
+    /// invariant. The division-by-zero cases follow issue #26 §4, which takes
+    /// IEEE 754 as the reference model. The rule applies uniformly. A mixed
+    /// rule, with the IEEE result for `x/0` and `Nan` for `recip(0)` and
+    /// `±∞/0`, breaks `recip(x) == div(one, x)` at `x = 0`.
     ///
-    /// Two cells are worth pointing at because they are exact where the obvious
-    /// guess is `Nan`:
+    /// Two cells are exact where `Nan` is the expected result:
     ///
-    /// * `Sat / Inf` is `Number(0)`. `PosSat` denotes **reals only**, never
-    ///   `±∞`, so the image is `{s/±∞} = {0}` exactly. This is where saturation
-    ///   is strictly better behaved than infinity.
-    /// * `Inf / Sat` is a signed infinity, for the same reason: dividing `±∞` by
-    ///   a finite real leaves it infinite.
+    /// * `Sat / Inf` is `Number(0)`. `PosSat` denotes reals only and never
+    ///   `±∞`, thus the image is exactly `{s/±∞} = {0}`. Saturation is better
+    ///   behaved than infinity here.
+    /// * `Inf / Sat` is a signed infinity, for the same reason. `±∞` divided by
+    ///   a finite real stays infinite.
     pub fn div(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1316,11 +1304,10 @@ impl Q {
             // is what makes the `checked_div` sugar below meaningful.
             (a.spec_is_number() && b.spec_is_number() && !b.spec_is_zero()) ==> (r.spec_is_number()
                 || r.spec_is_saturated()),
-            // An infinity in the result means a zero divisor or an infinite
-            // numerator — never an overflow. This is the property that keeps
-            // `is_infinite()` usable as a diagnostic: it points at a division by
-            // zero, while an overflow reports `is_saturated()` instead, and the
-            // two never blur into each other.
+            // An infinite result means a zero divisor or an infinite
+            // numerator, and never an overflow. This property keeps
+            // `is_infinite()` usable as a diagnostic. It reports a division by
+            // zero, and an overflow reports `is_saturated()` instead.
             r.spec_is_infinite() ==> (a.spec_is_infinite() || b.spec_is_zero()),
             // No representable quotient survives a zero divisor or an infinite
             // numerator. Together with the clauses above this is what makes
@@ -1346,8 +1333,8 @@ impl Q {
                     Q::div_numbers(x, y)
                 }
             },
-            // `x / Sat`: the image is `(0, x/M)`, which straddles representable
-            // values, so only `x == 0` has a sound answer — and there it is
+            // `x / Sat`: the image is `(0, x/M)`, which contains representable
+            // values. Only `x == 0` thus has a sound answer, and that answer is
             // exact, because `Sat` cannot be infinite.
             (Q::Number(x), Q::PosSat) => if x.is_zero() {
                 Q::zero()
@@ -1364,8 +1351,8 @@ impl Q {
             // --- a saturated numerator ---
             (Q::PosSat, Q::Number(y)) => Q::sat_div_number(true, y),
             (Q::NegSat, Q::Number(y)) => Q::sat_div_number(false, y),
-            // `Sat / Sat` spans `(0, ∞)` (or its mirror) — sign known, magnitude
-            // entirely unknown, which is the one thing this lattice cannot say.
+            // `Sat / Sat` covers `(0, ∞)` or its mirror. The sign is known and
+            // the magnitude is unknown. This lattice has no state for that.
             (Q::PosSat, Q::PosSat) => Q::Nan,
             (Q::PosSat, Q::NegSat) => Q::Nan,
             (Q::NegSat, Q::PosSat) => Q::Nan,
@@ -1401,20 +1388,19 @@ impl Q {
 
     /// `1 / self`, total.
     ///
-    /// **Defined as `div(one, self)` rather than as its own case analysis**, and
-    /// that is a deliberate correctness choice, not laziness. Issue #26 §4
-    /// records that an earlier draft of the design gave `recip(0)` and `x/0`
-    /// different answers, breaking `recip(x) == div(one, x)` at exactly the
-    /// point that matters. Deriving one from the other makes that class of
-    /// divergence unrepresentable instead of merely tested for — see
-    /// `theorem_recip_is_div_one`.
+    /// The definition is `div(one, self)` and not a separate case analysis.
+    /// This choice is for correctness. Issue #26 §4 records that separate
+    /// answers for `recip(0)` and `x/0` break `recip(x) == div(one, x)` at
+    /// `x = 0`. One definition from the other makes that divergence
+    /// impossible. See `theorem_recip_is_div_one`.
     ///
-    /// On a nonzero `Number` this is exact: reciprocating swaps a canonical
-    /// pair, and both components were already inside the budget, so no rounding
-    /// and no saturation can occur.
+    /// On a nonzero `Number` the result is exact. Reciprocation swaps the
+    /// components of a canonical pair, and both components are inside the
+    /// budget. No rounding and no saturation can thus occur.
     ///
-    /// This replaces a kernel operation that returned `Rat { num: -1, den: 0 }`
-    /// for `recip(0)` — a value violating the type invariant.
+    /// This operation replaces a kernel operation that returned
+    /// `Rat { num: -1, den: 0 }` for `recip(0)`, which violates the type
+    /// invariant.
     pub fn recip(self) -> (r: Q)
         requires
             self.wf(),
@@ -1422,38 +1408,37 @@ impl Q {
             r.wf(),
             self.spec_is_nan() ==> r.spec_is_nan(),
     {
-        // The cell-by-cell behaviour — `recip(0) == PosInf`, `recip(±∞) == 0`,
-        // `recip` of a nonzero rational being exact and never saturating — is
-        // not stated here, because deriving it would require `div`'s
+        // This contract does not state the cell-by-cell behaviour, such as
+        // `recip(0) == PosInf`, `recip(±∞) == 0`, and an exact result for a
+        // nonzero rational. A derivation of that behaviour needs the `div`
         // postcondition to reproduce the whole propagation table in ghost form.
-        // A specification shaped exactly like the table it specifies is the
-        // circular kind that verifies with a mistake duplicated into both, so it
-        // would buy confidence it does not earn.
+        // A specification with the same shape as the table that it specifies is
+        // circular, and it verifies with a defect that is present in both.
         //
-        // The table is instead pinned *exhaustively* in `tests/extended_q.rs`:
-        // the state space is 6×6 cells, so the tests enumerate every one rather
-        // than sampling. That is a complete check of the table, and it runs
-        // against the compiled artifact.
+        // `tests/extended_q.rs` pins the table exhaustively instead. The state
+        // space is 6×6 cells, and the tests enumerate each cell. That check is
+        // complete, and it runs against the compiled artifact.
         Q::div(Q::one(), self)
     }
 
     /// `a / b` when the result is a representable rational, `None` otherwise.
     ///
-    /// Sugar over [`Q::div`], and provably exactly that: the `Option` carries
-    /// precisely the information the discriminant already carries. Unlike the
-    /// kernel's `checked_div` this **does not panic** on a zero divisor — it
-    /// returns `None`, which is what `std` and `num-traits` do for this case.
+    /// This function is a view over [`Q::div`], and a proof states that
+    /// relation. The `Option` carries the information that the discriminant
+    /// carries. This function does not panic on a zero divisor, unlike the
+    /// kernel `checked_div`. It returns `None`, as `std` and `num-traits` do
+    /// for this case.
     pub fn checked_div(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
             b.wf(),
         ensures
             r.is_some() ==> r.unwrap().wf(),
-            // `None` whenever no representable quotient can exist: a zero
-            // divisor, an operand carrying no information, or an infinite
-            // numerator. The remaining way to get `None` is overflow, which is
-            // the case the kernel's `checked_div` already reported — so this is
-            // a strict extension of it, not a change of meaning.
+            // `None` for each case with no representable quotient: a zero
+            // divisor, an operand with no information, or an infinite
+            // numerator. The remaining `None` case is an overflow, which the
+            // kernel `checked_div` also reports. This function is thus an
+            // extension of the kernel function and not a change of meaning.
             (b.spec_is_zero() || a.spec_is_nan() || b.spec_is_nan() || a.spec_is_infinite())
                 ==> r.is_none(),
     {
@@ -1467,9 +1452,9 @@ impl Q {
 // ---------------------------------------------------------------------------
 // The classification really is a partition
 //
-// Stated and proven rather than assumed, because the four predicates are the
-// only supported way to case-split on the type from outside, and a caller that
-// handles all four is entitled to know it has handled everything.
+// This property is stated and proven, and not assumed. The four predicates are
+// the only supported case split on the type from outside the module. A caller
+// that handles all four cases thus handles each state.
 // ---------------------------------------------------------------------------
 
 /// The four classification predicates are mutually exclusive and jointly
@@ -1515,23 +1500,24 @@ pub proof fn theorem_saturated_excludes_rest(q: Q)
 //
 //     NegInf  <  NegSat  <  Number(...)  <  PosSat  <  PosInf  <  Nan
 //
-// This orders *representations*, not denoted values, and outside `Number` that
-// distinction is real: `PosSat == PosSat` compares `Equal` while the two true
-// values may differ. Inside `Number` it is the order on rationals.
+// This order applies to representations and not to denoted values. Outside
+// `Number` that difference is visible: `PosSat == PosSat` compares `Equal`
+// while the two true values can differ. Inside `Number` the order is the order
+// on rationals.
 //
-// The placement is sound at the boundaries rather than merely conventional:
-// every `NegSat` value is `< -MAX_MAG <=` any `Number`, and every `PosSat`
-// value is `> MAX_MAG >=` any `Number`, so the separations are strict. Only
-// `Nan`'s position is a free choice, and it is a choice — `f64::total_cmp`
-// puts negative NaN first and positive NaN last, so the analogy is partial.
+// The placement is sound at the boundaries. Each `NegSat` value is
+// `< -MAX_MAG <=` each `Number`, and each `PosSat` value is `> MAX_MAG >=`
+// each `Number`, thus both separations are strict. The position of `Nan` is a
+// free choice. `f64::total_cmp` puts a negative NaN first and a positive NaN
+// last, thus that analogy is partial.
 // ---------------------------------------------------------------------------
 
 impl Q {
     /// The position of a variant in the order above.
     ///
-    /// A rank rather than the declaration order, so that reordering the enum's
-    /// variants cannot silently change the order on values. That is also why
-    /// `Ord` is hand-written instead of derived.
+    /// The order uses this rank and not the declaration order. A change to the
+    /// variant order thus cannot change the order on values. For the same
+    /// reason `Ord` is hand-written and not derived.
     pub open spec fn spec_rank(self) -> int {
         match self {
             Q::NegInf => 0,
@@ -1567,8 +1553,8 @@ impl Q {
     /// Three-way comparison: negative, zero or positive as `a < b`, `a == b` or
     /// `a > b` in the order above.
     ///
-    /// Total — there is no incomparable pair, which is the point of giving
-    /// `Nan` a definite position.
+    /// The comparison is total. There is no incomparable pair, because `Nan`
+    /// has a definite position.
     pub fn compare(a: Q, b: Q) -> (r: i32)
         requires
             a.wf(),
@@ -1579,9 +1565,8 @@ impl Q {
             r == 0 <==> Q::spec_eq(a, b),
     {
         match (a, b) {
-            // The only case with a payload to compare. Delegates to the
-            // verified kernel comparison rather than cross-multiplying again
-            // here.
+            // This is the only case with a payload. It delegates to the
+            // verified kernel comparison and does not cross-multiply again.
             (Q::Number(x), Q::Number(y)) => Rat::compare(x, y),
             _ => {
                 let ra = Q::rank_exec(a);
@@ -1659,10 +1644,10 @@ impl Q {
 
 /// The order is **total**: every pair is comparable.
 ///
-/// This is the property IEEE 754 gives up — it makes every ordered comparison
-/// involving `NaN` false, so `NaN` is incomparable with everything including
-/// itself. Recovering totality is the second deliberate departure from IEEE in
-/// this design, alongside `Nan == Nan`.
+/// IEEE 754 does not have this property. IEEE 754 makes each ordered
+/// comparison with `NaN` false, thus `NaN` is incomparable with each value and
+/// with itself. Totality is the second intentional departure from IEEE 754 in
+/// this design. The first is `Nan == Nan`.
 pub proof fn theorem_order_total(a: Q, b: Q)
     requires
         a.wf(),
@@ -1675,17 +1660,17 @@ pub proof fn theorem_order_total(a: Q, b: Q)
 /// The order is antisymmetric **against structural equality**: two values each
 /// `<=` the other are the same value.
 ///
-/// Stated as `a == b` rather than as `spec_eq(a, b)` on purpose. `spec_eq` is
-/// *defined* as `spec_le(a, b) && spec_le(b, a)`, so concluding it from those
-/// two hypotheses would restate the hypothesis and prove nothing. The content is
-/// that the order's notion of "equal" coincides with the derived `PartialEq`,
-/// which is exactly what makes deriving `PartialEq`/`Eq`/`Hash` alongside a
-/// hand-written `Ord` sound — `Ord` and `Eq` cannot disagree.
+/// The conclusion is `a == b` and not `spec_eq(a, b)`. `spec_eq` is defined as
+/// `spec_le(a, b) && spec_le(b, a)`, thus a conclusion of `spec_eq` from those
+/// two hypotheses restates the hypotheses and proves nothing. The content of
+/// the theorem is that the "equal" of the order is the derived `PartialEq`.
+/// That property makes a derived `PartialEq`, `Eq` and `Hash` sound next to a
+/// hand-written `Ord`, because `Ord` and `Eq` cannot disagree.
 ///
-/// On the `Number` case this rests on the kernel's canonicality result: two
-/// well-formed `Rat` are mathematically equal exactly when they are structurally
-/// equal, so there is no pair of distinct representations the order would have
-/// to call equal.
+/// The `Number` case uses the canonicality result of the kernel. Two
+/// well-formed `Rat` values are mathematically equal exactly when they are
+/// structurally equal. There is thus no pair of distinct representations that
+/// the order must call equal.
 pub proof fn theorem_order_antisymmetric(a: Q, b: Q)
     requires
         a.wf(),
@@ -1705,8 +1690,8 @@ pub proof fn theorem_order_antisymmetric(a: Q, b: Q)
 
 /// `spec_eq` and the derived `PartialEq` are the same relation.
 ///
-/// The other direction of the theorem above, completing the equivalence that
-/// `Ord`/`Eq` consistency depends on.
+/// This theorem is the other direction of the theorem above. Together they
+/// give the equivalence that `Ord`/`Eq` consistency needs.
 pub proof fn theorem_spec_eq_is_structural_eq(a: Q, b: Q)
     requires
         a.wf(),
@@ -1727,9 +1712,8 @@ pub proof fn theorem_spec_eq_is_structural_eq(a: Q, b: Q)
 
 /// The order is transitive.
 ///
-/// The cross-rank cases are ordinary integer transitivity on the rank. The
-/// all-`Number` case is the kernel's own transitivity lemma, reused rather than
-/// reproved.
+/// The cross-rank cases are integer transitivity on the rank. The all-`Number`
+/// case uses the transitivity lemma of the kernel.
 pub proof fn theorem_order_transitive(a: Q, b: Q, c: Q)
     requires
         a.wf(),
@@ -1750,9 +1734,9 @@ pub proof fn theorem_order_transitive(a: Q, b: Q, c: Q)
 
 /// Saturation sits strictly outside the numbers, on the correct side.
 ///
-/// Stated because it is the load-bearing soundness fact for the placement: it
-/// is what makes the order on representations agree with the order on denoted
-/// values wherever both are defined.
+/// This fact makes the placement sound. It states that the order on
+/// representations agrees with the order on denoted values wherever both are
+/// defined.
 pub proof fn theorem_sat_separates_numbers(x: Rat)
     requires
         x.wf(),
@@ -1767,13 +1751,13 @@ pub proof fn theorem_sat_separates_numbers(x: Rat)
 /// The order has a bottom and a top, and both are *strict*: `NegInf` sits
 /// strictly below every other value and `Nan` strictly above.
 ///
-/// The first two clauses give folds a starting point — a running minimum can
-/// begin at `Nan` and a running maximum at `NegInf` without excluding anything.
-/// The strictness clauses are what make the extremes *unique*: nothing else
-/// shares the bottom or the top, so `compare(q, NegInf) <= 0` really does
-/// identify `q` as `NegInf` and `compare(Nan, q) <= 0` as `Nan`. No `wf`
-/// hypothesis is needed — the placement is a fact about the rank structure,
-/// not about any payload.
+/// The first two clauses give a fold a starting point. A running minimum can
+/// start at `Nan`, and a running maximum can start at `NegInf`, and neither
+/// start excludes a value. The strictness clauses make the extremes unique. No
+/// other value is at the bottom or at the top, thus `compare(q, NegInf) <= 0`
+/// identifies `q` as `NegInf`, and `compare(Nan, q) <= 0` identifies `q` as
+/// `Nan`. The theorem needs no `wf` hypothesis, because the placement is a
+/// property of the rank structure and not of a payload.
 pub proof fn theorem_order_extremes(q: Q)
     ensures
         Q::spec_le(Q::NegInf, q),
@@ -1787,12 +1771,12 @@ pub proof fn theorem_order_extremes(q: Q)
 /// `a == b`, `b < a` (with `a < b` spelled `!spec_le(b, a)`, as the exec `lt`
 /// spells it).
 ///
-/// Totality alone permits `a <= b` and `b <= a` to overlap on distinct values;
-/// antisymmetry alone permits incomparable pairs. This is the conjunction that
-/// callers branching three ways on `compare` actually rely on: the three
-/// branches cover everything and never both apply. The "exactly one" is
-/// counted, in the same style as `theorem_classification_partitions`, rather
-/// than written as six implications.
+/// Totality alone permits `a <= b` and `b <= a` on two distinct values.
+/// Antisymmetry alone permits incomparable pairs. A caller that branches three
+/// ways on `compare` needs the conjunction: the three branches cover each pair,
+/// and no two branches apply together. The statement counts the true relations,
+/// in the style of `theorem_classification_partitions`, and does not use six
+/// implications.
 pub proof fn theorem_order_trichotomy(a: Q, b: Q)
     requires
         a.wf(),
@@ -1822,12 +1806,11 @@ pub proof fn theorem_order_trichotomy(a: Q, b: Q)
 /// both satisfy it — each is one of the arguments and a lower bound of both —
 /// are structurally equal.
 ///
-/// This is the categoricity check the `isqrt` episode taught this crate to
-/// demand of a specification: a contract weak enough to admit two different
-/// answers is a contract a bug can hide behind. `min`'s cannot. The proof is
-/// not free — on a tie (`a` and `b` mathematically equal) the two candidates
-/// could a priori be the two *representations*, and it is kernel canonicality
-/// (via antisymmetry) that collapses them.
+/// This is a categoricity check. A contract that admits two different answers
+/// also admits a defect. The `min` contract admits one answer only. The proof
+/// has content: on a tie, where `a` and `b` are mathematically equal, the two
+/// candidates can be the two representations, and kernel canonicality, through
+/// antisymmetry, makes them one.
 pub proof fn theorem_min_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
     requires
         a.wf(),
@@ -1846,9 +1829,10 @@ pub proof fn theorem_min_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
     theorem_order_antisymmetric(r1, r2);
 }
 
-/// **`max`'s postcondition pins its result uniquely** — the dual of
-/// [`theorem_min_spec_categorical`], and needed separately because `max`'s
-/// contract is its own statement, not a rewriting of `min`'s.
+/// **`max`'s postcondition pins its result uniquely.** This theorem is the dual
+/// of [`theorem_min_spec_categorical`]. It is a separate theorem, because the
+/// `max` contract is its own statement and not a rewriting of the `min`
+/// contract.
 pub proof fn theorem_max_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
     requires
         a.wf(),
@@ -1868,18 +1852,14 @@ pub proof fn theorem_max_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
 /// **`clamp`'s contract pins its result**: any two values satisfying it are the
 /// same value.
 ///
-/// This theorem is the reason `clamp`'s `ensures` gained its last three
-/// clauses. Attempting to prove categoricity against the *previous* contract
-/// fails, and the counterexample is immediate: for `lo < a < hi` the value
-/// `r == lo` satisfies "is one of `a`, `lo`, `hi`" and "lies in `[lo, hi]`", so
-/// a `clamp` that ignored `a` entirely and always answered `lo` would have
-/// verified.
+/// This theorem needs the last three clauses of the `clamp` postcondition.
+/// Without them the proof of categoricity fails, and the counterexample is
+/// direct: for `lo < a < hi` the value `r == lo` satisfies "is one of `a`,
+/// `lo`, `hi`" and "lies in `[lo, hi]`". A `clamp` that ignores `a` and always
+/// returns `lo` thus verifies against the weaker contract.
 ///
-/// That is the same defect class as the old `isqrt_i64` postcondition — wide
-/// enough to admit a wrong answer — and it was found the same way: by trying to
-/// prove the specification pins a unique result and watching the proof fail.
-/// Categoricity is worth stating precisely because failing to prove it is
-/// diagnostic.
+/// A postcondition that is wide enough to admit a wrong answer is a defect. A
+/// failed categoricity proof identifies that defect.
 pub proof fn theorem_clamp_spec_categorical(a: Q, lo: Q, hi: Q, r1: Q, r2: Q)
     requires
         a.wf(),
@@ -1906,11 +1886,12 @@ pub proof fn theorem_clamp_spec_categorical(a: Q, lo: Q, hi: Q, r1: Q, r2: Q)
 /// `(min(a, b), max(a, b))` is `(a, b)` or `(b, a)` — nothing is duplicated
 /// and nothing is lost.
 ///
-/// This is what justifies using `min`/`max` as a two-element sort: the
-/// multiset of outputs equals the multiset of inputs. It does not follow from
-/// either contract alone — each says its result is *one of* the arguments,
-/// which would permit `min` and `max` to both answer `a`. Antisymmetry is what
-/// rules that out except when `a == b`, where both disjuncts hold anyway.
+/// This theorem permits the use of `min` and `max` as a two-element sort,
+/// because the multiset of outputs is the multiset of inputs. It does not
+/// follow from either contract alone. Each contract states that its result is
+/// one of the arguments, which permits an `a` result from both functions.
+/// Antisymmetry excludes that case, except for `a == b`, where both disjuncts
+/// hold.
 pub proof fn theorem_min_max_exchange(a: Q, b: Q, rmin: Q, rmax: Q)
     requires
         a.wf(),
@@ -1936,11 +1917,12 @@ pub proof fn theorem_min_max_exchange(a: Q, b: Q, rmin: Q, rmax: Q)
 /// **`min` computes the greatest lower bound**: a value is below `min(a, b)`
 /// exactly when it is below both `a` and `b`.
 ///
-/// The lower-bound clauses in `min`'s contract say it is *a* lower bound; this
-/// says it is the *greatest* one, which is the property that lets a chain of
-/// `min`s be reassociated in reasoning — `x <= min(a, min(b, c))` unfolds to
-/// three independent comparisons. The forward direction is transitivity; it is
-/// not a restatement of the hypotheses, which mention `q` not at all.
+/// The lower-bound clauses of the `min` contract state that the result is a
+/// lower bound. This theorem states that the result is the greatest lower
+/// bound. That property permits reassociation of a chain of `min` calls, thus
+/// `x <= min(a, min(b, c))` unfolds to three independent comparisons. The
+/// forward direction is transitivity. It is not a restatement of the
+/// hypotheses, which do not mention `q`.
 pub proof fn theorem_min_is_glb(a: Q, b: Q, r: Q, q: Q)
     requires
         a.wf(),
@@ -1980,13 +1962,13 @@ pub proof fn theorem_max_is_lub(a: Q, b: Q, r: Q, q: Q)
 /// `spec_in_unit_interval` means exactly what its name claims **in the
 /// order**: a number between `0` and `1` inclusive.
 ///
-/// The predicate is defined component-wise (`0 <= n <= d`) while the order is
-/// defined by cross-multiplication; this theorem is the bridge that says the
-/// two definitions agree, so a caller may move freely between "the predicate
-/// holds" and "`compare` against zero and one says so". The `Number`
-/// hypothesis on the right is honest: no special is in `[0, 1]`, including
-/// `Nan` — which sits above `one` in the order, so the order-based bounds
-/// alone would not exclude it without the class test.
+/// The predicate has a component-wise definition (`0 <= n <= d`), and the order
+/// has a cross-multiplied definition. This theorem states that the two
+/// definitions agree. A caller can thus move between "the predicate holds" and
+/// "`compare` against zero and one gives the same result". The `Number`
+/// hypothesis on the right is necessary. No special value is in `[0, 1]`. `Nan`
+/// is above `one` in the order, thus the order-based bounds alone do not
+/// exclude it without the class test.
 pub proof fn theorem_unit_interval_agrees_with_order(q: Q)
     requires
         q.wf(),
@@ -2002,13 +1984,12 @@ pub proof fn theorem_unit_interval_agrees_with_order(q: Q)
 /// predicates recognise precisely it: `spec_is_zero` holds only of
 /// `Number(0/1)` and `spec_is_one` only of `Number(1/1)`.
 ///
-/// Neither direction is a definition unfold. `spec_is_zero` constrains only
-/// the numerator, and it is the invariant's `num == 0 ==> den == 1` clause
-/// that collapses the denominator; `spec_is_one` says `n == d`, and it takes
-/// `gcd(n, n) == n` against the coprimality invariant to force `n == d == 1`.
-/// This is the enum-level face of kernel canonicality: an `is_zero`/`is_one`
-/// test is a test of the full bit pattern, so e.g. `Hash` cannot tell two
-/// zeros apart.
+/// Neither direction is a definition unfold. `spec_is_zero` constrains the
+/// numerator only, and the invariant clause `num == 0 ==> den == 1` fixes the
+/// denominator. `spec_is_one` states `n == d`, and `gcd(n, n) == n` with the
+/// coprimality invariant forces `n == d == 1`. This theorem is the enum-level
+/// form of kernel canonicality. An `is_zero` or `is_one` test is thus a test of
+/// the full bit pattern, and `Hash` cannot separate two zeros.
 pub proof fn theorem_zero_one_unique_repr(q: Q)
     requires
         q.wf(),
@@ -2042,10 +2023,10 @@ pub proof fn theorem_zero_one_unique_repr(q: Q)
 // ---------------------------------------------------------------------------
 // Standard trait impls
 //
-// Thin, total delegations to the verified functions above, following the same
-// pattern as `Rat`'s: Verus does not model the `core` comparison traits, so
-// they are `external` — not callable from verified code, and verified code
-// never needs them.
+// These implementations are total delegations to the verified functions above,
+// in the pattern that `Rat` uses. Verus does not model the `core` comparison
+// traits, thus these implementations are `external`. Verified code cannot call
+// them and does not need them.
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
@@ -2057,18 +2038,17 @@ impl PartialOrd for Q {
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl Ord for Q {
-    /// Delegates to the verified [`Q::compare`], which is proven against the
-    /// ghost order, rather than reimplementing the ranking here.
+    /// This implementation delegates to the verified [`Q::compare`], which is
+    /// proven against the ghost order. It does not reimplement the ranking.
     ///
-    /// **This order must not be used for `min`/`max`/`clamp`.** `Ord`-based
-    /// selection would give `min(Nan, Number(5)) == Number(5)`: the true value
-    /// could be anything, and the result asserts it is exactly 5. That
-    /// reintroduces, through the side door, the defect class this type exists
-    /// to remove. IEEE fought and settled this — 754-2008's `minNum`/`maxNum`
-    /// returned the non-NaN operand and were *withdrawn* in 754-2019 in favour
-    /// of NaN-propagating `minimum`/`maximum`. Consequently
-    /// `slice.iter().min()` is **not** equivalent to a fold of a NaN-propagating
-    /// `Q::min`, and the two are meant to disagree.
+    /// Do not use this order for `min`, `max` or `clamp`. `Ord`-based selection
+    /// gives `min(Nan, Number(5)) == Number(5)`. The true value can be
+    /// anything, and that result asserts the value 5. IEEE 754 has settled this
+    /// question: 754-2008 defined `minNum` and `maxNum`, which returned the
+    /// non-NaN operand, and 754-2019 withdrew them in favour of the
+    /// NaN-propagating `minimum` and `maximum`. `slice.iter().min()` is thus
+    /// not equivalent to a fold of the NaN-propagating `Q::min`, and the two
+    /// give different results by design.
     fn cmp(&self, other: &Q) -> core::cmp::Ordering {
         Q::compare(*self, *other).cmp(&0)
     }
@@ -2077,15 +2057,14 @@ impl Ord for Q {
 // ---------------------------------------------------------------------------
 // Operator traits
 //
-// Thin, total delegations, following the same pattern as `Rat`'s: Verus does
-// not model the `core::ops` traits, so they are `external` and contribute no
-// assumptions to any proof.
+// These implementations are total delegations, in the pattern that `Rat` uses.
+// Verus does not model the `core::ops` traits, thus these implementations are
+// `external` and add no assumption to a proof.
 //
-// Unlike `Rat`, this type implements `Div`. The reason `Rat` deliberately does
-// not is that its division carries a precondition (`!b.is_zero()`) an operator
-// cannot express, so `a / b` would be a panic waiting for a caller who forgot.
-// `Q::div` is total, so the objection is gone: there is no input for which
-// `a / b` fails to produce a value.
+// This type implements `Div`, and `Rat` does not. Division on `Rat` has the
+// precondition `!b.is_zero()`, which an operator cannot express, thus `a / b`
+// on `Rat` can panic. `Q::div` is total, thus each input to `a / b` gives a
+// value.
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(verus_keep_ghost, verifier::external)]
@@ -2115,7 +2094,8 @@ impl core::ops::Mul for Q {
     }
 }
 
-/// Total division. See the note above on why this exists here and not on `Rat`.
+/// Total division. The note above states why this operator exists here and not
+/// on `Rat`.
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl core::ops::Div for Q {
     type Output = Q;

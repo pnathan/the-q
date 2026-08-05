@@ -1,28 +1,32 @@
-//! `the-q` against the two things it sits between: hardware `f64`, and an exact
-//! arbitrary-precision rational (`malachite-q`, the crate's differential oracle).
+//! This benchmark compares `the-q` against the two things it sits between:
+//! hardware `f64`, and an exact arbitrary-precision rational (`malachite-q`,
+//! the crate's differential oracle).
 //!
-//! The interesting number is not the single-operation cost — it is what happens
-//! to that cost as a computation gets longer. `Rat` and `f64` are both fixed-width,
-//! so their per-operation cost is flat in the length of the chain. An exact
-//! rational's denominators multiply, so its per-operation cost grows without
-//! bound. `chain` below measures exactly that, and it is the reason a bounded
-//! rational exists at all.
+//! The primary measurement is not the single-operation cost. It is the change
+//! in that cost as a computation gets longer. `Rat` and `f64` are both
+//! fixed-width. Their per-operation cost is therefore flat in the length of the
+//! chain. An exact rational's denominators multiply. Its per-operation cost
+//! therefore grows without bound. The chain section below measures that growth.
+//! That growth is the reason a bounded rational exists.
 //!
-//! No criterion: it would be a new dev-dependency for something that is a median
-//! of seven timed runs. Deterministic inputs (splitmix64, fixed seed), so
-//! re-running compares against the same work.
+//! This benchmark does not use criterion. Criterion is a new dev-dependency,
+//! and the measurement is a median of seven timed runs. The inputs are
+//! deterministic (splitmix64, fixed seed). A re-run therefore compares against
+//! the same work.
 //!
-//! Run with `cargo bench`. Note that the `bench` profile inherits `release`,
-//! which this crate builds with `overflow-checks = true` — the numbers below
-//! are for the configuration the crate actually ships, not a faster one.
+//! Run this benchmark with `cargo bench`. The `bench` profile inherits
+//! `release`, and this crate builds `release` with `overflow-checks = true`.
+//! The numbers below therefore describe the shipped configuration, not a faster
+//! one.
 
 use std::hint::black_box;
 use std::time::Instant;
 
 use malachite_q::Rational;
-use the_q::{nary, Rat, Q};
+use the_q::{Q, Rat, nary};
 
-/// splitmix64. Fixed seed: the point is repeatability, not statistics.
+/// splitmix64 with a fixed seed. The fixed seed gives repeatability. It does
+/// not give statistical quality.
 struct Rng(u64);
 
 impl Rng {
@@ -34,8 +38,9 @@ impl Rng {
         z ^ (z >> 31)
     }
 
-    /// A fraction in `(0, 1]` with a denominator under 10_000 — the shape of an
-    /// opinion value, and small enough that the exact backend starts cheap.
+    /// Returns a fraction in `(0, 1]` with a denominator under 10_000. This is
+    /// the shape of an opinion value. It is also small enough to keep the
+    /// initial cost of the exact backend low.
     fn next_frac(&mut self) -> (i64, i64) {
         let den = (self.next_u64() % 9_999 + 1) as i64;
         let num = (self.next_u64() % (den as u64) + 1) as i64;
@@ -46,7 +51,8 @@ impl Rng {
 const WARMUP: usize = 3;
 const REPS: usize = 7;
 
-/// Median of `REPS` timed runs after `WARMUP` untimed ones, in ns per iteration.
+/// Returns the median of `REPS` timed runs, in ns per iteration. `WARMUP`
+/// untimed runs precede the timed runs.
 fn time_ns<T>(iters: usize, mut f: impl FnMut(usize) -> T) -> f64 {
     let mut samples = Vec::with_capacity(REPS);
     for r in 0..(WARMUP + REPS) {
@@ -75,8 +81,9 @@ fn row(op: &str, q: f64, f: f64, r: f64) {
     );
 }
 
-/// A two-column row, for the functions `f64` has and an exact rational does
-/// not — there is no `malachite-q` square root or exponential to compare with.
+/// Prints a two-column row. This row covers the functions that `f64` has and an
+/// exact rational does not. `malachite-q` has no square root or exponential for
+/// comparison.
 fn row2(op: &str, q: f64, f: f64) {
     println!("| {:<14} | {:>9.1} | {:>9.1} | {:>7.1}x |", op, q, f, q / f);
 }
@@ -204,10 +211,11 @@ fn main() {
         }),
     );
 
-    // The point of the whole exercise. `acc = (acc + x) * y`, k steps, measured
-    // per step. `Rat` and `f64` are 16 and 8 bytes at every depth; the exact
-    // backend's operands grow, so its per-step cost has to grow with them. The
-    // last column is the size of the exact result, which is what is growing.
+    // This section is the primary measurement. It runs `acc = (acc + x) * y`
+    // for k steps and reports the cost per step. `Rat` and `f64` stay at 16 and
+    // 8 bytes at every depth. The exact backend's operands grow, so its
+    // per-step cost grows with them. The last column reports the size of the
+    // exact result, which is the quantity that grows.
     println!("\n### Chained fusion, cost per step at depth k\n");
     println!(
         "| {:<14} | {:>9} | {:>9} | {:>11} | {:>8} | {:>8} | {:>12} |",
@@ -219,7 +227,8 @@ fn main() {
     );
 
     for k in [4usize, 16, 64, 256, 1024, 4096] {
-        // Fewer outer iterations as k grows, so total work stays comparable.
+        // The outer iteration count falls as k grows. The total work therefore
+        // stays comparable across depths.
         let iters = (n / k).max(4);
 
         let q = time_ns(iters, |i| {
@@ -246,8 +255,8 @@ fn main() {
             acc
         }) / k as f64;
 
-        // How big the exact answer actually got, as decimal characters of
-        // "num/den". `Rat` is 16 bytes here regardless, and `f64` is 8.
+        // This measures the size of the exact answer, in decimal characters of
+        // "num/den". `Rat` stays at 16 bytes here, and `f64` stays at 8.
         let mut acc = rs[0].clone();
         for j in 0..k {
             acc = (acc + &rs[j % n]) * &rs[(j + 1) % n];
@@ -269,9 +278,9 @@ fn main() {
     header("weighted_mean over 8 (weight, value) pairs");
 
     let w = 8usize;
-    // Built once, outside the timed region: `weighted_mean` takes a slice, and
-    // timing a `Vec` allocation for `Rat` that the other two backends do not pay
-    // would be measuring the harness rather than the arithmetic.
+    // The pairs are built once, outside the timed region. `weighted_mean` takes
+    // a slice. The other two backends pay no `Vec` allocation, so timing that
+    // allocation would measure the harness instead of the arithmetic.
     let qpairs: Vec<(Rat, Rat)> = (0..n + w).map(|j| (qs[j % n], qs[(j + 1) % n])).collect();
     let q = time_ns(n / w, |i| {
         let start = (i * w) % n;
@@ -300,9 +309,9 @@ fn main() {
     row("weighted_mean", q, f, r);
 
     // -----------------------------------------------------------------------
-    // The extended type. Every operation here is total, so the comparison is
-    // against `f64`'s equally-total arithmetic rather than against `Rat`'s
-    // partial version — the question is what totality costs.
+    // The extended type. Every operation here is total. The comparison is
+    // therefore against `f64`'s equally total arithmetic, and not against
+    // `Rat`'s partial arithmetic. This section measures the cost of totality.
     // -----------------------------------------------------------------------
 
     let exs: Vec<Q> = qs.iter().map(|x| Q::Number(*x)).collect();
@@ -317,8 +326,9 @@ fn main() {
     let f = time_ns(n, |i| fs[i % n] * fs[(i + 1) % n]);
     row2("Q::mul", q, f);
 
-    // Division is the headline: this one cannot panic and needs no guard,
-    // where `Rat::div` requires the caller to have ruled out a zero divisor.
+    // Division shows the difference most clearly. `Q::div` cannot panic and
+    // needs no guard. `Rat::div` requires the caller to rule out a zero
+    // divisor.
     let q = time_ns(n, |i| Q::div(exs[i % n], exs[(i + 1) % n]));
     let f = time_ns(n, |i| fs[i % n] / fs[(i + 1) % n]);
     row2("Q::div", q, f);
@@ -328,9 +338,9 @@ fn main() {
     row2("Q::compare", q, f);
 
     // -----------------------------------------------------------------------
-    // Transcendentals. `f64` has hardware behind these and this crate has a
-    // series in software, so a large ratio is expected; the number worth
-    // knowing is the absolute cost, and whether it is usable.
+    // Transcendentals. `f64` runs these in hardware, and this crate evaluates a
+    // series in software. A large ratio is therefore expected. The useful
+    // number is the absolute cost, which shows whether the function is usable.
     // -----------------------------------------------------------------------
 
     header2("transcendentals vs f64 (hardware)");

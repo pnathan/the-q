@@ -1,7 +1,7 @@
 //! The ghost model: the mathematics that `Rat` is specified against.
 //!
-//! Everything here is `spec`/`proof` code — it is erased by plain rustc and
-//! consumed by Verus. Two disciplines are enforced throughout:
+//! Everything here is `spec`/`proof` code. Plain rustc erases it, and Verus
+//! consumes it. Two disciplines apply throughout:
 //!
 //! 1. **Unbounded arithmetic.** Specifications talk about Verus `int`/`nat`, not
 //!    about `i64`/`i128`. The machine types appear only in the executable code,
@@ -9,11 +9,11 @@
 //! 2. **Division-free value specifications.** No specification of a *value*
 //!    uses `/`. "`r` is `a + b`" is written by cross-multiplication:
 //!    `r.num * (a.den * b.den) == (a.num * b.den + b.num * a.den) * r.den`.
-//!    SMT solvers handle nonlinear multiplication badly and division far worse;
-//!    this mirrors the discipline used in the Lean formalisation of the same
-//!    mathematics. (Division does appear inside *definitional* spec functions
-//!    such as `gcd_nat`, where it is unavoidable and where the recursion, not
-//!    the solver, carries the meaning.)
+//!    SMT solvers handle nonlinear multiplication badly and division far worse.
+//!    The Lean formalisation of the same mathematics follows the same
+//!    discipline. (Division does appear inside *definitional* spec functions
+//!    such as `gcd_nat`. There it is unavoidable, and the recursion carries the
+//!    meaning instead of the solver.)
 
 use verus_builtin_macros::verus;
 
@@ -23,7 +23,7 @@ use verus_builtin::*;
 use vstd::prelude::*;
 
 #[allow(unused_imports)]
-use crate::types::{Rat, MAX_MAG};
+use crate::types::{MAX_MAG, Rat};
 
 verus! {
 
@@ -44,9 +44,10 @@ pub open spec fn pow2(n: nat) -> int
 
 /// `10^n` as an unbounded integer.
 ///
-/// The decimal counterpart of [`pow2`], and for the same reason: `from_decimal`
-/// cannot say *what value it produces* without a spec-level name for its scale
-/// factor. Only ever applied at `n <= MAX_DEC_PLACES`.
+/// The decimal counterpart of [`pow2`], and it exists for the same reason.
+/// `from_decimal` cannot state *what value it produces* without a spec-level
+/// name for its scale factor. This function applies only at
+/// `n <= MAX_DEC_PLACES`.
 pub open spec fn pow10(n: nat) -> int
     decreases n,
 {
@@ -69,8 +70,8 @@ pub open spec fn max_int(a: int, b: int) -> int {
 
 /// `d` divides `n`.
 ///
-/// The `#[trigger]` is mandatory: the only candidate term is a multiplication,
-/// and Verus will not pick an arithmetic operator as a trigger on its own.
+/// The `#[trigger]` is mandatory. The only candidate term is a multiplication,
+/// and Verus does not pick an arithmetic operator as a trigger on its own.
 pub open spec fn divides(d: int, n: int) -> bool {
     exists|k: int| n == #[trigger] (d * k)
 }
@@ -89,8 +90,8 @@ pub open spec fn gcd_nat(a: nat, b: nat) -> nat
     }
 }
 
-/// `gcd` lifted to integers via absolute values; the value `Rat` canonicality
-/// talks about.
+/// `gcd` lifted to integers via absolute values. This is the value that `Rat`
+/// canonicality refers to.
 pub open spec fn gcd_int(a: int, b: int) -> int {
     gcd_nat(abs_int(a) as nat, abs_int(b) as nat) as int
 }
@@ -121,17 +122,17 @@ pub open spec fn fits_budget(n: int, d: int) -> bool {
     &&& d <= max_mag()
 }
 
-/// Whether the *value* `n / d` (with `d > 0`) is representable at all, i.e.
+/// Whether the *value* `n / d` (with `d > 0`) is representable at all, that is
 /// `|n/d| <= MAX_MAG`. Written division-free.
 ///
-/// When this fails the value is outside the representable range, and R3 is
-/// declared not to apply: the operations saturate to `±MAX_MAG/1` and the
+/// When this predicate fails, the value is outside the representable range and
+/// R3 does not apply. The operations saturate to `±MAX_MAG/1`, and the
 /// `checked_*` variants return `None`.
 ///
-/// Note this is a choice, not a forced move. Some unrepresentable values do
-/// have a `Rat` inside the R3 bound — `n/d = MAX_MAG + 1/2` is within `2^-61` of
-/// `MAX_MAG/1` — so the exclusion is by fiat, to keep the contract on a single
-/// clean side of a boundary, rather than because nothing could satisfy it.
+/// The exclusion is a choice, not a forced move. Some unrepresentable values do
+/// have a `Rat` inside the R3 bound. For example, `n/d = MAX_MAG + 1/2` lies
+/// within `2^-61` of `MAX_MAG/1`. The exclusion keeps the contract on a single
+/// clean side of a boundary. It is not a consequence of an empty candidate set.
 pub open spec fn magnitude_fits(n: int, d: int) -> bool {
     abs_int(n) <= max_mag() * d
 }
@@ -186,8 +187,8 @@ pub open spec fn q_lt(a: Rat, b: Rat) -> bool {
 
 /// `r` is exactly the value of the fraction `n / d` (with `d > 0`).
 ///
-/// This is *the* value-correctness predicate: division-free cross-
-/// multiplication, as promised in the module header.
+/// This is *the* value-correctness predicate. It uses division-free
+/// cross-multiplication, as the module header states.
 pub open spec fn q_is(r: Rat, n: int, d: int) -> bool {
     r.n() * d == n * r.d()
 }
@@ -207,38 +208,36 @@ pub open spec fn q_ge_frac(r: Rat, n: int, d: int) -> bool {
 // ---------------------------------------------------------------------------
 
 /// The precision exponent `B` of the rounding contract. R3 is
-/// `|result - exact| <= 2^-B · max(1, |exact|)`; the specification's acceptance
-/// bar is `B >= 60` and the dyadic-snap implementation achieves 61.
+/// `|result - exact| <= 2^-B · max(1, |exact|)`. The specification's acceptance
+/// bar is `B >= 60`, and the dyadic-snap implementation achieves 61.
 ///
-/// The extra bit over the obvious `60` comes from spending the whole budget on
-/// the scaled numerator instead of reserving a bit of headroom against a
-/// rounding carry: see [`crate::round::snap_shift`]. The carry is handled where
-/// it actually occurs rather than avoided by construction.
+/// The extra bit over `60` comes from the use of the whole budget on the scaled
+/// numerator. The implementation reserves no headroom against a rounding carry.
+/// See [`crate::round::snap_shift`]. It handles the carry at the point of
+/// occurrence rather than prevents the carry by construction.
 pub open spec fn precision_b() -> nat {
     61nat
 }
 
 /// R3, division-free.
 ///
-/// The real statement is `|r - n/d| <= 2^-61 · max(1, |n/d|)`. Multiplying
+/// The real statement is `|r - n/d| <= 2^-61 · max(1, |n/d|)`. Multiplication
 /// through by `r.den · d · 2^61` (both denominators positive) gives
-/// `|r.num·d - n·r.den| · 2^61 <= r.den · max(d, |n|)`, which is what is
-/// written here — no division anywhere.
+/// `|r.num·d - n·r.den| · 2^61 <= r.den · max(d, |n|)`. That inequality is the
+/// form written here, and it contains no division.
 pub open spec fn within_error_bound(r: Rat, n: int, d: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= r.d() * max_int(d, abs_int(n))
 }
 
-/// The precision `Dir::Nearest` actually achieves: a *half* grid step rather
-/// than a whole one, because the nearest integer is never more than half a
-/// unit from the exact scaled value (`lemma_grid_error_step_nearest_half` in
-/// `round.rs`).
+/// The precision that `Dir::Nearest` achieves: a *half* grid step rather than a
+/// whole one. The nearest integer is never more than half a unit from the exact
+/// scaled value (`lemma_grid_error_step_nearest_half` in `round.rs`).
 ///
-/// This is **not** the crate-wide R3 contract — `precision_b` stays at `61`
-/// because the directed modes (`Dir::Down`, `Dir::Up`) genuinely achieve no
-/// better than that. It is the tighter bound available specifically on the
-/// path every default operation (`Rat::add`/`sub`/`mul`/`div`) takes, proved as
-/// an additional guarantee alongside the uniform one rather than in place of
-/// it.
+/// This bound is **not** the crate-wide R3 contract. `precision_b` stays at
+/// `61`, because the directed modes (`Dir::Down`, `Dir::Up`) achieve no better
+/// than that. The tighter bound holds on the path that every default operation
+/// (`Rat::add`/`sub`/`mul`/`div`) takes. A proof gives it as an additional
+/// guarantee beside the uniform one, not in place of it.
 pub open spec fn precision_b_nearest() -> nat {
     62nat
 }
@@ -263,17 +262,17 @@ pub open spec fn within_error_bound_k(r: Rat, n: int, d: int, k: nat) -> bool {
 
 /// `|r - n/d| <= k · m / 2^B`, division-free.
 ///
-/// The *absolute* form of the accumulated bound, carrying an explicit magnitude
-/// bound `m` on the intermediates. This — not a relative bound — is the right
-/// statement for a fold, and it is the one V8 proves.
+/// The *absolute* form of the accumulated bound. It carries an explicit
+/// magnitude bound `m` on the intermediates. A fold needs this absolute form
+/// rather than a relative bound, and V8 proves it.
 ///
-/// Relative error does not accumulate cleanly across a sum: each step's R3 bound
-/// is measured against *that step's* value, and those values move around, so
-/// `k` relative units against the final value is simply not what the induction
-/// gives you. Absolute error does accumulate cleanly, because addition is
-/// exactly 1-Lipschitz. And for this crate's actual domain the two coincide:
-/// every engine value lives in `[0, 1]`, so `max(1, |exact|) == 1` throughout
-/// and `m == 1`, making the bound `k · 2^-61` outright.
+/// Relative error does not accumulate cleanly across a sum. Each step's R3
+/// bound is measured against *that step's* value, and those values vary. The
+/// induction therefore does not yield `k` relative units against the final
+/// value. Absolute error does accumulate cleanly, because addition is exactly
+/// 1-Lipschitz. On this crate's domain the two forms coincide: every engine
+/// value lies in `[0, 1]`, so `max(1, |exact|) == 1` throughout and `m == 1`.
+/// The bound is then `k · 2^-61` outright.
 pub open spec fn within_abs_error(r: Rat, n: int, d: int, k: nat, m: int) -> bool {
     abs_int(r.n() * d - n * r.d()) * pow2(precision_b()) <= (k as int) * m * (r.d() * d)
 }
@@ -320,8 +319,8 @@ pub proof fn lemma_pow2_add(a: nat, b: nat)
         lemma_pow2_add(a, (b - 1) as nat);
         assert(pow2(a + b) == 2 * pow2((a + b - 1) as nat));
         assert(pow2(b) == 2 * pow2((b - 1) as nat));
-        // Moving the factor of two across a product of two unknowns is
-        // nonlinear; Z3 will not do it on its own.
+        // A move of the factor of two across a product of two unknowns is
+        // nonlinear. Z3 does not do it on its own.
         assert(2 * (pow2(a) * pow2((b - 1) as nat)) == pow2(a) * (2 * pow2(
             (b - 1) as nat,
         ))) by (nonlinear_arith);
@@ -415,16 +414,17 @@ pub proof fn lemma_divides_trans(a: int, b: int, c: int)
 // ---------------------------------------------------------------------------
 // Concrete powers of two
 //
-// These are the exponents the crate actually needs as literals. Unfolding
-// `pow2` is exponentially cheap but linearly deep, so each value is pinned
-// once here and reused rather than being re-derived at every use site.
+// These are the exponents the crate needs as literals. Each unfolding step of
+// `pow2` is cheap, but the unfolding depth is linear in the exponent. Each
+// value is therefore pinned once here and reused, rather than re-derived at
+// every use site.
 // ---------------------------------------------------------------------------
 
 /// `2^0` and `2^1`.
 ///
-/// Not as trivial as they look: `pow2` is recursive with default fuel 1, so
-/// `pow2(1)` unfolds to `2 · pow2(0)` and then stops — the solver never reaches
-/// the base case on its own.
+/// These two facts still need a proof. `pow2` is recursive with default fuel 1,
+/// so `pow2(1)` unfolds to `2 · pow2(0)` and then stops. The solver does not
+/// reach the base case on its own.
 pub proof fn lemma_pow2_small()
     ensures
         pow2(0) == 1,
@@ -460,10 +460,10 @@ pub proof fn lemma_pow2_64()
 
 /// `2^124`.
 ///
-/// Past roughly `2^64`, `reveal_with_fuel` stops being a usable proof: the
-/// unfolding is linear in the exponent and Z3 exhausts its resource limit
-/// before reaching the literal. Squaring a value that is already pinned costs
-/// one multiplication instead.
+/// Above roughly `2^64`, `reveal_with_fuel` is not a usable proof. The
+/// unfolding is linear in the exponent, and Z3 exhausts its resource limit
+/// before it reaches the literal. A square of an already pinned value costs one
+/// multiplication instead.
 pub proof fn lemma_pow2_124()
     ensures
         pow2(124) == 21267647932558653966460912964485513216,
@@ -532,8 +532,8 @@ pub proof fn lemma_mul_in_i128(x: int, y: int)
 
 /// `|x · c| == |x| · c` for positive `c`.
 ///
-/// Used constantly when a bound is scaled by a denominator; stating it once
-/// stops every call site from having to re-derive it inside a nonlinear goal.
+/// This fact applies whenever a denominator scales a bound. One statement here
+/// removes the need to re-derive it inside a nonlinear goal at each call site.
 pub proof fn lemma_abs_mul_pos(x: int, c: int)
     requires
         c > 0,
@@ -558,9 +558,9 @@ pub proof fn lemma_abs_mul_pos(x: int, c: int)
 
 /// `gcd(x, 1) == 1`.
 ///
-/// Needs two unfoldings — `gcd(x, 1)` goes to `gcd(1, x % 1)`, which is
-/// `gcd(1, 0)`, which is `1` — and Verus's default fuel for a recursive spec
-/// function is one. Hence the explicit `reveal_with_fuel`.
+/// This fact needs two unfoldings. `gcd(x, 1)` goes to `gcd(1, x % 1)`, which
+/// is `gcd(1, 0)`, which is `1`. Verus gives a recursive spec function a default
+/// fuel of one. The explicit `reveal_with_fuel` supplies the rest.
 pub proof fn lemma_gcd_unit(x: int)
     ensures
         gcd_int(x, 1) == 1,

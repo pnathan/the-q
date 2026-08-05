@@ -1,14 +1,15 @@
 //! Verified greatest common divisor (obligation V5).
 //!
-//! Euclid's algorithm on `u128`, proven equal to the ghost `gcd_nat`,
-//! terminating (the second argument strictly decreases), dividing both
-//! arguments, and being the greatest such divisor. The `u128` width is what the
-//! rest of the crate actually needs: canonicalisation reduces `i128`
-//! intermediates, not `i64` ones. [`gcd_u64`] is the narrow wrapper.
+//! The implementation is Euclid's algorithm on `u128`. Proofs show that it
+//! equals the ghost `gcd_nat`, that it terminates (the second argument strictly
+//! decreases), that it divides both arguments, and that it is the greatest such
+//! divisor. The rest of the crate needs the `u128` width: canonicalisation
+//! reduces `i128` intermediates, not `i64` ones. [`gcd_u64`] is the narrow
+//! wrapper.
 //!
-//! The last lemma in this file, `lemma_gcd_reduce_coprime`, is the one that
-//! makes canonicalisation work at all: dividing both arguments by their gcd
-//! leaves them coprime, which is exactly invariant I1.
+//! The last lemma in this file, `lemma_gcd_reduce_coprime`, makes
+//! canonicalisation work. Dividing both arguments by their gcd leaves them
+//! coprime, which is exactly invariant I1.
 
 use verus_builtin_macros::verus;
 
@@ -47,9 +48,9 @@ pub proof fn lemma_gcd_divides(a: nat, b: nat)
     }
 }
 
-/// Any common divisor of `a` and `b` divides `gcd(a, b)` — i.e. the gcd is
-/// *greatest* in the divisibility order (and hence, for positive divisors, in
-/// the usual order).
+/// Any common divisor of `a` and `b` divides `gcd(a, b)`. The gcd is therefore
+/// *greatest* in the divisibility order. For positive divisors it is also
+/// greatest in the usual order.
 pub proof fn lemma_gcd_greatest(a: nat, b: nat, c: int)
     requires
         divides(c, a as int),
@@ -63,8 +64,9 @@ pub proof fn lemma_gcd_greatest(a: nat, b: nat, c: int)
         let dq = (a as int) / (b as int);
         let dr = (a as int) % (b as int);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a as int, b as int);
-        // a%b == 1*a + (-(a/b))*b — the linear combination `lemma_divides_linear`
-        // needs. Distributing the negation over `b · dq` is nonlinear.
+        // a%b == 1*a + (-(a/b))*b is the linear combination that
+        // `lemma_divides_linear` needs. Distribution of the negation over
+        // `b · dq` is nonlinear.
         assert(dr == 1 * (a as int) + (-dq) * (b as int)) by (nonlinear_arith)
             requires
                 (a as int) == (b as int) * dq + dr,
@@ -126,7 +128,7 @@ pub proof fn lemma_gcd_zero(a: nat)
 
 /// `gcd(k·a, k·b) == k · gcd(a, b)` for `k > 0`.
 ///
-/// The workhorse behind `lemma_gcd_reduce_coprime`.
+/// This scaling law is the main step in `lemma_gcd_reduce_coprime`.
 pub proof fn lemma_gcd_scale(k: nat, a: nat, b: nat)
     requires
         k > 0,
@@ -165,8 +167,8 @@ pub proof fn lemma_gcd_scale(k: nat, a: nat, b: nat)
 
 /// Dividing both arguments by their gcd leaves them coprime.
 ///
-/// This is invariant I1's justification: `Rat::new(n, d)` divides through by
-/// `g = gcd(|n|, d)` and the result is canonical precisely because of this.
+/// This lemma justifies invariant I1. `Rat::new(n, d)` divides through by
+/// `g = gcd(|n|, d)`. The result is canonical because of this lemma.
 pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
     requires
         a > 0 || b > 0,
@@ -216,9 +218,9 @@ pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
 
 /// Euclid's algorithm on `u128`.
 ///
-/// Termination: `y` strictly decreases (`x % y < y` whenever `y > 0`), which is
-/// the `decreases` measure on the loop. No arithmetic here can overflow — `%`
-/// only ever shrinks its operands.
+/// Termination: `y` strictly decreases, because `x % y < y` whenever `y > 0`.
+/// That decrease is the `decreases` measure on the loop. No arithmetic here
+/// overflows, because `%` only shrinks its operands.
 pub fn gcd_u128(a: u128, b: u128) -> (r: u128)
     ensures
         r == gcd_nat(a as nat, b as nat),

@@ -1,10 +1,11 @@
-//! The README's code examples, compiled and run.
+//! The README's code examples. This file compiles and runs them.
 //!
-//! The README is not included via `#![doc = include_str!(...)]`, so its
-//! examples are not doctests and nothing would otherwise catch them drifting
-//! away from the API. They are reproduced here verbatim.
+//! The crate does not include the README via `#![doc = include_str!(...)]`.
+//! The README examples are therefore not doctests. Without this file, nothing
+//! detects drift between those examples and the API. This file reproduces them
+//! verbatim.
 
-use the_q::{Rat, MAX_MAG, Q};
+use the_q::{MAX_MAG, Q, Rat};
 
 #[test]
 fn readme_kernel_example() {
@@ -26,8 +27,8 @@ fn readme_extended_example() {
 
 #[test]
 fn readme_claims_about_the_kernel_defects_hold() {
-    // The README states these as facts about `Rat`; if any stops being true the
-    // README is wrong and this fails.
+    // The README states these as facts about `Rat`. If any one stops holding,
+    // the README is wrong and this test fails.
     let zero = Rat::new(0, 1).unwrap();
     let one = Rat::new(1, 1).unwrap();
     assert!(Rat::new(1, 0).is_none(), "Rat::new(_, 0) is None");
@@ -53,6 +54,6 @@ fn readme_claims_about_the_extended_type_hold() {
     assert_eq!([Q::Nan, Q::one()].into_iter().min().unwrap(), Q::one());
     // "is_saturated means overflow, is_infinite means division by zero"
     assert!(!Q::PosSat.is_infinite() && !Q::PosInf.is_saturated());
-    // "there is deliberately no is_finite()" — a saturated value IS finite.
+    // "there is deliberately no is_finite()". A saturated value is finite.
     assert!(!Q::PosSat.is_number());
 }
