@@ -609,4 +609,343 @@ impl Q {
     }
 }
 
+/// Terms of the `atan` series.
+///
+/// Its argument is reduced to `|z| <= 1/2`, where the tail after `n` odd powers
+/// is about `2^-n / n`. Sixty-one odd powers — thirty-one terms — put that below
+/// the grid; thirty-two is carried for margin. This is larger than
+/// [`SERIES_TERMS`] because `atan`'s coefficients are `1/(2k+1)` rather than
+/// `1/(2k+1)!`, so it converges geometrically rather than factorially.
+const ATAN_TERMS: u32 = 32;
+
+/// The largest argument `sin`, `cos` and `tan` will accept.
+///
+/// Beyond this the answer is not merely inaccurate, it is meaningless, and the
+/// functions return `Nan` rather than a number nobody should trust. Argument
+/// reduction needs `x mod (π/2)`, and `π` is known here only to a relative
+/// `2^-61`, so the reduced argument carries an absolute error of about
+/// `|x| · 2^-61`. At `|x| = 2^20` that is `2^-41`, which still leaves the
+/// result usable; at `|x| = 2^61` it exceeds `π` itself and every digit of the
+/// answer is noise.
+///
+/// `f64` returns a plausible-looking value in that regime. This returns `Nan`,
+/// which is the same choice the rest of the crate makes: an explicit
+/// non-answer beats a silent wrong one.
+const TRIG_ARG_LIMIT: i64 = 1 << 20;
+
+/// `atan(z) = z − z³/3 + z⁵/5 − …`, for `|z| <= 1/2`.
+///
+/// The alternating sibling of [`atanh_series`]; subtraction and addition
+/// alternate rather than every term adding.
+fn atan_series(z: Q) -> (r: Q)
+    requires
+        z.wf(),
+    ensures
+        r.wf(),
+{
+    let z2 = Q::mul(z, z);
+    let mut term = z;
+    let mut sum = z;
+    let mut k: u32 = 1;
+    while k < ATAN_TERMS
+        invariant
+            term.wf(),
+            sum.wf(),
+            z2.wf(),
+            1 <= k <= ATAN_TERMS,
+        decreases ATAN_TERMS - k,
+    {
+        term = Q::mul(term, z2);
+        let piece = Q::div(term, Q::new((2 * k + 1) as i64, 1));
+        sum = if k % 2 == 1 {
+            Q::sub(sum, piece)
+        } else {
+            Q::add(sum, piece)
+        };
+        k = k + 1;
+    }
+    sum
+}
+
+/// `π`, by Machin's formula `π = 16·atan(1/5) − 4·atan(1/239)`.
+///
+/// Computed rather than hard-coded, for the same reason as [`ln2`]. Machin's
+/// form is chosen because both arguments are small enough that the series is
+/// deep in its comfortable range — `1/5` needs far fewer terms than the `1`
+/// that the naive `π/4 = atan(1)` would demand, where the series barely
+/// converges at all.
+pub fn pi() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    let a = Q::mul(Q::new(16, 1), atan_series(Q::new(1, 5)));
+    let b = Q::mul(Q::new(4, 1), atan_series(Q::new(1, 239)));
+    Q::sub(a, b)
+}
+
+/// `π/2`.
+pub fn half_pi() -> (r: Q)
+    ensures
+        r.wf(),
+{
+    Q::div(pi(), Q::new(2, 1))
+}
+
+/// Nearest integer to a `Q`, ties away from zero; `0` for any special.
+///
+/// Only used on values already known to be small, so the `i64` arithmetic
+/// cannot overflow: `|num| <= MAX_MAG` and `den/2 <= MAX_MAG/2` make the sum at
+/// most `1.5 · MAX_MAG`.
+fn round_to_int(q: Q) -> (r: i64)
+    requires
+        q.wf(),
+{
+    match q {
+        Q::Number(x) => {
+            let n = x.numerator();
+            let d = x.denominator();
+            if n >= 0 {
+                (n + d / 2) / d
+            } else {
+                (n - d / 2) / d
+            }
+        },
+        _ => 0,
+    }
+}
+
+/// `sin(z)` by Maclaurin series, for `|z| <= π/4`.
+fn sin_series(z: Q) -> (r: Q)
+    requires
+        z.wf(),
+    ensures
+        r.wf(),
+{
+    let z2 = Q::mul(z, z);
+    let mut term = z;
+    let mut sum = z;
+    let mut k: u32 = 1;
+    while k < SERIES_TERMS
+        invariant
+            term.wf(),
+            sum.wf(),
+            z2.wf(),
+            1 <= k <= SERIES_TERMS,
+        decreases SERIES_TERMS - k,
+    {
+        // term_{k} = term_{k-1} · z² / ((2k)(2k+1))
+        let kk: i64 = k as i64;
+        assert(1 <= kk <= SERIES_TERMS as i64);
+        // `kk <= 20`, so the product is at most `40 * 41`. The prover needs
+        // this spelled out: a product of two bounded terms is nonlinear.
+        assert(2 * kk * (2 * kk + 1) <= 40 * 41) by (nonlinear_arith)
+            requires
+                1 <= kk <= 20,
+        ;
+        let d = Q::new(2 * kk * (2 * kk + 1), 1);
+        term = Q::div(Q::mul(term, z2), d);
+        sum = if k % 2 == 1 {
+            Q::sub(sum, term)
+        } else {
+            Q::add(sum, term)
+        };
+        k = k + 1;
+    }
+    sum
+}
+
+/// `cos(z)` by Maclaurin series, for `|z| <= π/4`.
+fn cos_series(z: Q) -> (r: Q)
+    requires
+        z.wf(),
+    ensures
+        r.wf(),
+{
+    let z2 = Q::mul(z, z);
+    let mut term = Q::one();
+    let mut sum = Q::one();
+    let mut k: u32 = 1;
+    while k < SERIES_TERMS
+        invariant
+            term.wf(),
+            sum.wf(),
+            z2.wf(),
+            1 <= k <= SERIES_TERMS,
+        decreases SERIES_TERMS - k,
+    {
+        // term_{k} = term_{k-1} · z² / ((2k-1)(2k))
+        let kk: i64 = k as i64;
+        assert(1 <= kk <= SERIES_TERMS as i64);
+        assert((2 * kk - 1) * (2 * kk) <= 39 * 40) by (nonlinear_arith)
+            requires
+                1 <= kk <= 20,
+        ;
+        let d = Q::new((2 * kk - 1) * (2 * kk), 1);
+        term = Q::div(Q::mul(term, z2), d);
+        sum = if k % 2 == 1 {
+            Q::sub(sum, term)
+        } else {
+            Q::add(sum, term)
+        };
+        k = k + 1;
+    }
+    sum
+}
+
+impl Q {
+    /// The arctangent, in `(-π/2, π/2)`.
+    ///
+    /// `atan(±∞)` is `±π/2` exactly — the limit exists and is representable, so
+    /// unlike most functions here the infinite cases carry real information.
+    /// `atan(PosSat)` is `Nan`: the image of `(MAX_MAG, ∞)` is a sliver just
+    /// below `π/2`, which contains representable values and so cannot be
+    /// reported as any saturation state.
+    ///
+    /// # Method
+    ///
+    /// Two reductions before the series. `|x| > 1` becomes
+    /// `sign(x)·π/2 − atan(1/x)`, and `|x| > 1/2` becomes
+    /// `±π/4 + atan((x∓1)/(x±1))`. Together they bring the argument to at most
+    /// `1/2`, where thirty-two terms are enough.
+    pub fn atan(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            self.spec_is_nan() ==> r.spec_is_nan(),
+    {
+        match self {
+            Q::Nan => Q::Nan,
+            Q::PosSat => Q::Nan,
+            Q::NegSat => Q::Nan,
+            Q::PosInf => half_pi(),
+            Q::NegInf => half_pi().neg(),
+            Q::Number(x) => {
+                let q = Q::Number(x);
+                let one = Q::one();
+                let half = Q::new(1, 2);
+                let quarter_pi = Q::div(pi(), Q::new(4, 1));
+                let big = Q::gt(q.abs(), one);
+                // Reduce |x| > 1 by reciprocation.
+                let base = if big {
+                    Q::div(one, q)
+                } else {
+                    q
+                };
+                // Reduce |base| > 1/2 by the tangent addition formula.
+                let (core, shift) = if Q::gt(base, half) {
+                    (Q::div(Q::sub(base, one), Q::add(base, one)), quarter_pi)
+                } else if Q::lt(base, half.neg()) {
+                    (Q::div(Q::add(base, one), Q::sub(one, base)), quarter_pi.neg())
+                } else {
+                    (base, Q::zero())
+                };
+                let inner = Q::add(atan_series(core), shift);
+                if big {
+                    // atan(x) = sign(x)·π/2 − atan(1/x)
+                    let hp = half_pi();
+                    if Q::gt(q, Q::zero()) {
+                        Q::sub(hp, inner)
+                    } else {
+                        Q::sub(hp.neg(), inner)
+                    }
+                } else {
+                    inner
+                }
+            },
+        }
+    }
+
+    /// The sine.
+    ///
+    /// `Nan` for `|self| > 2^20`, for every special, and for anything else whose
+    /// argument cannot be reduced meaningfully — the limit is `2^20`. Both
+    /// infinities are `Nan` because `sin` has no limit at infinity, which is a
+    /// genuine non-answer rather than a limitation of this implementation.
+    ///
+    /// # Method
+    ///
+    /// `n = round(x / (π/2))`, `r = x − n·(π/2)` with `|r| <= π/4`, then the
+    /// Maclaurin series for `sin` or `cos` selected by `n mod 4`.
+    pub fn sin(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::sin_cos(self, false)
+    }
+
+    /// The cosine. Same domain and method as [`Q::sin`].
+    pub fn cos(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::sin_cos(self, true)
+    }
+
+    /// The shared reduction for [`Q::sin`] and [`Q::cos`].
+    ///
+    /// `want_cos` selects which of the pair is returned; both need the identical
+    /// argument reduction, and doing it once keeps them exactly consistent —
+    /// `sin(x)² + cos(x)² == 1` would be at the mercy of two separate reductions
+    /// otherwise.
+    fn sin_cos(self, want_cos: bool) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        match self {
+            Q::Number(x) => {
+                let q = Q::Number(x);
+                let limit = Q::new(TRIG_ARG_LIMIT, 1);
+                if Q::gt(q.abs(), limit) {
+                    return Q::Nan;
+                }
+                let hp = half_pi();
+                let n = round_to_int(Q::div(q, hp));
+                let r = Q::sub(q, Q::mul(Q::new(n, 1), hp));
+                // `n mod 4`, normalised into 0..3 for negative `n` too.
+                let m = ((n % 4) + 4) % 4;
+                let idx = if want_cos {
+                    (m + 1) % 4
+                } else {
+                    m
+                };
+                // sin(r + k·π/2) cycles sin, cos, −sin, −cos; cos is the same
+                // cycle one quarter-turn ahead, which is what `idx` encodes.
+                if idx == 0 {
+                    sin_series(r)
+                } else if idx == 1 {
+                    cos_series(r)
+                } else if idx == 2 {
+                    sin_series(r).neg()
+                } else {
+                    cos_series(r).neg()
+                }
+            },
+            // sin and cos have no limit at infinity, and no saturation state
+            // can bound a value that oscillates in [-1, 1].
+            _ => Q::Nan,
+        }
+    }
+
+    /// The tangent, as `sin/cos`.
+    ///
+    /// At an odd multiple of `π/2` the cosine is near zero and the quotient
+    /// saturates or reports an infinity rather than trapping — which is the
+    /// honest answer, since `tan` genuinely has a pole there.
+    pub fn tan(self) -> (r: Q)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+    {
+        Q::div(self.sin(), self.cos())
+    }
+}
+
 } // verus!

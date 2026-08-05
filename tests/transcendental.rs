@@ -625,3 +625,303 @@ fn pow_i32_handles_negative_exponents_totally() {
         assert_total(q.pow_i32(e), "pow_i32");
     }
 }
+
+// ===========================================================================
+// pi, sin, cos, tan, atan
+// ===========================================================================
+
+/// `atan(z)` over exact rationals, to 2^-90, for `|z| <= 1/2`.
+fn oracle_atan_small(z: &Rational) -> Rational {
+    let z2 = z.clone() * z.clone();
+    let mut term = z.clone();
+    let mut sum = z.clone();
+    let tol = eps(90);
+    for j in 1..400u32 {
+        term *= z2.clone();
+        let piece = term.clone() / Rational::from_signeds((2 * j + 1) as i128, 1i128);
+        if j % 2 == 1 {
+            sum -= piece.clone();
+        } else {
+            sum += piece.clone();
+        }
+        if mag(&piece) < tol {
+            break;
+        }
+    }
+    sum
+}
+
+/// `π` by Machin, at 2^-90.
+fn oracle_pi() -> Rational {
+    Rational::from_signeds(16i128, 1i128) * oracle_atan_small(&Rational::from_signeds(1i128, 5i128))
+        - Rational::from_signeds(4i128, 1i128)
+            * oracle_atan_small(&Rational::from_signeds(1i128, 239i128))
+}
+
+/// `sin(x)` (or `cos`) by direct Maclaurin over exact rationals, no reduction.
+/// Only usable for modest `|x|`, which is exactly where it is used.
+fn oracle_sin_cos(x: &Rational, want_cos: bool) -> Rational {
+    let x2 = x.clone() * x.clone();
+    let (mut term, mut sum) = if want_cos {
+        (one(), one())
+    } else {
+        (x.clone(), x.clone())
+    };
+    let tol = eps(90);
+    for k in 1..200u32 {
+        let d = if want_cos {
+            ((2 * k - 1) as i128) * ((2 * k) as i128)
+        } else {
+            ((2 * k) as i128) * ((2 * k + 1) as i128)
+        };
+        term = term * x2.clone() / Rational::from_signeds(d, 1i128);
+        if k % 2 == 1 {
+            sum -= term.clone();
+        } else {
+            sum += term.clone();
+        }
+        if mag(&term) < tol {
+            break;
+        }
+    }
+    sum
+}
+
+#[test]
+fn pi_is_accurate() {
+    let want = oracle_pi();
+    match the_q::transcendental::pi() {
+        Q::Number(r) => {
+            let e = rel_err(&rat(r), &want);
+            println!("pi: relative error 2^-{}", precision_bits(&e));
+            assert!(e <= eps(55), "pi = {r} is not accurate enough");
+        }
+        other => panic!("pi must be a number, got {other}"),
+    }
+}
+
+#[test]
+fn atan_is_accurate_and_matches_known_points() {
+    // atan(1) == pi/4 and atan(0) == 0 are the anchors.
+    let quarter_pi = oracle_pi() / Rational::from_signeds(4i128, 1i128);
+    if let Q::Number(r) = Q::one().atan() {
+        assert!(
+            rel_err(&rat(r), &quarter_pi) <= eps(45),
+            "atan(1) = {r} should be pi/4"
+        );
+    } else {
+        panic!("atan(1) must be a number");
+    }
+    assert_eq!(Q::zero().atan(), Q::zero(), "atan(0) is exactly 0");
+
+    // Both infinities have exact limits, which is unusual here.
+    if let Q::Number(r) = Q::PosInf.atan() {
+        let half_pi = oracle_pi() / two_rational();
+        assert!(rel_err(&rat(r), &half_pi) <= eps(45), "atan(+inf) = pi/2");
+    } else {
+        panic!("atan(+inf) must be a number");
+    }
+    assert_eq!(Q::PosSat.atan(), Q::Nan);
+    assert_eq!(Q::Nan.atan(), Q::Nan);
+
+    let mut rng = Rng::new(0x5EED_0030);
+    let mut worst = oracle_zero();
+    for _ in 0..2_000 {
+        let x = rng.q();
+        // The oracle series needs |z| <= 1/2, so check there directly and rely
+        // on the reduction identities elsewhere (covered by tan/atan round trip).
+        let half = Rational::from_signeds(1i128, 2i128);
+        if mag(&rat(x)) > half {
+            continue;
+        }
+        let want = oracle_atan_small(&rat(x));
+        if let Q::Number(r) = Q::Number(x).atan() {
+            let e = rel_err(&rat(r), &want);
+            if e > worst {
+                worst = e.clone();
+            }
+            assert!(e <= eps(45), "atan({x}) = {r}, want ~{want}");
+        }
+    }
+    println!("atan: worst relative error 2^-{}", precision_bits(&worst));
+}
+
+#[test]
+fn sin_and_cos_match_a_direct_series() {
+    let mut rng = Rng::new(0x5EED_0031);
+    let (mut ws, mut wc) = (oracle_zero(), oracle_zero());
+    for _ in 0..2_000 {
+        // Modest arguments, where a reduction-free oracle is tractable. The
+        // reduction path itself is exercised by the identity tests below.
+        let k = (rng.below(21) as i64) - 10;
+        let frac = rng.q_unit();
+        let q = Q::add(Q::Number(Rat::new(k, 1).unwrap()), Q::Number(frac));
+        let Q::Number(xv) = q else { continue };
+        let want_s = oracle_sin_cos(&rat(xv), false);
+        let want_c = oracle_sin_cos(&rat(xv), true);
+        if let Q::Number(r) = q.sin() {
+            let e = rel_err(&rat(r), &want_s);
+            if e > ws {
+                ws = e.clone();
+            }
+            assert!(e <= eps(35), "sin({xv}) = {r}, want ~{want_s}");
+        }
+        if let Q::Number(r) = q.cos() {
+            let e = rel_err(&rat(r), &want_c);
+            if e > wc {
+                wc = e.clone();
+            }
+            assert!(e <= eps(35), "cos({xv}) = {r}, want ~{want_c}");
+        }
+    }
+    println!(
+        "sin: worst relative error 2^-{}; cos: 2^-{}",
+        precision_bits(&ws),
+        precision_bits(&wc)
+    );
+}
+
+#[test]
+fn pythagorean_identity_holds() {
+    // sin^2 + cos^2 == 1 across the whole accepted range, including where
+    // argument reduction does the most work. This is what a shared reduction
+    // between sin and cos buys.
+    let mut rng = Rng::new(0x5EED_0032);
+    let mut worst = oracle_zero();
+    for _ in 0..5_000 {
+        let k = (rng.below(2_000_000) as i64) - 1_000_000;
+        let q = Q::Number(Rat::new(k, 1000).unwrap());
+        let (s, c) = (q.sin(), q.cos());
+        if let (Q::Number(sv), Q::Number(cv)) = (s, c) {
+            let sum = rat(sv) * rat(sv) + rat(cv) * rat(cv);
+            let e = mag(&(sum - one()));
+            if e > worst {
+                worst = e.clone();
+            }
+            assert!(e <= eps(30), "sin^2+cos^2 at {q} is off by {e}");
+        }
+    }
+    println!(
+        "sin^2 + cos^2 - 1: worst absolute error 2^-{}",
+        precision_bits(&worst)
+    );
+}
+
+#[test]
+fn sin_and_cos_at_the_landmark_angles() {
+    let pi = the_q::transcendental::pi();
+    let half_pi = Q::div(pi, Q::new(2, 1));
+    assert_eq!(Q::zero().sin(), Q::zero(), "sin(0) is exactly 0");
+    assert_eq!(Q::zero().cos(), Q::one(), "cos(0) is exactly 1");
+    // sin(pi/2) ~ 1, cos(pi/2) ~ 0, sin(pi) ~ 0, cos(pi) ~ -1.
+    for (val, want, what) in [
+        (half_pi.sin(), one(), "sin(pi/2)"),
+        (pi.cos(), -one(), "cos(pi)"),
+    ] {
+        if let Q::Number(r) = val {
+            assert!(
+                mag(&(rat(r) - want)) <= eps(35),
+                "{what} = {r} is off target"
+            );
+        } else {
+            panic!("{what} must be a number");
+        }
+    }
+    for (val, what) in [(half_pi.cos(), "cos(pi/2)"), (pi.sin(), "sin(pi)")] {
+        if let Q::Number(r) = val {
+            assert!(mag(&rat(r)) <= eps(35), "{what} = {r} should be ~0");
+        } else {
+            panic!("{what} must be a number");
+        }
+    }
+}
+
+#[test]
+fn sin_and_cos_stay_within_minus_one_and_one() {
+    let mut rng = Rng::new(0x5EED_0033);
+    let slack = eps(30);
+    for _ in 0..20_000 {
+        let k = (rng.below(2_000_000) as i64) - 1_000_000;
+        let q = Q::Number(Rat::new(k, 997).unwrap());
+        for (v, what) in [(q.sin(), "sin"), (q.cos(), "cos")] {
+            if let Q::Number(r) = v {
+                assert!(
+                    mag(&rat(r)) <= one() + slack.clone(),
+                    "{what}({q}) = {r} escaped [-1, 1]"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn trig_refuses_arguments_it_cannot_reduce() {
+    // Past 2^20 the reduction error swamps the answer, so a Nan is returned
+    // rather than a plausible-looking number. f64 does the opposite.
+    let big = Q::Number(Rat::new((1i64 << 20) + 1, 1).unwrap());
+    assert_eq!(big.sin(), Q::Nan);
+    assert_eq!(big.cos(), Q::Nan);
+    assert_eq!(big.neg().sin(), Q::Nan);
+    // Just inside the limit it still answers.
+    let ok = Q::Number(Rat::new((1i64 << 20) - 1, 1).unwrap());
+    assert!(ok.sin().is_number() && ok.cos().is_number());
+    // No limit at infinity: a genuine non-answer, not a shortcoming.
+    assert_eq!(Q::PosInf.sin(), Q::Nan);
+    assert_eq!(Q::NegInf.cos(), Q::Nan);
+    assert_eq!(Q::PosSat.sin(), Q::Nan);
+}
+
+#[test]
+fn tan_matches_sin_over_cos_and_handles_its_poles() {
+    let mut rng = Rng::new(0x5EED_0034);
+    for _ in 0..5_000 {
+        let k = (rng.below(20_000) as i64) - 10_000;
+        let q = Q::Number(Rat::new(k, 1000).unwrap());
+        assert_eq!(q.tan(), Q::div(q.sin(), q.cos()), "tan must be sin/cos");
+        assert_total(q.tan(), "tan");
+    }
+    // Near a pole the quotient blows up rather than trapping, which is the
+    // honest answer since tan genuinely has one there.
+    let half_pi = Q::div(the_q::transcendental::pi(), Q::new(2, 1));
+    assert_total(half_pi.tan(), "tan(pi/2)");
+}
+
+#[test]
+fn atan_inverts_tan_on_the_principal_branch() {
+    let mut rng = Rng::new(0x5EED_0035);
+    for _ in 0..2_000 {
+        // Stay well inside (-pi/2, pi/2), where atan(tan(x)) == x.
+        let k = (rng.below(2_800) as i64) - 1_400;
+        let x = Q::Number(Rat::new(k, 1000).unwrap());
+        if let Q::Number(t) = x.tan() {
+            if let Q::Number(back) = Q::Number(t).atan() {
+                let d = mag(&(rat(back)
+                    - rat(match x {
+                        Q::Number(v) => v,
+                        _ => unreachable!(),
+                    })));
+                assert!(d <= eps(25), "atan(tan({x})) = {back}, off by {d}");
+            }
+        }
+    }
+}
+
+#[test]
+fn trig_is_total_and_never_panics() {
+    for q in states() {
+        assert_total(q.sin(), "sin");
+        assert_total(q.cos(), "cos");
+        assert_total(q.tan(), "tan");
+        assert_total(q.atan(), "atan");
+    }
+    let mut rng = Rng::new(0x5EED_0036);
+    for _ in 0..20_000 {
+        let n = rng.next_u64() as i64;
+        let d = rng.next_u64() as i64;
+        let q = Q::new(n, d);
+        assert_total(q.sin(), "sin");
+        assert_total(q.cos(), "cos");
+        assert_total(q.tan(), "tan");
+        assert_total(q.atan(), "atan");
+    }
+}
