@@ -410,7 +410,7 @@ and it is an order-of-magnitude larger verification project.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `819 verified, 0 errors`, no `assume`, no `admit`. The three
+design intention. `871 verified, 0 errors`, no `assume`, no `admit`. The two
 `external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
 are the only things taken on trust.
 
@@ -571,7 +571,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `819 verified, 0 errors`,
+**Current status: every proof obligation discharges — `871 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
