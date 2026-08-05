@@ -440,6 +440,238 @@ pub proof fn lemma_gcd_both_even(x: nat, y: nat)
 }
 
 // ---------------------------------------------------------------------------
+// Coprimality: Bezout, Gauss, and products
+//
+// These support cross-reduction, which is how `mul`, `div` and `add` avoid a
+// gcd on their `i128` intermediates. `vstd` has no gcd theory, thus the layer
+// is built here from Bezout upwards.
+// ---------------------------------------------------------------------------
+
+/// **Bezout.** `gcd(a, b)` is an integer linear combination of `a` and `b`.
+///
+/// The induction follows the recursion of `gcd_nat`: `a % b == a - b·(a / b)`,
+/// thus a combination for `(b, a % b)` rearranges into one for `(a, b)`.
+pub proof fn lemma_bezout(a: nat, b: nat) -> (r: (int, int))
+    ensures
+        gcd_nat(a, b) as int == (a as int) * r.0 + (b as int) * r.1,
+    decreases b,
+{
+    if b == 0 {
+        assert(gcd_nat(a, 0) as int == (a as int) * 1 + 0int * 0);
+        (1int, 0int)
+    } else {
+        let (u, v) = lemma_bezout(b, (a % b) as nat);
+        let q = (a as int) / (b as int);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a as int, b as int);
+        // (a % b) == a - b·q, thus b·u + (a - b·q)·v == a·v + b·(u - q·v).
+        assert((b as int) * u + ((a % b) as int) * v == (a as int) * v + (b as int) * (u - q * v))
+            by (nonlinear_arith)
+            requires
+                (a as int) == (b as int) * q + ((a % b) as int),
+        ;
+        assert(gcd_nat(a, b) as int == (a as int) * v + (b as int) * (u - q * v));
+        (v, u - q * v)
+    }
+}
+
+/// **Gauss's lemma.** If `a` is coprime to `b` and divides `b · c`, it divides
+/// `c`.
+///
+/// From Bezout: `1 == a·u + b·v`, thus `c == a·u·c + (b·c)·v`, and `a` divides
+/// both terms.
+pub proof fn lemma_gauss(a: nat, b: nat, c: int)
+    requires
+        gcd_nat(a, b) == 1,
+        divides(a as int, (b as int) * c),
+    ensures
+        divides(a as int, c),
+{
+    let (u, v) = lemma_bezout(a, b);
+    assert(1int == (a as int) * u + (b as int) * v);
+    lemma_divides_basic(a as int);
+    // `a` divides `a` and divides `b·c`, thus it divides `(u·c)·a + v·(b·c)`.
+    lemma_divides_linear(a as int, a as int, (b as int) * c, u * c, v);
+    assert((u * c) * (a as int) + v * ((b as int) * c) == c) by (nonlinear_arith)
+        requires
+            1int == (a as int) * u + (b as int) * v,
+    ;
+}
+
+/// A divisor of one member of a coprime pair is coprime to the other.
+pub proof fn lemma_coprime_divisor(x: nat, y: nat, u: nat, v: nat)
+    requires
+        gcd_nat(x, y) == 1,
+        divides(u as int, x as int),
+        divides(v as int, y as int),
+    ensures
+        gcd_nat(u, v) == 1,
+{
+    let g = gcd_nat(u, v);
+    lemma_gcd_divides(u, v);
+    // g divides u divides x, and g divides v divides y.
+    lemma_divides_trans(g as int, u as int, x as int);
+    lemma_divides_trans(g as int, v as int, y as int);
+    lemma_gcd_greatest(x, y, g as int);
+    assert(divides(g as int, 1int));
+    lemma_divides_one(g as int);
+}
+
+/// **Coprimality is multiplicative.** A number coprime to each of two factors
+/// is coprime to their product.
+///
+/// Multiplying the two Bezout identities gives one for the product: every term
+/// of `(u·s + w·t)·(v·s' + w·t')` other than `u·v·s·s'` carries a factor of `w`.
+pub proof fn lemma_coprime_product(u: nat, v: nat, w: nat)
+    requires
+        gcd_nat(u, w) == 1,
+        gcd_nat(v, w) == 1,
+    ensures
+        gcd_nat((u * v) as nat, w) == 1,
+{
+    let (s, t) = lemma_bezout(u, w);
+    let (s2, t2) = lemma_bezout(v, w);
+    let g = gcd_nat((u * v) as nat, w);
+    lemma_gcd_divides((u * v) as nat, w);
+    // 1 == (u·v)·(s·s2) + w·(u·s·t2 + v·s2·t + w·t·t2).
+    let comb = (u as int) * s * t2 + (v as int) * s2 * t + (w as int) * t * t2;
+    assert(((u * v) as int) * (s * s2) + (w as int) * comb == 1int) by (nonlinear_arith)
+        requires
+            1int == (u as int) * s + (w as int) * t,
+            1int == (v as int) * s2 + (w as int) * t2,
+            comb == (u as int) * s * t2 + (v as int) * s2 * t + (w as int) * t * t2,
+    ;
+    lemma_divides_linear(g as int, (u * v) as int, w as int, s * s2, comb);
+    lemma_divides_one(g as int);
+}
+
+/// The symmetric form of [`lemma_coprime_product`]: a number coprime to a
+/// product is what two coprimalities on the other side give.
+pub proof fn lemma_coprime_product_right(u: nat, v: nat, w: nat)
+    requires
+        gcd_nat(w, u) == 1,
+        gcd_nat(w, v) == 1,
+    ensures
+        gcd_nat(w, (u * v) as nat) == 1,
+{
+    lemma_gcd_sym(w, u);
+    lemma_gcd_sym(w, v);
+    lemma_coprime_product(u, v, w);
+    lemma_gcd_sym((u * v) as nat, w);
+}
+
+/// `d` divides `n` implies `n / d` is a cofactor: `n == d · (n / d)`.
+///
+/// The step that turns a divisibility fact into an equation, which the
+/// cross-reduction proof needs four times.
+pub proof fn lemma_divides_cofactor(d: nat, n: nat)
+    requires
+        d > 0,
+        divides(d as int, n as int),
+    ensures
+        n == d * (n / d),
+        divides((n / d) as int, n as int),
+{
+    let k = choose|k: int| (n as int) == #[trigger] ((d as int) * k);
+    assert(k >= 0) by (nonlinear_arith)
+        requires
+            d > 0,
+            n >= 0,
+            (n as int) == (d as int) * k,
+    ;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(n as int, d as int, k, 0);
+    assert(n / d == k as nat);
+    assert((n as int) == (k as int) * (d as int)) by (nonlinear_arith)
+        requires
+            (n as int) == (d as int) * k,
+    ;
+}
+
+/// **Cross-reduction.** For two canonical fractions `x1/y1` and `x2/y2`, the
+/// gcd of the product's numerator and denominator splits into two gcds across
+/// the pair:
+///
+/// `gcd(x1·x2, y1·y2) == gcd(x1, y2) · gcd(x2, y1)`
+///
+/// Two `u64` gcds on the *operands* can thus replace one `u128` gcd on the
+/// `i128` product: the operands are bounded by `MAX_MAG`, and the product is
+/// not.
+///
+/// The arithmetic does not currently use this law. Measurement is the reason.
+/// [`gcd_u128`] narrows to [`gcd_bin_u64`] after at most two Euclid steps, thus
+/// the wide gcd is already close to a narrow one, and paying for two narrow
+/// gcds instead measured 8% slower on `mul` and 17% slower on `div`, with no
+/// change on the chain path. The law is kept proven because the version that
+/// would win needs it: cross-reduction can produce the *reduced components*
+/// from `u64` divisions, which removes the two `i128` divisions as well, and
+/// that is where the remaining cost is.
+///
+/// The proof divides each side by the two cross gcds and shows the four
+/// remaining factors are pairwise coprime, which makes the reduced product
+/// coprime by [`lemma_coprime_product`].
+pub proof fn lemma_gcd_cross(x1: nat, y1: nat, x2: nat, y2: nat)
+    requires
+        gcd_nat(x1, y1) == 1,
+        gcd_nat(x2, y2) == 1,
+        y1 > 0,
+        y2 > 0,
+    ensures
+        gcd_nat((x1 * x2) as nat, (y1 * y2) as nat) == gcd_nat(x1, y2) * gcd_nat(x2, y1),
+{
+    let g1 = gcd_nat(x1, y2);
+    let g2 = gcd_nat(x2, y1);
+    lemma_gcd_pos(x1, y2);
+    lemma_gcd_pos(x2, y1);
+    lemma_gcd_divides(x1, y2);
+    lemma_gcd_divides(x2, y1);
+
+    // The four cofactors.
+    let p = (x1 / g1) as nat;
+    let q = (y2 / g1) as nat;
+    let r = (x2 / g2) as nat;
+    let s = (y1 / g2) as nat;
+    lemma_divides_cofactor(g1, x1);
+    lemma_divides_cofactor(g1, y2);
+    lemma_divides_cofactor(g2, x2);
+    lemma_divides_cofactor(g2, y1);
+
+    // Pairwise coprimality. Two pairs come from reducing by the gcd, and two
+    // from the canonicality of the operands.
+    lemma_gcd_reduce_coprime(x1, y2);
+    lemma_gcd_reduce_coprime(x2, y1);
+    assert(gcd_nat(p, q) == 1);
+    assert(gcd_nat(r, s) == 1);
+    lemma_coprime_divisor(x1, y1, p, s);
+    lemma_coprime_divisor(x2, y2, r, q);
+
+    // `p·r` is coprime to `s` and to `q`, thus to `s·q`.
+    lemma_coprime_product(p, r, s);
+    lemma_coprime_product(p, r, q);
+    lemma_coprime_product_right(s, q, (p * r) as nat);
+
+    // Both products carry the factor `g1·g2`, which scales out of the gcd.
+    let k = (g1 * g2) as nat;
+    assert(k > 0) by (nonlinear_arith)
+        requires
+            g1 > 0,
+            g2 > 0,
+            k == g1 * g2,
+    ;
+    assert((x1 * x2) as nat == (k * (p * r)) as nat) by (nonlinear_arith)
+        requires
+            x1 == g1 * p,
+            x2 == g2 * r,
+            k == g1 * g2,
+    ;
+    assert((y1 * y2) as nat == (k * (s * q)) as nat) by (nonlinear_arith)
+        requires
+            y1 == g2 * s,
+            y2 == g1 * q,
+            k == g1 * g2,
+    ;
+    lemma_gcd_scale(k, (p * r) as nat, (s * q) as nat);
+}
+
+// ---------------------------------------------------------------------------
 // Executable gcd
 // ---------------------------------------------------------------------------
 
@@ -677,6 +909,38 @@ pub fn gcd_u64(a: u64, b: u64) -> (r: u64)
         }
     }
     g
+}
+
+/// The properties of `gcd_int(n, d)` for a positive `d`, in ghost form.
+///
+/// [`gcd_abs_i128`] establishes these as postconditions of the computation.
+/// A caller that obtains the gcd another way — `Rat::mul_dir` and
+/// `Rat::div_dir` obtain it from [`lemma_gcd_cross`] — needs the same facts
+/// without the call.
+pub proof fn lemma_gcd_int_facts(n: int, d: int)
+    requires
+        d > 0,
+    ensures
+        crate::model::gcd_int(n, d) > 0,
+        divides(crate::model::gcd_int(n, d), n),
+        divides(crate::model::gcd_int(n, d), d),
+        crate::model::gcd_int(n, d) <= d,
+        n != 0 ==> crate::model::gcd_int(n, d) <= crate::model::abs_int(n),
+{
+    let m = crate::model::abs_int(n) as nat;
+    let g = crate::model::gcd_int(n, d);
+    lemma_gcd_pos(m, d as nat);
+    lemma_gcd_le(m, d as nat);
+    lemma_gcd_divides(m, d as nat);
+    // `divides(g, |n|)` gives `divides(g, n)`: the cofactor changes sign.
+    let k = choose|k: int| (m as int) == #[trigger] (g * k);
+    if n < 0 {
+        assert(n == g * (-k)) by (nonlinear_arith)
+            requires
+                (m as int) == g * k,
+                (m as int) == -n,
+        ;
+    }
 }
 
 /// `gcd(|n|, d)` for a signed numerator and a positive denominator, the exact

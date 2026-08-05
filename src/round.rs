@@ -1652,6 +1652,38 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
         r == round_frac(n as int, d as int, dir),
 {
     proof {
+        // `gcd_abs_i128` bounds its numerator by a literal, and the input bound
+        // here is stated with `pow2`. The literal has to be concretised first.
+        crate::model::lemma_pow2_126();
+    }
+    let g: i128 = gcd_abs_i128(n, d);
+    round_frac_exec_with_gcd(n, d, g, dir)
+}
+
+/// [`round_frac_exec`], with the gcd supplied by the caller.
+///
+/// The gcd is the dominant cost of an arithmetic operation, and at `i128` width
+/// it is the most expensive form of it. A caller that already knows the gcd of
+/// its own pair can skip that work. `Rat::mul_dir` and `Rat::div_dir` know it:
+/// by `lemma_gcd_cross`, the gcd of a product of two canonical fractions is the
+/// product of two gcds taken across the operands, and those operands are
+/// bounded by `MAX_MAG`, thus each of those two gcds is a `u64` gcd.
+///
+/// The precondition pins `g` to the same value the general entry point would
+/// compute, thus the postcondition is identical and no caller can pass a
+/// number that changes the result.
+pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
+    requires
+        d > 0,
+        abs_int(n as int) < num_input_bound(),
+        d as int <= den_input_bound(),
+        g as int == crate::model::gcd_int(n as int, d as int),
+    ensures
+        r.wf(),
+        r == round_frac(n as int, d as int, dir),
+{
+    proof {
+        lemma_gcd_int_facts(n as int, d as int);
         // The input bounds use `pow2`, which discharges no `i128` overflow or
         // range check on its own. The two literals thus come first.
         crate::model::lemma_pow2_124();
@@ -1686,7 +1718,6 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     proof {
         lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
     }
-    let g: i128 = gcd_abs_i128(n, d);
     proof {
         // `red_den > 0`, therefore `g <= d`, therefore the divisions below are
         // safe. The two exactness equations are `n == rn·g` and `d == rd·g`.
