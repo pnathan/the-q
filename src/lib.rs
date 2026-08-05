@@ -137,6 +137,7 @@ pub mod interval;
 pub mod laws;
 pub mod lipschitz;
 pub mod nary;
+pub mod transcendental;
 
 pub use convert::{from_f64_dir, q_from_f64, to_f64, ParseQError};
 pub use ext::{Sign, Q};
