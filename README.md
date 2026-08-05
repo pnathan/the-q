@@ -19,10 +19,10 @@ constructors. It is `Copy`, 128 bits, no heap, no allocation, trivially
 `Send + Sync`.
 
 The fields are public because Verus cannot state a public invariant about a
-datatype whose fields it cannot see. Under Verus that costs nothing: every
-operation `requires` the invariant, so a hand-built `Rat { num: 3, den: 0 }`
-cannot be passed to anything. In unverified Rust it is a footgun — use
-`Rat::new`, `Rat::from_decimal` or `Rat::from_int`.
+datatype whose fields it cannot see. The type is `#[non_exhaustive]`, so that
+visibility costs nothing either way: `Rat { num: 3, den: 0 }` does not compile
+outside the crate, and `Rat::new`, `Rat::new_rounded`, `Rat::from_decimal` and
+`Rat::from_int` are the only way in. Each canonicalises what it is given.
 
 ## Two types: `Rat` and `Q`
 
@@ -439,9 +439,10 @@ bring the result in through `from_f64_dir`.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `871 verified, 0 errors`, no `assume`, no `admit`. The two
-`external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
-are the only things taken on trust.
+design intention. `871 verified, 0 errors`, no `assume`, no `admit`. Three
+`external_body` functions are the only things taken on trust, and `TRUSTED.md`
+enumerates them: two at the `f64` edge, and one runtime check that computes
+nothing and is trusted for its panic message.
 
 **Representation — every public operation, no exceptions** (V1, V5)
 
@@ -595,14 +596,14 @@ Specifications and proofs live in the source, inside `verus!` blocks.
 * **`VERIFICATION.md`** — the obligation map (V1–V8), what is proven where, and
   the current status of each.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
-  and the differential tests backing it. There are two.
+  and the tests backing it. There are three.
 * **`docs/SPEC.md` §9** — the six places the specification as written does not
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
 **Current status: every proof obligation discharges — `871 verified, 0 errors`,
-as a required CI check.** No `assume`, no `admit`, two `external_body` functions
-at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
+as a required CI check.** No `assume`, no `admit`, three `external_body`
+functions: two at the `f64` edge, one a runtime check. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
 independently validated by the test suite below.
 

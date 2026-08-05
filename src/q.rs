@@ -38,6 +38,33 @@ use crate::types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
 verus! {
 
 // ---------------------------------------------------------------------------
+// The runtime half of the division preconditions
+// ---------------------------------------------------------------------------
+
+/// Panic with `msg` unless `nonzero` holds.
+///
+/// `Rat::div_dir` and `Rat::recip` carry `n() != 0` as a precondition, because
+/// their exactness contracts need it. Verified code discharges the precondition
+/// and this call compiles to a branch that is never taken. Unverified code
+/// cannot discharge a precondition, thus this check is what stands between an
+/// unverified caller and a division by zero inside the rounding code, or a
+/// returned `Rat { num: -1, den: 0 }`.
+///
+/// The function is `external_body` for its message only. `vstd`'s
+/// `runtime_assert` has the identical contract and needs no trusted code here,
+/// but it panics with `assertion failed: b` at a line inside `vstd`, which
+/// names neither the operation nor the fix. `TRUSTED.md` §3 states the assumed
+/// specification: the function returns when `nonzero` is true and panics when
+/// it is false. It performs no arithmetic and returns no value.
+#[verifier::external_body]
+pub fn require_nonzero(nonzero: bool, msg: &str)
+    requires
+        nonzero,
+{
+    assert!(nonzero, "{}", msg);
+}
+
+// ---------------------------------------------------------------------------
 // Exact numerators and denominators of the four operations, in ghost form
 // ---------------------------------------------------------------------------
 
@@ -548,7 +575,12 @@ impl Rat {
         // The runtime half of the precondition. Verified code proves this and
         // pays nothing. Unverified code that passes a zero divisor panics here
         // instead of reaching the division inside `round_frac_exec`.
-        vstd::pervasive::runtime_assert(b.num != 0);
+        require_nonzero(
+            b.num != 0,
+            "the-q: Rat::div by zero. Rat::div requires a nonzero divisor. Use \
+             Rat::checked_div, which returns None, or Q::div, which returns an \
+             infinity or Nan.",
+        );
         proof {
             lemma_op_widths(a, b);
             crate::model::lemma_pow2_124();
@@ -846,7 +878,12 @@ impl Rat {
     {
         // Without this check a zero receiver returns `Rat { num: -1, den: 0 }`,
         // which violates I1 and fails in a later operation, far from the cause.
-        vstd::pervasive::runtime_assert(self.num != 0);
+        require_nonzero(
+            self.num != 0,
+            "the-q: Rat::recip of zero. The reciprocal of zero is not a \
+             rational and no Rat denotes it. Use Q::recip, which returns \
+             PosInf.",
+        );
         proof {
             lemma_max_mag_pow2();
         }

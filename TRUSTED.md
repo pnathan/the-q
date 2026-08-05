@@ -1,23 +1,27 @@
 # Trusted boundary
 
-Everything in `the-q` is verified integer arithmetic **except** the two
+Everything in `the-q` is verified integer arithmetic **except** the three
 functions below. Each is marked `#[verifier::external_body]`, which means Verus
 takes its `ensures` clause on faith and never looks at the body. Each is listed
 here with the specification that is being assumed and the tests that check the
 assumption against reality.
 
-A third float function, `convert::q_from_f64`, sits outside the verified region
+Another float function, `convert::q_from_f64`, sits outside the verified region
 but is *not* `external_body` and assumes nothing numeric — see the section at
 the end.
 
 There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 Grep for them: `rg 'assume\(|admit\(' src/` returns nothing.
 
-Both trusted functions sit at the crate's `f64` edge. Neither is on any
-arithmetic path — `Rat + Rat`, `Rat * Rat`, comparison, canonicalisation and
-rounding never touch a float. The same holds for the extended `Q`: none of
+Two of the three sit at the crate's `f64` edge. Neither is on any arithmetic
+path — `Rat + Rat`, `Rat * Rat`, comparison, canonicalisation and rounding never
+touch a float. The same holds for the extended `Q`: none of
 `Q::add`/`sub`/`mul`/`div`/`recip`, the order, or the predicates touches a
 float.
+
+The third, `q::require_nonzero`, computes nothing. It is a runtime check that
+either returns or panics, and it is trusted for its panic message rather than
+for any numeric claim.
 
 ---
 
@@ -129,6 +133,46 @@ Round-tripping through it silently reintroduces every `f64` problem this crate
 exists to remove — non-associativity, order dependence, and unprovable error.
 Use `serde` (which encodes the exact `(num, den)` pair) or `Display` for
 anything that has to come back.
+
+---
+
+## 3. `q::require_nonzero`
+
+```rust
+#[verifier::external_body]
+pub fn require_nonzero(nonzero: bool, msg: &str)
+    requires
+        nonzero,
+{
+    assert!(nonzero, "{}", msg);
+}
+```
+
+**Why it is trusted.** For its message, and for nothing else. `Rat::div_dir` and
+`Rat::recip` carry `n() != 0` as a precondition; verified code discharges it, so
+this call is a branch that is never taken and the body is unreachable. Unverified
+code cannot discharge a precondition, and this check is what turns that case into
+a panic that names the operation and the alternative, rather than
+`attempt to divide by zero` from inside `round_frac_exec` or a returned
+`Rat { num: -1, den: 0 }`.
+
+`vstd::pervasive::runtime_assert` has the identical contract and would need no
+trusted code here. It panics with `assertion failed: b` at a line inside `vstd`,
+which names neither the operation nor the fix. The trade is one trusted function
+against an error message a caller can act on.
+
+**What is assumed.** That the function returns when `nonzero` is true, and does
+not return when it is false. Nothing numeric. The `requires` clause is what
+Verus checks at each call site, and the two call sites discharge it from the
+operation's own precondition.
+
+**What is not assumed.** Anything about the values being divided. The function
+takes a `bool` and a `&str`, performs no arithmetic, and returns nothing. It
+cannot alter a result; it can only stop a call.
+
+**Tests backing it.** `adversarial::div_by_zero_panics` and
+`adversarial::recip_of_zero_panics` check the panic. `extended_q::the_motivating_defects_are_fixed`
+checks it against the `Q` behaviour for the same inputs.
 
 ---
 
