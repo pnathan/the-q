@@ -1071,6 +1071,18 @@ impl Q {
                 &&& (r == a || r == b)
                 &&& Q::spec_le(r, a)
                 &&& Q::spec_le(r, b)
+                // ...and *which* argument, so the contract names the result
+                // rather than merely constraining it.
+                //
+                // The three clauses above already pin the answer uniquely —
+                // that is `theorem_min_spec_categorical`. But uniqueness is a
+                // property of the contract, and connecting it to *this*
+                // function's output was left to a reader's inference. These two
+                // clauses make that connection machine-checked instead: the
+                // postcondition now determines the result for every input, so
+                // no bridging step is needed.
+                &&& Q::spec_le(a, b) ==> r == a
+                &&& !Q::spec_le(a, b) ==> r == b
             },
     {
         if a.is_nan() || b.is_nan() {
@@ -1094,6 +1106,9 @@ impl Q {
                 &&& (r == a || r == b)
                 &&& Q::spec_le(a, r)
                 &&& Q::spec_le(b, r)
+                // See `Q::min`: these name the result rather than bounding it.
+                &&& Q::spec_le(a, b) ==> r == b
+                &&& !Q::spec_le(a, b) ==> r == a
             },
     {
         if a.is_nan() || b.is_nan() {

@@ -1312,6 +1312,12 @@ impl Rat {
             r == a || r == b,
             q_le(r, a),
             q_le(r, b),
+            // ...and *which* argument. Without these the contract constrains
+            // the result without naming it, leaving the connection between
+            // "the contract pins a unique answer" and "this function returns
+            // it" to a reader rather than to the prover.
+            q_le(a, b) ==> r == a,
+            !q_le(a, b) ==> r == b,
     {
         if Rat::le(a, b) {
             a
@@ -1330,6 +1336,9 @@ impl Rat {
             r == a || r == b,
             q_le(a, r),
             q_le(b, r),
+            // See `Rat::min`: these name the result rather than bounding it.
+            q_le(a, b) ==> r == b,
+            !q_le(a, b) ==> r == a,
     {
         if Rat::le(a, b) {
             b
@@ -1350,9 +1359,25 @@ impl Rat {
             r == a || r == lo || r == hi,
             q_le(lo, r),
             q_le(r, hi),
+            // ...and *which* of the three.
+            //
+            // The four clauses above do not pin the result: for `lo < a < hi`
+            // the value `lo` satisfies every one of them, so a `clamp` that
+            // ignored `a` entirely and always returned `lo` would verify. That
+            // is the same defect the extended `Q::clamp` had, and the same one
+            // the old `isqrt_i64` postcondition had — a contract wide enough to
+            // admit a wrong answer. It was found by proving the extended
+            // version's contract categorical, failing, and checking whether the
+            // kernel shared the weakness. It did.
+            (q_le(lo, a) && q_le(a, hi)) ==> r == a,
+            !q_le(lo, a) ==> r == lo,
+            !q_le(a, hi) ==> r == hi,
     {
         proof {
             lemma_le_trans(lo, hi, a);
+            // `a < lo <= hi` gives `a <= hi`, which makes the "returns `hi`"
+            // clause vacuous on the `lo` branch.
+            lemma_le_trans(a, lo, hi);
         }
         if Rat::lt(a, lo) {
             lo
