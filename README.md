@@ -89,6 +89,25 @@ cell, is issue #26. `Rat` keeps its invariant verbatim, so every proof
 obligation that existed before this layer still discharges with its exact
 original statement.
 
+## What never panics, and what still does
+
+`Q`'s entire public surface is total: arithmetic, comparison, the predicates,
+the folds, and every root and transcendental. There is no input — including
+zero divisors, values past the budget, and every special state — for which any
+of them panics or returns a malformed value. Verus discharges the no-panic
+obligation over the whole module, and the test suite re-checks it on the
+compiled artifact by sweeping every function over every state plus tens of
+thousands of random values.
+
+`Rat` is deliberately **not** total, and that has not changed. `Rat::div(x, 0)`
+panics, `Rat::new(_, 0)` is `None`, and `Rat::zero().recip()` returns a value
+violating the type invariant. That is the point of the split: `Rat` is the
+verified kernel where preconditions are discharged statically at the call site,
+and `Q` is the layer that makes them into values for callers who cannot. If you
+want the guarantee, use `Q`.
+
+There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
+
 ## Performance, measured
 
 `cargo bench` runs the numbers below (median of seven timed runs, deterministic
@@ -391,7 +410,7 @@ and it is an order-of-magnitude larger verification project.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `742 verified, 0 errors`, no `assume`, no `admit`. The three
+design intention. `819 verified, 0 errors`, no `assume`, no `admit`. The three
 `external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
 are the only things taken on trust.
 
@@ -552,7 +571,7 @@ Specifications and proofs live in the source, inside `verus!` blocks.
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
-**Current status: every proof obligation discharges — `742 verified, 0 errors`,
+**Current status: every proof obligation discharges — `819 verified, 0 errors`,
 as a required CI check.** No `assume`, no `admit`, two `external_body` functions
 at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is

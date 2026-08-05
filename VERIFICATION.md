@@ -6,7 +6,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  742 verified, 0 errors     <- the-q
+verification results::  819 verified, 0 errors     <- the-q
 ```
 
 That second line is the number that matters, and it is the one to quote. Do not
@@ -38,7 +38,7 @@ The trajectory, one row per CI round:
 | `6c73847` (`main`) | 443 | 0 |
 | `5edea2e` (five merged lines of work) | 665 | 0 |
 | `b27d913` (ingestion contracts, #9) | 691 | 0 |
-| this branch (extended `Q`, #26 stages 1–4) | **742** | **0** |
+| this branch (extended `Q`, #26 stages 1–5) | **819** | **0** |
 
 Verified conditions rose monotonically. The error count did not, and both
 directions had honest causes: it rose when a fixed well-formedness failure
@@ -169,6 +169,7 @@ No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
 | V7 | Error-propagation (Lipschitz) lemmas | SHOULD | `lipschitz.rs` |
 | V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation`, `nary::theorem_product_error_accumulation`, `nary::theorem_wm_num_error_accumulation`, `nary::theorem_wm_denom_error_accumulation` |
 | V9 | Extended `Q`: totality, classification, order laws | MUST | `ext.rs`, whole module |
+| V10 | Roots and transcendentals: totality, termination | MUST | `transcendental.rs`, whole module |
 
 ### V1 — the type invariant
 
@@ -343,6 +344,39 @@ having no `Ord` at all and quarantining the total order in `total_cmp`. These
 are independent decisions — reflexive equality alone would still leave `Nan`
 incomparable — and issue #26 §4, which currently claims there is only one
 departure, is amended accordingly.
+
+### V10 — roots and transcendentals
+
+`transcendental.rs` adds `sqrt`, `cbrt`, `exp`, `exp2`, `ln`, `log2`, `log10`,
+`log`, `powf`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+`sinh`, `cosh` and `tanh`. None of these is rational-closed, so what is proven
+is different in kind from V1–V9:
+
+| property | status | how |
+|---|---|---|
+| every function is total — returns a well-formed `Q` for every input | unconditional | `wf` on every `ensures` |
+| no panics, no overflow | unconditional | Verus's own obligation over the whole module |
+| every loop terminates | unconditional | `decreases` on all of them; all bounds are **fixed constants**, never a convergence test |
+| `isqrt_i64` is the integer square root | unconditional | `r*r <= n < (r+1)*(r+1)` — the *defining* property, not a bound |
+
+**Accuracy is measured, not proven.** Proving an error bound on a rounded
+series in Verus would mean formalising the truncation tail and the accumulated
+rounding together, which is a substantially larger project than the functions
+themselves. Instead each function is checked against an exact-rational oracle
+carried to `2^-90` that shares no structure with the implementation, and the
+worst observed relative error is recorded in `README.md`. That is weaker than a
+proof and is labelled as such.
+
+**Term counts are derived, not chosen.** Each series length is computed from its
+own tail bound against the `2^-61` grid, and the derivation sits next to the
+constant. Shortening them from a uniform twenty changed **no** measured
+accuracy figure, which is the evidence the derivations are right.
+
+**The pinned constants are checked.** `pi`, `e`, `ln2` and `ln10` return
+literals for speed; each keeps its series as a public `*_series` function and a
+test asserts the literal is bit-identical to it. This is not ceremony — the
+`ln10` literal was wrong in the seventh significant figure when first written,
+and the test caught it.
 
 ### V7 — Lipschitz lemmas (SHOULD)
 
