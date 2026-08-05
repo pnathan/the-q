@@ -5,7 +5,7 @@
 //! detects drift between those examples and the API. This file reproduces them
 //! verbatim.
 
-use the_q::{Rat, MAX_MAG, Q};
+use the_q::{MAX_MAG, Q, Rat};
 
 #[test]
 fn readme_kernel_example() {

@@ -33,7 +33,7 @@ use crate::gcd::*;
 use crate::model::*;
 #[allow(unused_imports)]
 use crate::round::*;
-use crate::types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
+use crate::types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
 
 verus! {
 

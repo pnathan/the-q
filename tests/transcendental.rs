@@ -12,9 +12,9 @@
 
 mod common;
 
-use common::{rat, zero as oracle_zero, Rng};
+use common::{Rng, rat, zero as oracle_zero};
 use malachite_q::Rational;
-use the_q::{Rat, MAX_MAG, Q};
+use the_q::{MAX_MAG, Q, Rat};
 
 fn one() -> Rational {
     Rational::from_signeds(1i128, 1i128)
@@ -33,11 +33,7 @@ fn rel_err(got: &Rational, want: &Rational) -> Rational {
     let d = mag(&(got.clone() - want.clone()));
     let scale = {
         let m = mag(want);
-        if m > one() {
-            m
-        } else {
-            one()
-        }
+        if m > one() { m } else { one() }
     };
     d / scale
 }
@@ -555,11 +551,7 @@ fn ln_inverts_exp_to_the_precision_the_grid_allows() {
         // The size of the intermediate sets the precision.
         let scale = {
             let inv = oracle_exp(&Rational::from_signeds(-k as i128, 1i128));
-            if inv > one() {
-                inv
-            } else {
-                one()
-            }
+            if inv > one() { inv } else { one() }
         };
         let bound = eps(61) * scale * slack.clone();
         assert!(

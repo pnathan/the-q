@@ -25,7 +25,7 @@ use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::model::*;
 #[allow(unused_imports)]
-use crate::types::{Rat, MAX_MAG};
+use crate::types::{MAX_MAG, Rat};
 
 verus! {
 

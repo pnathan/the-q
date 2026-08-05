@@ -139,7 +139,7 @@ pub mod lipschitz;
 pub mod nary;
 pub mod transcendental;
 
-pub use convert::{from_f64_dir, q_from_f64, to_f64, ParseQError};
-pub use ext::{Sign, Q};
+pub use convert::{ParseQError, from_f64_dir, q_from_f64, to_f64};
+pub use ext::{Q, Sign};
 pub use interval::QI;
-pub use types::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
+pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};

@@ -77,7 +77,7 @@ use vstd::prelude::*;
 use crate::gcd::*;
 #[allow(unused_imports)]
 use crate::model::*;
-use crate::types::{Dir, Rat, MAX_MAG};
+use crate::types::{Dir, MAX_MAG, Rat};
 
 verus! {
 

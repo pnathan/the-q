@@ -23,7 +23,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use malachite_q::Rational;
-use the_q::{nary, Rat, Q};
+use the_q::{Q, Rat, nary};
 
 /// splitmix64 with a fixed seed. The fixed seed gives repeatability. It does
 /// not give statistical quality.

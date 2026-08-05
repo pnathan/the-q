@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use malachite_q::Rational;
-use the_q::{Dir, Rat, MAX_MAG};
+use the_q::{Dir, MAX_MAG, Rat};
 
 /// `Rat` as an exact oracle rational.
 pub fn rat(q: Rat) -> Rational {
@@ -33,11 +33,7 @@ pub fn one() -> Rational {
 
 /// `|x|` on the oracle type.
 pub fn rabs(x: Rational) -> Rational {
-    if x < zero() {
-        -x
-    } else {
-        x
-    }
+    if x < zero() { -x } else { x }
 }
 
 /// `2^61`, the R3 precision unit. The specification's bar is `B >= 60`; the

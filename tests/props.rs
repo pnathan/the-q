@@ -465,11 +465,7 @@ fn interval_ops_chain_without_reestablishing_wf() {
 /// both endpoints can land on either side of zero.
 fn ordered_pair(rng: &mut Rng) -> (Rat, Rat) {
     let (p, q) = (rng.q(), rng.q());
-    if Rat::le(p, q) {
-        (p, q)
-    } else {
-        (q, p)
-    }
+    if Rat::le(p, q) { (p, q) } else { (q, p) }
 }
 
 /// Returns a `Rat` in `[lo, hi]`. The distribution is biased toward the

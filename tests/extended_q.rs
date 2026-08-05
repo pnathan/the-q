@@ -27,11 +27,11 @@
 
 mod common;
 
-use common::{rat, zero as oracle_zero, Rng};
+use common::{Rng, rat, zero as oracle_zero};
 use malachite_q::Rational;
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use the_q::{ParseQError, Rat, Sign, MAX_MAG, Q};
+use the_q::{MAX_MAG, ParseQError, Q, Rat, Sign};
 
 /// The five payload-free states.
 const SPECIALS: [Q; 5] = [Q::PosSat, Q::NegSat, Q::PosInf, Q::NegInf, Q::Nan];

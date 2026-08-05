@@ -14,7 +14,7 @@ use common::*;
 use malachite_base::num::arithmetic::traits::Pow;
 use malachite_q::Rational;
 use the_q::convert::{from_f64_dir, from_parts_dir};
-use the_q::{Dir, Rat, MAX_DEC_PLACES, MAX_MAG};
+use the_q::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
 
 // ---------------------------------------------------------------------------
 // The budget edge
@@ -883,11 +883,7 @@ fn the_subgrid_branch_seam_agrees_across_both_paths() {
             let exact = {
                 let m = Rational::from(mant);
                 let scaled = m / Rational::from(2u32).pow((-e) as i64);
-                if neg {
-                    -scaled
-                } else {
-                    scaled
-                }
+                if neg { -scaled } else { scaled }
             };
             // Every one of these is far below 2^-62, so all three directions
             // must agree with the subgrid endpoints regardless of which branch
