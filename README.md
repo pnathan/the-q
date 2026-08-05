@@ -116,7 +116,7 @@ There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 
 ## Performance, measured
 
-`cargo bench` runs the numbers below (median of seven timed runs, deterministic
+`cargo bench` runs the numbers below (minimum of seven timed runs, deterministic
 inputs, `release` with `overflow-checks = true` — the configuration the crate
 actually ships, not a faster one).
 
@@ -639,7 +639,7 @@ cargo test --release --features serde     # overflow checks stay on in release
 
 `cargo bench` (`benches/arith.rs`) measures `the-q` against the two things it
 sits between: hardware `f64`, and `malachite-q`'s arbitrary-precision `Rational`
-— the same crate used as the differential oracle. Median of seven runs,
+— the same crate used as the differential oracle. Minimum of seven runs,
 deterministic inputs, `bench` profile (which inherits `release`, so
 `overflow-checks = true` is *on*: these are the numbers for the configuration
 the crate actually ships).

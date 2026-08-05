@@ -10,9 +10,18 @@
 //! That growth is the reason a bounded rational exists.
 //!
 //! This benchmark does not use criterion. Criterion is a new dev-dependency,
-//! and the measurement is a median of seven timed runs. The inputs are
+//! and the measurement is the minimum of seven timed runs. The inputs are
 //! deterministic (splitmix64, fixed seed). A re-run therefore compares against
 //! the same work.
+//!
+//! The statistic is the minimum and not the median, and the run ends with a
+//! measurement-quality report. Both exist because a comparison between two
+//! builds is only as good as the noise floor of the machine that produced it.
+//! Contention moves a median; it cannot move the minimum below the true cost.
+//! The report states the widest spread seen in any single measurement, and the
+//! drift of a control workload that no change to this crate can affect. A
+//! difference between two builds that is smaller than the control drift is not
+//! a result.
 //!
 //! Run this benchmark with `cargo bench`. The `bench` profile inherits
 //! `release`, and this crate builds `release` with `overflow-checks = true`.
@@ -20,6 +29,7 @@
 //! one.
 
 use std::hint::black_box;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use malachite_q::Rational;
@@ -51,8 +61,19 @@ impl Rng {
 const WARMUP: usize = 3;
 const REPS: usize = 7;
 
-/// Returns the median of `REPS` timed runs, in ns per iteration. `WARMUP`
+/// The widest spread seen in any single measurement, in per mille of that
+/// measurement's minimum. `time_ns` updates it; the report at the end of the
+/// run prints it.
+static WORST_SPREAD_PERMILLE: AtomicU64 = AtomicU64::new(0);
+
+/// Returns the minimum of `REPS` timed runs, in ns per iteration. `WARMUP`
 /// untimed runs precede the timed runs.
+///
+/// The minimum is the statistic here. Every source of noise on a machine adds
+/// time; none removes it. The minimum is therefore the sample least polluted by
+/// whatever else the machine was doing, and it is the statistic that makes two
+/// builds comparable. The spread between the minimum and the maximum goes to
+/// the measurement-quality report.
 fn time_ns<T>(iters: usize, mut f: impl FnMut(usize) -> T) -> f64 {
     let mut samples = Vec::with_capacity(REPS);
     for r in 0..(WARMUP + REPS) {
@@ -66,7 +87,55 @@ fn time_ns<T>(iters: usize, mut f: impl FnMut(usize) -> T) -> f64 {
         }
     }
     samples.sort_by(|a, b| a.partial_cmp(b).expect("no NaN timings"));
-    samples[samples.len() / 2]
+    let min = samples[0];
+    let max = samples[samples.len() - 1];
+    let spread = ((max - min) / min * 1000.0) as u64;
+    WORST_SPREAD_PERMILLE.fetch_max(spread, Ordering::Relaxed);
+    min
+}
+
+/// A fixed integer workload, used as a control.
+///
+/// No change to this crate can alter what this function costs. Measuring it at
+/// the start and at the end of the run therefore measures the machine, and the
+/// difference between the two is the drift a build-to-build comparison has to
+/// beat before it means anything.
+fn control() -> f64 {
+    time_ns(20_000, |i| {
+        let mut acc = i as u64 | 1;
+        for _ in 0..16 {
+            acc = acc.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (acc >> 29);
+        }
+        acc
+    })
+}
+
+/// Prints the control drift and the widest spread, with a verdict.
+fn quality_report(first: f64, last: f64) {
+    let drift = (last - first).abs() / first * 100.0;
+    let spread = WORST_SPREAD_PERMILLE.load(Ordering::Relaxed) as f64 / 10.0;
+    println!("\n### Measurement quality\n");
+    println!("| statistic | value |");
+    println!("|---|---:|");
+    println!("| control, first measurement | {first:.2} ns |");
+    println!("| control, last measurement | {last:.2} ns |");
+    println!("| control drift | {drift:.1}% |");
+    println!("| widest spread in one measurement | {spread:.1}% |");
+    println!();
+    if drift > 5.0 || spread > 25.0 {
+        println!(
+            "The machine was not quiet. A difference between two builds of less\n\
+             than {:.0}% is noise, not a result. Re-run on an idle machine, or\n\
+             pin the benchmark to one core and interleave the two builds.",
+            drift.max(5.0)
+        );
+    } else {
+        println!(
+            "The machine was quiet. A difference between two builds of more than\n\
+             about {:.0}% is a result.",
+            drift.max(2.0)
+        );
+    }
 }
 
 fn row(op: &str, q: f64, f: f64, r: f64) {
@@ -110,6 +179,7 @@ fn header(title: &str) {
 }
 
 fn main() {
+    let control_first = control();
     let n = 1 << 12;
     let mut rng = Rng(0x1234_5678);
 
@@ -124,7 +194,7 @@ fn main() {
         .map(|&(a, b)| Rational::from_signeds(a, b))
         .collect();
 
-    println!("the-q benchmark — {n} distinct operand pairs, median of {REPS} runs");
+    println!("the-q benchmark — {n} distinct operand pairs, minimum of {REPS} runs");
     println!("exact = malachite-q Rational (arbitrary precision, the differential oracle)");
 
     header("Single operations");
@@ -369,5 +439,5 @@ fn main() {
     let f = time_ns(n, |i| fs[i % n].atan());
     row2("atan", q, f);
 
-    println!();
+    quality_report(control_first, control());
 }
