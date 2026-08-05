@@ -2330,3 +2330,44 @@ fn weighted_mean_agrees_with_the_oracle_on_the_exact_path() {
         }
     }
 }
+
+#[test]
+fn clamp_returns_the_value_itself_when_it_is_already_in_range() {
+    // Guards the defect that `theorem_clamp_spec_categorical` exposed. The
+    // previous contract permitted a `clamp` that ignored `a` entirely and always
+    // returned `lo`: for `lo < a < hi` that answer is "one of the three
+    // permitted values" and does lie in `[lo, hi]`.
+    //
+    // The proof now rules it out, and so does this — belt and braces, because a
+    // contract and a test fail in different ways.
+    let lo = Q::zero();
+    let hi = Q::Number(Rat::new(10, 1).unwrap());
+    for n in 1i64..10 {
+        let a = Q::Number(Rat::new(n, 1).unwrap());
+        assert_eq!(
+            Q::clamp(a, lo, hi),
+            a,
+            "a value already inside [lo, hi] must come back unchanged"
+        );
+    }
+    // ...and the endpoints still clamp.
+    assert_eq!(Q::clamp(Q::Number(Rat::new(-5, 1).unwrap()), lo, hi), lo);
+    assert_eq!(Q::clamp(Q::Number(Rat::new(50, 1).unwrap()), lo, hi), hi);
+
+    // Over random values, against an independently computed expectation.
+    let mut rng = Rng::new(0x5EED_1234_ABCD_0050);
+    for _ in 0..20_000 {
+        let (a, lo, hi) = (Q::Number(rng.q()), Q::Number(rng.q()), Q::Number(rng.q()));
+        if !Q::le(lo, hi) {
+            continue;
+        }
+        let want = if Q::lt(a, lo) {
+            lo
+        } else if Q::lt(hi, a) {
+            hi
+        } else {
+            a
+        };
+        assert_eq!(Q::clamp(a, lo, hi), want, "clamp({a}, {lo}, {hi})");
+    }
+}

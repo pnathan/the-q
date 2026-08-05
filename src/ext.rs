@@ -1128,6 +1128,19 @@ impl Q {
                 &&& (r == a || r == lo || r == hi)
                 &&& Q::spec_le(lo, r)
                 &&& Q::spec_le(r, hi)
+                // ...and *which* of the three, pinned exactly. Without these
+                // three clauses the contract above is satisfied by a `clamp`
+                // that always returns `lo`: for `lo < a < hi`, `r == lo` is one
+                // of the three permitted values and does lie in `[lo, hi]`.
+                //
+                // That is the same weakness the old `isqrt_i64` spec had — a
+                // postcondition wide enough to admit a wrong answer — and it
+                // was found the same way, by trying to prove the contract
+                // categorical and discovering it is not. A specification that
+                // admits the bug is not a specification.
+                &&& (Q::spec_le(lo, a) && Q::spec_le(a, hi)) ==> r == a
+                &&& !Q::spec_le(lo, a) ==> r == lo
+                &&& !Q::spec_le(a, hi) ==> r == hi
             },
     {
         if a.is_nan() || lo.is_nan() || hi.is_nan() {
@@ -1137,6 +1150,14 @@ impl Q {
             // silently returning an endpoint.
             Q::Nan
         } else if Q::lt(a, lo) {
+            proof {
+                // `a < lo <= hi` gives `a <= hi`, which makes the "returns
+                // `hi`" clause vacuously true on this branch. Transitivity is
+                // not free: the prover has `!spec_le(lo, a)` and needs totality
+                // to turn it into `spec_le(a, lo)` first.
+                theorem_order_total(lo, a);
+                theorem_order_transitive(a, lo, hi);
+            }
             lo
         } else if Q::lt(hi, a) {
             hi
@@ -1726,6 +1747,279 @@ pub proof fn theorem_sat_separates_numbers(x: Rat)
         !Q::spec_le(Q::Number(x), Q::NegSat),
         !Q::spec_le(Q::PosSat, Q::Number(x)),
 {
+}
+
+/// The order has a bottom and a top, and both are *strict*: `NegInf` sits
+/// strictly below every other value and `Nan` strictly above.
+///
+/// The first two clauses give folds a starting point — a running minimum can
+/// begin at `Nan` and a running maximum at `NegInf` without excluding anything.
+/// The strictness clauses are what make the extremes *unique*: nothing else
+/// shares the bottom or the top, so `compare(q, NegInf) <= 0` really does
+/// identify `q` as `NegInf` and `compare(Nan, q) <= 0` as `Nan`. No `wf`
+/// hypothesis is needed — the placement is a fact about the rank structure,
+/// not about any payload.
+pub proof fn theorem_order_extremes(q: Q)
+    ensures
+        Q::spec_le(Q::NegInf, q),
+        Q::spec_le(q, Q::Nan),
+        q != Q::NegInf ==> !Q::spec_le(q, Q::NegInf),
+        q != Q::Nan ==> !Q::spec_le(Q::Nan, q),
+{
+}
+
+/// **Trichotomy**: every pair is in exactly one of the relations `a < b`,
+/// `a == b`, `b < a` (with `a < b` spelled `!spec_le(b, a)`, as the exec `lt`
+/// spells it).
+///
+/// Totality alone permits `a <= b` and `b <= a` to overlap on distinct values;
+/// antisymmetry alone permits incomparable pairs. This is the conjunction that
+/// callers branching three ways on `compare` actually rely on: the three
+/// branches cover everything and never both apply. The "exactly one" is
+/// counted, in the same style as `theorem_classification_partitions`, rather
+/// than written as six implications.
+pub proof fn theorem_order_trichotomy(a: Q, b: Q)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        (if !Q::spec_le(b, a) {
+            1int
+        } else {
+            0int
+        }) + (if a == b {
+            1int
+        } else {
+            0int
+        }) + (if !Q::spec_le(a, b) {
+            1int
+        } else {
+            0int
+        }) == 1,
+{
+    theorem_order_total(a, b);
+    if Q::spec_le(a, b) && Q::spec_le(b, a) {
+        theorem_order_antisymmetric(a, b);
+    }
+}
+
+/// **`min`'s postcondition pins its result uniquely.** Any two values that
+/// both satisfy it — each is one of the arguments and a lower bound of both —
+/// are structurally equal.
+///
+/// This is the categoricity check the `isqrt` episode taught this crate to
+/// demand of a specification: a contract weak enough to admit two different
+/// answers is a contract a bug can hide behind. `min`'s cannot. The proof is
+/// not free — on a tie (`a` and `b` mathematically equal) the two candidates
+/// could a priori be the two *representations*, and it is kernel canonicality
+/// (via antisymmetry) that collapses them.
+pub proof fn theorem_min_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        r1 == a || r1 == b,
+        Q::spec_le(r1, a),
+        Q::spec_le(r1, b),
+        r2 == a || r2 == b,
+        Q::spec_le(r2, a),
+        Q::spec_le(r2, b),
+    ensures
+        r1 == r2,
+{
+    // r1 <= r2 because r2 is one of {a, b}, and symmetrically; antisymmetry
+    // then forces structural equality.
+    theorem_order_antisymmetric(r1, r2);
+}
+
+/// **`max`'s postcondition pins its result uniquely** — the dual of
+/// [`theorem_min_spec_categorical`], and needed separately because `max`'s
+/// contract is its own statement, not a rewriting of `min`'s.
+pub proof fn theorem_max_spec_categorical(a: Q, b: Q, r1: Q, r2: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        r1 == a || r1 == b,
+        Q::spec_le(a, r1),
+        Q::spec_le(b, r1),
+        r2 == a || r2 == b,
+        Q::spec_le(a, r2),
+        Q::spec_le(b, r2),
+    ensures
+        r1 == r2,
+{
+    theorem_order_antisymmetric(r1, r2);
+}
+
+/// **`clamp`'s contract pins its result**: any two values satisfying it are the
+/// same value.
+///
+/// This theorem is the reason `clamp`'s `ensures` gained its last three
+/// clauses. Attempting to prove categoricity against the *previous* contract
+/// fails, and the counterexample is immediate: for `lo < a < hi` the value
+/// `r == lo` satisfies "is one of `a`, `lo`, `hi`" and "lies in `[lo, hi]`", so
+/// a `clamp` that ignored `a` entirely and always answered `lo` would have
+/// verified.
+///
+/// That is the same defect class as the old `isqrt_i64` postcondition — wide
+/// enough to admit a wrong answer — and it was found the same way: by trying to
+/// prove the specification pins a unique result and watching the proof fail.
+/// Categoricity is worth stating precisely because failing to prove it is
+/// diagnostic.
+pub proof fn theorem_clamp_spec_categorical(a: Q, lo: Q, hi: Q, r1: Q, r2: Q)
+    requires
+        a.wf(),
+        lo.wf(),
+        hi.wf(),
+        Q::spec_le(lo, hi),
+        (Q::spec_le(lo, a) && Q::spec_le(a, hi)) ==> r1 == a,
+        !Q::spec_le(lo, a) ==> r1 == lo,
+        !Q::spec_le(a, hi) ==> r1 == hi,
+        (Q::spec_le(lo, a) && Q::spec_le(a, hi)) ==> r2 == a,
+        !Q::spec_le(lo, a) ==> r2 == lo,
+        !Q::spec_le(a, hi) ==> r2 == hi,
+    ensures
+        r1 == r2,
+{
+    // The three guards are exhaustive once `lo <= hi`: if `a` is below `lo` it
+    // is below `hi` too, and symmetrically above. Totality supplies the
+    // trichotomy that makes the case split complete.
+    theorem_order_total(lo, a);
+    theorem_order_total(a, hi);
+}
+
+/// **`min` and `max` together return both arguments**: the pair
+/// `(min(a, b), max(a, b))` is `(a, b)` or `(b, a)` — nothing is duplicated
+/// and nothing is lost.
+///
+/// This is what justifies using `min`/`max` as a two-element sort: the
+/// multiset of outputs equals the multiset of inputs. It does not follow from
+/// either contract alone — each says its result is *one of* the arguments,
+/// which would permit `min` and `max` to both answer `a`. Antisymmetry is what
+/// rules that out except when `a == b`, where both disjuncts hold anyway.
+pub proof fn theorem_min_max_exchange(a: Q, b: Q, rmin: Q, rmax: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        rmin == a || rmin == b,
+        Q::spec_le(rmin, a),
+        Q::spec_le(rmin, b),
+        rmax == a || rmax == b,
+        Q::spec_le(a, rmax),
+        Q::spec_le(b, rmax),
+    ensures
+        (rmin == a && rmax == b) || (rmin == b && rmax == a),
+{
+    if rmin == a && rmax == a {
+        // a <= b from min's bound, b <= a from max's: the arguments coincide.
+        theorem_order_antisymmetric(a, b);
+    }
+    if rmin == b && rmax == b {
+        theorem_order_antisymmetric(a, b);
+    }
+}
+
+/// **`min` computes the greatest lower bound**: a value is below `min(a, b)`
+/// exactly when it is below both `a` and `b`.
+///
+/// The lower-bound clauses in `min`'s contract say it is *a* lower bound; this
+/// says it is the *greatest* one, which is the property that lets a chain of
+/// `min`s be reassociated in reasoning — `x <= min(a, min(b, c))` unfolds to
+/// three independent comparisons. The forward direction is transitivity; it is
+/// not a restatement of the hypotheses, which mention `q` not at all.
+pub proof fn theorem_min_is_glb(a: Q, b: Q, r: Q, q: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        q.wf(),
+        r == a || r == b,
+        Q::spec_le(r, a),
+        Q::spec_le(r, b),
+    ensures
+        Q::spec_le(q, r) <==> (Q::spec_le(q, a) && Q::spec_le(q, b)),
+{
+    if Q::spec_le(q, r) {
+        theorem_order_transitive(q, r, a);
+        theorem_order_transitive(q, r, b);
+    }
+}
+
+/// **`max` computes the least upper bound** — the dual of
+/// [`theorem_min_is_glb`].
+pub proof fn theorem_max_is_lub(a: Q, b: Q, r: Q, q: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        q.wf(),
+        r == a || r == b,
+        Q::spec_le(a, r),
+        Q::spec_le(b, r),
+    ensures
+        Q::spec_le(r, q) <==> (Q::spec_le(a, q) && Q::spec_le(b, q)),
+{
+    if Q::spec_le(r, q) {
+        theorem_order_transitive(a, r, q);
+        theorem_order_transitive(b, r, q);
+    }
+}
+
+/// `spec_in_unit_interval` means exactly what its name claims **in the
+/// order**: a number between `0` and `1` inclusive.
+///
+/// The predicate is defined component-wise (`0 <= n <= d`) while the order is
+/// defined by cross-multiplication; this theorem is the bridge that says the
+/// two definitions agree, so a caller may move freely between "the predicate
+/// holds" and "`compare` against zero and one says so". The `Number`
+/// hypothesis on the right is honest: no special is in `[0, 1]`, including
+/// `Nan` — which sits above `one` in the order, so the order-based bounds
+/// alone would not exclude it without the class test.
+pub proof fn theorem_unit_interval_agrees_with_order(q: Q)
+    requires
+        q.wf(),
+    ensures
+        q.spec_in_unit_interval() <==> (q.spec_is_number() && Q::spec_le(
+            Q::Number(Rat { num: 0, den: 1 }),
+            q,
+        ) && Q::spec_le(q, Q::Number(Rat { num: 1, den: 1 }))),
+{
+}
+
+/// **Zero and one have exactly one representation each**, and the value
+/// predicates recognise precisely it: `spec_is_zero` holds only of
+/// `Number(0/1)` and `spec_is_one` only of `Number(1/1)`.
+///
+/// Neither direction is a definition unfold. `spec_is_zero` constrains only
+/// the numerator, and it is the invariant's `num == 0 ==> den == 1` clause
+/// that collapses the denominator; `spec_is_one` says `n == d`, and it takes
+/// `gcd(n, n) == n` against the coprimality invariant to force `n == d == 1`.
+/// This is the enum-level face of kernel canonicality: an `is_zero`/`is_one`
+/// test is a test of the full bit pattern, so e.g. `Hash` cannot tell two
+/// zeros apart.
+pub proof fn theorem_zero_one_unique_repr(q: Q)
+    requires
+        q.wf(),
+    ensures
+        q.spec_is_zero() <==> q == Q::Number(Rat { num: 0, den: 1 }),
+        q.spec_is_one() <==> q == Q::Number(Rat { num: 1, den: 1 }),
+{
+    match q {
+        Q::Number(x) => {
+            if x.n() == x.d() {
+                // n == d > 0, so gcd_int(n, d) == gcd_nat(nn, nn) with nn > 0.
+                let nn = x.n() as nat;
+                assert(crate::model::abs_int(x.n()) == x.n());
+                // One definitional unfold: gcd(nn, nn) == gcd(nn, nn % nn).
+                assert(nn % nn == 0) by (nonlinear_arith)
+                    requires
+                        nn > 0,
+                ;
+                crate::gcd::lemma_gcd_zero(nn);
+                assert(crate::model::gcd_nat(nn, nn) == nn);
+                // wf says that gcd is 1, so n == d == 1.
+                assert(x.n() == 1);
+            }
+        },
+        _ => {},
+    }
 }
 
 } // verus!

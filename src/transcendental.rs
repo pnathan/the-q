@@ -234,6 +234,98 @@ pub fn isqrt_i64(n: i64) -> (r: i64)
     r
 }
 
+/// **`isqrt`'s contract pins its answer**: any two non-negative integers
+/// satisfying `r·r <= n < (r+1)·(r+1)` for the same `n` are equal.
+///
+/// This is the categoricity proof for the very specification the `isqrt(2)`
+/// episode above motivated. The old contract (`0 <= r <= n`) admitted wrong
+/// answers; this theorem is the machine-checked statement that the current one
+/// admits exactly one, so no future bug can satisfy it with anything but the
+/// true floor of the square root.
+pub proof fn theorem_isqrt_unique(n: int, r1: int, r2: int)
+    requires
+        0 <= r1,
+        r1 * r1 <= n,
+        n < (r1 + 1) * (r1 + 1),
+        0 <= r2,
+        r2 * r2 <= n,
+        n < (r2 + 1) * (r2 + 1),
+    ensures
+        r1 == r2,
+{
+    // If the roots differed, the smaller one's successor square would be
+    // trapped: (r1+1)^2 <= r2^2 <= n contradicts n < (r1+1)^2.
+    if r1 < r2 {
+        assert((r1 + 1) * (r1 + 1) <= r2 * r2) by (nonlinear_arith)
+            requires
+                0 <= r1 + 1,
+                r1 + 1 <= r2,
+        ;
+    }
+    if r2 < r1 {
+        assert((r2 + 1) * (r2 + 1) <= r1 * r1) by (nonlinear_arith)
+            requires
+                0 <= r2 + 1,
+                r2 + 1 <= r1,
+        ;
+    }
+}
+
+/// **`isqrt` is monotone**: a larger radicand cannot have a smaller integer
+/// square root.
+///
+/// Stated on the contract rather than the code — any results satisfying the
+/// pinned specification for `n1 <= n2` are ordered — so it applies to every
+/// call site for free. This is the fact that lets `sqrt_seed`'s quality be
+/// reasoned about componentwise: growing a numerator can only grow the seed's
+/// numerator, independently of how Newton refines it afterwards.
+pub proof fn theorem_isqrt_monotone(n1: int, n2: int, r1: int, r2: int)
+    requires
+        n1 <= n2,
+        0 <= r1,
+        r1 * r1 <= n1,
+        n1 < (r1 + 1) * (r1 + 1),
+        0 <= r2,
+        r2 * r2 <= n2,
+        n2 < (r2 + 1) * (r2 + 1),
+    ensures
+        r1 <= r2,
+{
+    // Otherwise n2 < (r2+1)^2 <= r1^2 <= n1 <= n2.
+    if r2 < r1 {
+        assert((r2 + 1) * (r2 + 1) <= r1 * r1) by (nonlinear_arith)
+            requires
+                0 <= r2 + 1,
+                r2 + 1 <= r1,
+        ;
+    }
+}
+
+/// **`isqrt` inverts squaring exactly**: on a perfect square `k·k` the
+/// contract forces the answer `k`.
+///
+/// The one input family where the floor and the true square root coincide, so
+/// "nearest grid point" degenerates to "exact". Not an unfolding of the
+/// contract — it takes `k·k < (k+1)·(k+1)` (a nonlinear fact) plus
+/// categoricity to collapse the result onto `k`.
+pub proof fn theorem_isqrt_of_square(k: int, r: int)
+    requires
+        0 <= k,
+        0 <= r,
+        r * r <= k * k,
+        k * k < (r + 1) * (r + 1),
+    ensures
+        r == k,
+{
+    // k itself satisfies the contract for n == k·k...
+    assert(k * k < (k + 1) * (k + 1)) by (nonlinear_arith)
+        requires
+            0 <= k,
+    ;
+    // ...and the contract pins its answer.
+    theorem_isqrt_unique(k * k, r, k);
+}
+
 /// A first approximation to `sqrt(num/den)`, as a `Q`.
 ///
 /// `isqrt(num) / isqrt(den)` is within a factor of two of the true root, which

@@ -1629,4 +1629,328 @@ pub proof fn theorem_mul_associativity_bound_unit_interval(a: Rat, b: Rat, c: Ra
     );
 }
 
+// ---------------------------------------------------------------------------
+// Order compatibility: the ordered-field laws
+//
+// `theorem_order_total` above says `q_le` is a total order; this section says
+// the order is compatible with the arithmetic — negation reverses it, addition
+// and multiplication by a non-negative value preserve it, squares sit above
+// zero, and reciprocal reverses it on positives. These are the axioms of an
+// ordered field, stated on the exact fractions the operations compute before
+// rounding, and they are what downstream monotonicity arguments ("a larger
+// input cannot decrease this sum") bottom out in.
+// ---------------------------------------------------------------------------
+
+/// **Negation reverses the order** (and stays inside the type): the
+/// numerator-negated mirror of a well-formed `Rat` is well-formed, and
+/// `a <= b` holds exactly when `-b <= -a`.
+///
+/// The `wf` half is what lets ghost code build negations at all — canonicality
+/// and the budget are both invariant under flipping the numerator's sign. The
+/// antitonicity half is the ordered-group law `Rat::neg` relies on but nothing
+/// previously stated: it is what turns every lower-bound fact into an
+/// upper-bound fact about the negation, e.g. a proven `min` bound into a `max`
+/// bound for negated data.
+pub proof fn theorem_neg_antitone(a: Rat, b: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        ({
+            let na = Rat { num: (-a.n()) as i64, den: a.den };
+            let nb = Rat { num: (-b.n()) as i64, den: b.den };
+            &&& na.wf()
+            &&& (q_le(a, b) <==> q_le(nb, na))
+        }),
+{
+    let na = Rat { num: (-a.n()) as i64, den: a.den };
+    let nb = Rat { num: (-b.n()) as i64, den: b.den };
+    // gcd sees only |num|, which negation preserves.
+    assert(abs_int(na.n()) == abs_int(a.n()));
+    // Pushing the sign through each cross-product is the whole content:
+    // (-b.n)·a.d <= (-a.n)·b.d is the negation, term by term, of
+    // a.n·b.d <= b.n·a.d.
+    assert((-b.n()) * a.d() == -(b.n() * a.d())) by (nonlinear_arith);
+    assert((-a.n()) * b.d() == -(a.n() * b.d())) by (nonlinear_arith);
+}
+
+/// **`abs` is the join of `a` and `-a`**: it dominates both, and anything that
+/// dominates both dominates it.
+///
+/// The two upper-bound clauses plus the minimality clause pin `|a|` uniquely
+/// up to `q_eq` (hence, by canonicality, uniquely) — this is the
+/// specification-pinning discipline applied to `abs`: "non-negative and equal
+/// to `a` or `-a`" would already fail to be satisfiable by anything else, but
+/// the join characterisation is the form order reasoning consumes, e.g.
+/// `|a| <= m` from the two one-sided bounds `-m <= a <= m`. The evenness
+/// clause (`|-a| == |a|`, bit for bit) completes what
+/// [`theorem_neg_abs_involution`]'s doc comment promises but its statement
+/// omits.
+pub proof fn theorem_abs_is_join(a: Rat, b: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        ({
+            let na = Rat { num: (-a.n()) as i64, den: a.den };
+            let aa = Rat { num: abs_int(a.n()) as i64, den: a.den };
+            let naa = Rat { num: abs_int(na.n()) as i64, den: na.den };
+            &&& aa.wf()
+            &&& aa.n() >= 0
+            &&& q_le(a, aa)
+            &&& q_le(na, aa)
+            &&& (aa == a || aa == na)
+            &&& naa == aa
+            &&& (q_le(a, b) && q_le(na, b)) ==> q_le(aa, b)
+        }),
+{
+    let na = Rat { num: (-a.n()) as i64, den: a.den };
+    let aa = Rat { num: abs_int(a.n()) as i64, den: a.den };
+    assert(abs_int(aa.n()) == abs_int(a.n()));
+    // |a| dominates a: a.n <= |a.n|, scaled by the shared positive denominator.
+    assert(a.n() * a.d() <= abs_int(a.n()) * a.d()) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+            a.n() <= abs_int(a.n()),
+    ;
+    // ...and dominates -a symmetrically.
+    assert((-a.n()) * a.d() <= abs_int(a.n()) * a.d()) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+            -a.n() <= abs_int(a.n()),
+    ;
+    // Minimality is free once `aa` is known to be one of the two operands the
+    // hypothesis already bounds.
+    assert(aa == a || aa == na);
+}
+
+/// **Adding the same value to both sides preserves the order**, stated on the
+/// exact fractions `add` computes: `a <= b` implies
+/// `(a + c) <= (b + c)` as cross-multiplied exact sums.
+///
+/// This is the translation-invariance axiom of an ordered group. It concerns
+/// three independent values — the conclusion compares six-term products the
+/// hypothesis never mentions — and holds with no exactness or budget
+/// hypothesis at all, because it is a fact about the mathematical sums, prior
+/// to any rounding.
+pub proof fn theorem_add_monotone_exact(a: Rat, b: Rat, c: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        q_le(a, b),
+    ensures
+        add_n(a, c) * prod_d(b, c) <= add_n(b, c) * prod_d(a, c),
+{
+    let an = a.n();
+    let ad = a.d();
+    let bn = b.n();
+    let bd = b.d();
+    let cn = c.n();
+    let cd = c.d();
+    let s = cd * cd;
+    let t = (cn * (ad * bd)) * cd;
+    assert(s > 0) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+            cd > 0,
+    ;
+    // The hypothesis, scaled by the positive square of c's denominator.
+    assert((an * bd) * s <= (bn * ad) * s) by (nonlinear_arith)
+        requires
+            an * bd <= bn * ad,
+            s > 0,
+    ;
+    // Unfold the operation specs to plain arithmetic before any nonlinear
+    // step — the tactic sees function applications as opaque terms.
+    assert(add_n(a, c) == an * cd + cn * ad);
+    assert(prod_d(b, c) == bd * cd);
+    assert(add_n(b, c) == bn * cd + cn * bd);
+    assert(prod_d(a, c) == ad * cd);
+    // Each side distributes into the scaled hypothesis plus the same c-term,
+    // in small ring steps to stay inside the resource budget.
+    assert((an * cd + cn * ad) * (bd * cd) == (an * cd) * (bd * cd) + (cn * ad) * (bd * cd))
+        by (nonlinear_arith);
+    assert((an * cd) * (bd * cd) == (an * bd) * s) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+    ;
+    assert((cn * ad) * (bd * cd) == t) by (nonlinear_arith)
+        requires
+            t == (cn * (ad * bd)) * cd,
+    ;
+    assert((bn * cd + cn * bd) * (ad * cd) == (bn * cd) * (ad * cd) + (cn * bd) * (ad * cd))
+        by (nonlinear_arith);
+    assert((bn * cd) * (ad * cd) == (bn * ad) * s) by (nonlinear_arith)
+        requires
+            s == cd * cd,
+    ;
+    assert((cn * bd) * (ad * cd) == t) by (nonlinear_arith)
+        requires
+            t == (cn * (ad * bd)) * cd,
+    ;
+    // Recombine: both sides are now the same linear expressions in s and t.
+    assert(add_n(a, c) * prod_d(b, c) == (an * bd) * s + t);
+    assert(add_n(b, c) * prod_d(a, c) == (bn * ad) * s + t);
+}
+
+/// **Multiplying both sides by a non-negative value preserves the order**,
+/// stated on the exact fractions `mul` computes.
+///
+/// The other half of ordered-field compatibility, and the non-negativity
+/// hypothesis is exactly the honest one: for `c < 0` the conclusion is false
+/// (the order flips, by [`theorem_neg_antitone`] composed with this theorem),
+/// so no stronger statement exists to make.
+pub proof fn theorem_mul_monotone_nonneg_exact(a: Rat, b: Rat, c: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        c.wf(),
+        q_le(a, b),
+        c.n() >= 0,
+    ensures
+        mul_n(a, c) * prod_d(b, c) <= mul_n(b, c) * prod_d(a, c),
+{
+    let an = a.n();
+    let ad = a.d();
+    let bn = b.n();
+    let bd = b.d();
+    let cn = c.n();
+    let cd = c.d();
+    let k = cn * cd;
+    assert(k >= 0) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+            cn >= 0,
+            cd > 0,
+    ;
+    assert((an * bd) * k <= (bn * ad) * k) by (nonlinear_arith)
+        requires
+            an * bd <= bn * ad,
+            k >= 0,
+    ;
+    assert(mul_n(a, c) == an * cn);
+    assert(prod_d(b, c) == bd * cd);
+    assert(mul_n(b, c) == bn * cn);
+    assert(prod_d(a, c) == ad * cd);
+    assert((an * cn) * (bd * cd) == (an * bd) * k) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+    assert((bn * cn) * (ad * cd) == (bn * ad) * k) by (nonlinear_arith)
+        requires
+            k == cn * cd,
+    ;
+}
+
+/// **Squares are non-negative, and vanish only at zero**: the exact square
+/// `a · a` has a non-negative numerator, zero exactly when `a` is zero.
+///
+/// The remaining ordered-field axiom after translation and scaling
+/// compatibility. The "only at zero" half is the field-theoretic content — a
+/// nonzero element's square is strictly positive, which is what makes
+/// sum-of-squares magnitudes (`hypot`'s `x·x + y·y`) definite rather than
+/// merely non-negative.
+pub proof fn theorem_square_sign(a: Rat)
+    requires
+        a.wf(),
+    ensures
+        mul_n(a, a) >= 0,
+        mul_n(a, a) == 0 <==> a.n() == 0,
+        prod_d(a, a) > 0,
+{
+    assert(a.n() * a.n() >= 0) by (nonlinear_arith);
+    if a.n() != 0 {
+        assert(a.n() * a.n() != 0) by (nonlinear_arith)
+            requires
+                a.n() != 0,
+        ;
+    }
+    assert(a.d() * a.d() > 0) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+    ;
+}
+
+/// **Reciprocal reverses the order on positives**: for `0 < a <= b`,
+/// `1/b <= 1/a` — and both reciprocals are themselves positive.
+///
+/// Stated through [`q_is_recip`], the same division-free relation
+/// [`theorem_recip_involution`] uses, so it applies to the actual output of
+/// `Rat::recip`. This is the monotonicity fact division-based bounds reduce
+/// to — "a larger denominator gives a smaller quotient" — and it is genuinely
+/// conditional: on mixed signs the conclusion is false, so the positivity
+/// hypotheses are load-bearing, not decorative.
+pub proof fn theorem_recip_antitone(a: Rat, b: Rat, ra: Rat, rb: Rat)
+    requires
+        a.wf(),
+        b.wf(),
+        ra.wf(),
+        rb.wf(),
+        a.n() > 0,
+        b.n() > 0,
+        q_le(a, b),
+        crate::q::q_is_recip(ra, a),
+        crate::q::q_is_recip(rb, b),
+    ensures
+        ra.n() > 0,
+        rb.n() > 0,
+        q_le(rb, ra),
+{
+    // The reciprocal of a positive value is positive: ra.n·a.n equals the
+    // positive a.d·ra.d, and a.n > 0.
+    assert(ra.n() > 0) by (nonlinear_arith)
+        requires
+            ra.n() * a.n() == a.d() * ra.d(),
+            a.n() > 0,
+            a.d() > 0,
+            ra.d() > 0,
+    ;
+    assert(rb.n() > 0) by (nonlinear_arith)
+        requires
+            rb.n() * b.n() == b.d() * rb.d(),
+            b.n() > 0,
+            b.d() > 0,
+            rb.d() > 0,
+    ;
+    let p = a.n() * b.n();
+    assert(p > 0) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+            a.n() > 0,
+            b.n() > 0,
+    ;
+    assert(ra.d() * rb.d() > 0) by (nonlinear_arith)
+        requires
+            ra.d() > 0,
+            rb.d() > 0,
+    ;
+    // Scale the goal by the positive p == a.n·b.n and substitute both
+    // reciprocal relations; what remains is the hypothesis a <= b scaled by
+    // the positive ra.d·rb.d. Each step is a small ring identity or a
+    // congruence, in the file's usual style.
+    assert((rb.n() * ra.d()) * p == (rb.n() * b.n()) * (a.n() * ra.d())) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+    ;
+    assert((rb.n() * b.n()) * (a.n() * ra.d()) == (b.d() * rb.d()) * (a.n() * ra.d()));
+    assert((b.d() * rb.d()) * (a.n() * ra.d()) == (a.n() * b.d()) * (ra.d() * rb.d()))
+        by (nonlinear_arith);
+    assert((a.n() * b.d()) * (ra.d() * rb.d()) <= (b.n() * a.d()) * (ra.d() * rb.d()))
+        by (nonlinear_arith)
+        requires
+            a.n() * b.d() <= b.n() * a.d(),
+            ra.d() * rb.d() > 0,
+    ;
+    assert((b.n() * a.d()) * (ra.d() * rb.d()) == (a.d() * ra.d()) * (b.n() * rb.d()))
+        by (nonlinear_arith);
+    assert((a.d() * ra.d()) * (b.n() * rb.d()) == (ra.n() * a.n()) * (b.n() * rb.d()));
+    assert((ra.n() * a.n()) * (b.n() * rb.d()) == (ra.n() * rb.d()) * p) by (nonlinear_arith)
+        requires
+            p == a.n() * b.n(),
+    ;
+    assert((rb.n() * ra.d()) * p <= (ra.n() * rb.d()) * p);
+    lemma_cancel_pos_le(rb.n() * ra.d(), ra.n() * rb.d(), p);
+}
+
 } // verus!
