@@ -624,6 +624,46 @@ fn pow_i32_handles_negative_exponents_totally() {
     }
 }
 
+/// The near-one band keeps its relative accuracy.
+///
+/// `ln` uses the fixed-point kernel away from one and the exact rational path
+/// within `2^-8` of it. The kernel quantises to a dyadic grid, which costs
+/// `2^-63` of absolute error; for a result near zero that is a large relative
+/// error, and this is the test that would catch the branch being removed.
+///
+/// The bar is set at the exact path's own measured behaviour, with margin. The
+/// kernel alone measures `2^-34` at `k = 32`, which is far below it.
+#[test]
+fn ln_near_one_keeps_relative_accuracy() {
+    for k in [8u32, 16, 24, 32, 40, 50] {
+        let d: i64 = 1i64 << k;
+        let x = Q::new(d + 1, d);
+        let got = match x.ln() {
+            Q::Number(v) => rat(v),
+            other => panic!("ln(1 + 2^-{k}) gave {other}"),
+        };
+        // ln(1+u) by its own series, carried far past the answer's precision.
+        let u = Rational::from_signeds(1i128, 1i128 << k);
+        let mut want = Rational::from(0);
+        let mut p = u.clone();
+        for j in 1..=8u32 {
+            let t = p.clone() / Rational::from(j as i128);
+            if j % 2 == 1 {
+                want += t;
+            } else {
+                want -= t;
+            }
+            p *= u.clone();
+        }
+        let rel = mag(&(got - want.clone())) / want;
+        assert!(
+            rel <= eps(45),
+            "ln(1 + 2^-{k}) lost relative accuracy: 2^-{} > 2^-45",
+            precision_bits(&rel)
+        );
+    }
+}
+
 // ===========================================================================
 // pi, sin, cos, tan, atan
 // ===========================================================================

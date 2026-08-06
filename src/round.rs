@@ -1369,6 +1369,148 @@ pub proof fn lemma_floor_div_monotone(a1: int, d1: int, a2: int, d2: int)
 // Executable helpers
 // ---------------------------------------------------------------------------
 
+/// Whether `|n| / d` leaves the budget, without dividing when it need not.
+///
+/// The test is `m > MAX_MAG · d`, and answering it by division costs two `i128`
+/// divisions on every operation. A numerator at or below `MAX_MAG` answers it
+/// without dividing, because `d >= 1`. That covers every pair whose exact
+/// result is inside the budget, which is the whole exact path.
+///
+/// The two arms return the same predicate, so the caller sees one fact and no
+/// case split. The caller is the largest proof in the crate, and an inline
+/// branch here puts it over its resource limit.
+pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
+    requires
+        d > 0,
+        m >= 0,
+    ensures
+        r <==> !magnitude_fits(m as int, d as int),
+{
+    let mm: i128 = MAX_MAG as i128;
+    if m <= mm {
+        proof {
+            crate::model::lemma_max_mag_pow2();
+            assert(m as int <= max_mag() * (d as int)) by (nonlinear_arith)
+                requires
+                    m as int <= max_mag(),
+                    d as int >= 1,
+            ;
+        }
+        false
+    } else {
+        let ip: i128 = m / d;
+        let fr: i128 = m % d;
+        proof {
+            lemma_magnitude_test(m as int, d as int, ip as int, fr as int);
+        }
+        ip > mm || (ip == mm && fr != 0)
+    }
+}
+
+/// `gcd(|m|, 2^s)`, without a gcd.
+///
+/// The second reduction of the snap path always takes its gcd against `2^s`,
+/// and the answer to that is `2^min(v2(m), s)`: strip the twos that `m` and
+/// `2^s` share and stop at whichever runs out first. This loop does that in at
+/// most `s` halvings of an `i128`, where each halving is a shift. The general
+/// gcd it replaces runs Euclid's narrowing step and then the binary loop.
+///
+/// `crate::gcd::lemma_gcd_odd_pow2` closes the exit case: when `m` has no more
+/// twos, what remains is odd, and an odd number is coprime to a power of two.
+pub fn gcd_pow2_i128(m: i128, s: u32) -> (r: i128)
+    requires
+        s <= 61,
+        abs_int(m as int) < pow2(126),
+    ensures
+        r as int == crate::model::gcd_int(m as int, pow2(s as nat)),
+        r > 0,
+{
+    proof {
+        crate::model::lemma_pow2_124();
+        crate::model::lemma_pow2_126();
+        lemma_pow2_pos(s as nat);
+    }
+    let mut q: i128 = if m < 0 {
+        0 - m
+    } else {
+        m
+    };
+    let mut g: i128 = 1;
+    let mut e: u32 = 0;
+    proof {
+        // `g == 1 <= 2^61` before the first iteration.
+        lemma_pow2_pos(61nat);
+    }
+    while e < s && q % 2 == 0
+        invariant
+            e <= s,
+            s <= 61,
+            g == pow2(e as nat),
+            g > 0,
+            q >= 0,
+            (q as int) * (g as int) == abs_int(m as int),
+            crate::model::gcd_int(m as int, pow2(s as nat)) == (g as int) * crate::model::gcd_nat(
+                q as nat,
+                pow2((s - e) as nat) as nat,
+            ),
+            g <= pow2(61nat),
+        decreases s - e,
+    {
+        proof {
+            // Both sides are even here, thus one common factor of two comes
+            // out of the gcd.
+            lemma_pow2_pos((s - e) as nat);
+            assert(pow2((s - e) as nat) == 2 * pow2((s - e - 1) as nat));
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                pow2((s - e) as nat),
+                2int,
+                pow2((s - e - 1) as nat),
+                0int,
+            );
+            crate::gcd::lemma_gcd_both_even(q as nat, pow2((s - e) as nat) as nat);
+            // `g` doubles and `q` halves, thus their product is unchanged.
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(q as int, 2int);
+            assert((q as int) / 2 * ((g as int) * 2) == (q as int) * (g as int))
+                by (nonlinear_arith)
+                requires
+                    (q as int) == 2 * ((q as int) / 2),
+            ;
+            assert(pow2((e + 1) as nat) == 2 * pow2(e as nat));
+            lemma_pow2_mono((e + 1) as nat, 61nat);
+            // The doubling needs a literal bound to discharge its `i128` range
+            // check. `2^61 <= 2^125`, and `2^125` has one.
+            lemma_pow2_mono(61nat, 125nat);
+            crate::model::lemma_pow2_125();
+            // Move the factor of two from the gcd onto `g`:
+            // `(2g)·x == g·(2x)`, at the value the invariant carries.
+            let x = crate::model::gcd_nat(
+                ((q as int) / 2) as nat,
+                pow2((s - e - 1) as nat) as nat,
+            ) as int;
+            assert(((g as int) * 2) * x == (g as int) * (2 * x)) by (nonlinear_arith);
+        }
+        q = q / 2;
+        g = g * 2;
+        e = e + 1;
+    }
+    proof {
+        // The loop ends either with the twos of `2^s` exhausted, or with `q`
+        // odd. Both leave a gcd of one.
+        if e == s {
+            assert(pow2(0nat) == 1);
+            crate::gcd::lemma_gcd_odd_pow2(1nat, 0nat);
+            assert(crate::model::gcd_nat(q as nat, 1nat) == 1) by {
+                assert((q as nat) % 1 == 0);
+            }
+        } else {
+            assert(q % 2 != 0);
+            assert((q as nat) % 2 == 1);
+            crate::gcd::lemma_gcd_odd_pow2(q as nat, (s - e) as nat);
+        }
+    }
+    g
+}
+
 /// `2^s` as an `i128`.
 pub fn pow2_i128(s: u32) -> (r: i128)
     requires
@@ -1652,6 +1794,45 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
         r == round_frac(n as int, d as int, dir),
 {
     proof {
+        // `gcd_abs_i128` bounds its numerator by a literal, and the input bound
+        // here is stated with `pow2`. The literal has to be concretised first.
+        crate::model::lemma_pow2_126();
+    }
+    let g: i128 = gcd_abs_i128(n, d);
+    round_frac_exec_with_gcd(n, d, g, dir)
+}
+
+/// [`round_frac_exec`], with the gcd supplied by the caller.
+///
+/// The gcd is the dominant cost of an arithmetic operation, and at `i128` width
+/// it is the most expensive form of it. A caller that already knows the gcd of
+/// its own pair can skip that work. `Rat::mul_dir` and `Rat::div_dir` know it:
+/// by `lemma_gcd_cross`, the gcd of a product of two canonical fractions is the
+/// product of two gcds taken across the operands, and those operands are
+/// bounded by `MAX_MAG`, thus each of those two gcds is a `u64` gcd.
+///
+/// The precondition pins `g` to the same value the general entry point would
+/// compute, thus the postcondition is identical and no caller can pass a
+/// number that changes the result.
+// This function carries the whole rounding contract, and it sits at the edge of
+// the default resource budget. Each fast path added to it -- the division-free
+// saturation test, the coprime shortcut -- adds a branch the solver has to
+// carry through the rest of the body. Both are written to converge on a single
+// fact for exactly that reason, and the budget is raised once here rather than
+// paying for a proof restructure that buys nothing.
+#[verifier::rlimit(30)]
+pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
+    requires
+        d > 0,
+        abs_int(n as int) < num_input_bound(),
+        d as int <= den_input_bound(),
+        g as int == crate::model::gcd_int(n as int, d as int),
+    ensures
+        r.wf(),
+        r == round_frac(n as int, d as int, dir),
+{
+    proof {
+        lemma_gcd_int_facts(n as int, d as int);
         // The input bounds use `pow2`, which discharges no `i128` overflow or
         // range check on its own. The two literals thus come first.
         crate::model::lemma_pow2_124();
@@ -1670,23 +1851,36 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     } else {
         n
     };
-    let ip0: i128 = m0 / d;
-    let fr0: i128 = m0 % d;
     let mm: i128 = MAX_MAG as i128;
-    if ip0 > mm || (ip0 == mm && fr0 != 0) {
+    // The saturation test asks whether `|n| <= MAX_MAG · d`, and answering it
+    // by division costs two `i128` divisions on every operation. A numerator
+    // at or below `MAX_MAG` answers it without dividing, because `d >= 1`.
+    // That covers every operand pair whose exact result is inside the budget,
+    // which is the whole exact path.
+    let saturates: bool = if m0 <= mm {
+        proof {
+            assert(m0 as int <= max_mag() * (d as int)) by (nonlinear_arith)
+                requires
+                    m0 as int <= max_mag(),
+                    d as int >= 1,
+            ;
+        }
+        false
+    } else {
+        let ip0: i128 = m0 / d;
+        let fr0: i128 = m0 % d;
         proof {
             lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
         }
+        ip0 > mm || (ip0 == mm && fr0 != 0)
+    };
+    if saturates {
         if n > 0 {
             return Rat { num: MAX_MAG, den: 1 };
         } else {
             return Rat { num: -MAX_MAG, den: 1 };
         }
     }
-    proof {
-        lemma_magnitude_test(m0 as int, d as int, ip0 as int, fr0 as int);
-    }
-    let g: i128 = gcd_abs_i128(n, d);
     proof {
         // `red_den > 0`, therefore `g <= d`, therefore the divisions below are
         // safe. The two exactness equations are `n == rn·g` and `d == rd·g`.
@@ -1711,8 +1905,26 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
                 (n as int) == red_num(n as int, d as int) * (g as int),
         ;
     }
-    let rn: i128 = n / g;
-    let rd: i128 = d / g;
+    // A coprime pair is the common case for small operands, and `x / 1` is
+    // still an `i128` division, which is a call into `compiler_builtins`. Both
+    // arms establish the same two facts, so the proof below sees no case split.
+    let rn: i128;
+    let rd: i128;
+    if g == 1 {
+        proof {
+            vstd::arithmetic::div_mod::lemma_div_basics(n as int);
+            vstd::arithmetic::div_mod::lemma_div_basics(d as int);
+        }
+        rn = n;
+        rd = d;
+    } else {
+        rn = n / g;
+        rd = d / g;
+    }
+    proof {
+        assert(rn as int == red_num(n as int, d as int));
+        assert(rd as int == red_den(n as int, d as int));
+    }
     let arn: i128 = if rn < 0 {
         0 - rn
     } else {
@@ -1784,7 +1996,8 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
         lemma_snap_magnitude(rn as int, rd as int, s as nat, dir);
         lemma_snap_in_budget(rn as int, rd as int, s as nat, sn as int, k as nat);
     }
-    let g2: i128 = gcd_abs_i128(sn, sd);
+    // The gcd against `2^s` needs no gcd: it is the common power of two.
+    let g2: i128 = gcd_pow2_i128(sn, s);
     let on: i128 = sn / g2;
     let od: i128 = sd / g2;
     proof {

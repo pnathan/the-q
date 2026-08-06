@@ -19,18 +19,17 @@ constructors. It is `Copy`, 128 bits, no heap, no allocation, trivially
 `Send + Sync`.
 
 The fields are public because Verus cannot state a public invariant about a
-datatype whose fields it cannot see. Under Verus that costs nothing: every
-operation `requires` the invariant, so a hand-built `Rat { num: 3, den: 0 }`
-cannot be passed to anything. In unverified Rust it is a footgun — use
-`Rat::new`, `Rat::from_decimal` or `Rat::from_int`.
+datatype whose fields it cannot see. The type is `#[non_exhaustive]`, so that
+visibility costs nothing either way: `Rat { num: 3, den: 0 }` does not compile
+outside the crate, and `Rat::new`, `Rat::new_rounded`, `Rat::from_decimal` and
+`Rat::from_int` are the only way in. Each canonicalises what it is given.
 
 ## Two types: `Rat` and `Q`
 
 `Rat` above is the verified kernel — exact, canonical, bounded, and **partial**.
-`Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, `Rat::zero().recip()`
-returns a value that violates the type invariant, and
-`Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG` — wrong by a factor of
-two and indistinguishable from a real answer.
+`Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` and `Rat::zero().recip()` panic
+rather than return, and `Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG`
+— wrong by a factor of two and indistinguishable from a real answer.
 
 `Q` layers explicit non-representable states over that kernel, so that "not a
 representable rational" becomes an observable state instead of something the
@@ -99,51 +98,99 @@ obligation over the whole module, and the test suite re-checks it on the
 compiled artifact by sweeping every function over every state plus tens of
 thousands of random values.
 
-`Rat` is deliberately **not** total, and that has not changed. `Rat::div(x, 0)`
-panics, `Rat::new(_, 0)` is `None`, and `Rat::zero().recip()` returns a value
-violating the type invariant. That is the point of the split: `Rat` is the
-verified kernel where preconditions are discharged statically at the call site,
-and `Q` is the layer that makes them into values for callers who cannot. If you
-want the guarantee, use `Q`.
+`Rat` is deliberately **not** total. `Rat::new(_, 0)` is `None`, and
+`Rat::div(x, 0)` and `Rat::zero().recip()` panic. That is the point of the
+split: `Rat` is the verified kernel where preconditions are discharged
+statically at the call site, and `Q` is the layer that makes them into values
+for callers who cannot. If you want the guarantee, use `Q`.
+
+What `Rat` does **not** do is return a wrong answer to an unverified caller. It
+is `#[non_exhaustive]`, so no other crate can build a `Rat` from a struct
+literal and the constructors are the only way in; the two preconditioned
+operations check at the boundary and panic instead of computing on a value they
+were never given; and `Rat::checked_div` is total in the divisor, returning
+`None` for a zero divisor as `i64::checked_div` does. Every reachable `Rat` is
+canonical and in budget.
 
 There are no `assume(...)` or `admit()` calls anywhere in the shipping code.
 
 ## Performance, measured
 
-`cargo bench` runs the numbers below (median of seven timed runs, deterministic
+`cargo bench` runs the numbers below (minimum of seven timed runs, deterministic
 inputs, `release` with `overflow-checks = true` — the configuration the crate
 actually ships, not a faster one).
 
-| operation | the-q | f64 | ratio |
-|---|---:|---:|---:|
-| `Rat::add` / `sub` | ~235 ns | 3.8 ns | 61× |
-| `Rat::mul` / `div` | ~218 ns | 3.8 ns | 57× |
-| `Q::add` (total) | 248 ns | 5.3 ns | 47× |
-| `Q::div` (total) | 226 ns | 5.3 ns | 43× |
-| `Q::compare` | 9.1 ns | 10.3 ns | **0.9×** |
+| operation | the-q | f64 | ratio | at the start |
+|---|---:|---:|---:|---:|
+| `Rat::add` / `sub` | 57 ns | 3.4 ns | **17×** | 262 ns |
+| `Rat::mul` / `div` | 61 ns | 3.0 ns | **20×** | 260 ns |
+| `Q::add` (total) | 68 ns | 4.7 ns | 14× | 261 ns |
+| `Q::div` (total) | 72 ns | 4.7 ns | 15× | 235 ns |
+| `Q::compare` | 7.4 ns | 5.1 ns | **1.4×** | 9.3 ns |
+| chain step, `k = 4096` | 1378 ns | 4.0 ns | 345× | 3385 ns |
 
-Two things worth reading off that table. **Totality is nearly free** — `Q::add`
-costs about 5% more than the partial `Rat::add`, so the explicit
-non-representable states are a type-level win rather than a runtime tax. And
-**comparison beats `f64`**, because it is integer cross-multiplication with no
-floating-point classification to do.
+Three things worth reading off that table. **Totality is nearly free** —
+`Q::add` costs about 20% more than the partial `Rat::add`, so the explicit
+non-representable states are a type-level win rather than a runtime tax.
+**Comparison is in the same class as `f64`**, because it is integer
+cross-multiplication with no floating-point classification to do. And the last
+column is what four changes bought, none of which moved a postcondition:
 
-The 60× on arithmetic is the price of canonical form: every operation runs a
-GCD to reduce the result, which is what makes structural equality mathematical
-equality and results bit-reproducible across machines. Against the exact
-arbitrary-precision alternative the crate is *faster* at depth — an exact
-rational's denominators grow without bound, and by a 4096-step fusion chain it
-is slower than `the-q` while carrying 8806-digit numerators.
+* Canonicalisation runs a gcd on every result, and Euclid's algorithm needs a
+  remainder, which at `u128` width is a software routine rather than an
+  instruction. Stein's binary algorithm narrows to `u64` and then needs only
+  halving, comparison and subtraction.
+* A binary gcd that strips one factor of two per iteration is worth *nothing*
+  against Euclid on hardware division. The whole advantage is
+  `u64::trailing_zeros`, which strips them all in one instruction. This is the
+  single largest change: it halved every operation.
+* The *second* gcd, the one the dyadic snap takes against `2^s`, is not a gcd at
+  all: the answer is `2^min(v2(n), s)`, a loop of shifts. That is where the
+  chain path improved.
+* The saturation test asked `|n| <= MAX_MAG · d` with two `i128` divisions. A
+  numerator at or below `MAX_MAG` answers it with one comparison, because
+  `d >= 1`, and the reduction divisions are skipped outright when the pair is
+  already coprime.
+
+The proofs are in `src/gcd.rs` and `src/round.rs`. Results are bit-identical to
+before all of it.
+
+The remaining ~17× is the price of canonical form: the gcd itself, which is what
+makes structural equality mathematical equality and results bit-reproducible
+across machines. That cost has a floor — one word-width gcd per operation, whose
+serial dependency chain is a few cycles per bit of the smaller operand — and
+this implementation is now near it. Against the exact arbitrary-precision
+alternative the crate is now *faster on a single operation as well as at depth*:
+`add` is 57 ns against 83 ns, and by a 4096-step fusion chain the exact backend
+is slower while carrying 8806-digit numerators.
 
 ### Transcendentals
 
-| function | the-q | f64 (hardware) |
-|---|---:|---:|
-| `sqrt` | 20.6 µs | 3.3 ns |
-| `sin` / `cos` | 30.2 µs | ~14 ns |
-| `ln` | 39.5 µs | 11.0 ns |
-| `exp` | 41.0 µs | 10.1 ns |
-| `atan` | 51.1 µs | 11.3 ns |
+| function | the-q | f64 (hardware) | at the start |
+|---|---:|---:|---:|
+| **`exp`** | **0.58 µs** | 8.0 ns | 41.4 µs |
+| **`ln`** | **1.4 µs** | 8.4 ns | 40.2 µs |
+| `sqrt` | 9.1 µs | 2.5 ns | 20.5 µs |
+| `sin` / `cos` | 14.9 µs | ~10 ns | 32.6 µs |
+| `atan` | 24.1 µs | 9.0 ns | 53.3 µs |
+
+`exp` and `ln` have moved to the fixed-point kernel in `src/fx.rs`, which is why
+they are one to two orders of magnitude below the rest. The kernel evaluates a
+series as plain `i128` integers on a `2^-63` grid instead of as `Q` values: one
+multiply and one shift-and-round per term, rather than a canonicalisation, a gcd
+and a rounding. `sqrt`, the trigonometric functions and `atan` still run through
+`Q` and are the remaining work.
+
+`ln` keeps the exact rational path for arguments within `2^-8` of one, and the
+reason is worth stating. The kernel quantises to a *dyadic* grid, so its error
+is `2^-63` in absolute terms — comfortably inside R3, which is absolute below
+one. But `ln(1 + 2^-32)` is about `2^-32`, and `2^-63` of absolute error is
+`2^-31` of *relative* error. The exact path never quantises: it works in
+rationals whose denominators need not be powers of two, and a `Rat` holds a very
+good non-dyadic approximation to a small value. Measured on `1 + 2^-k` it keeps
+`2^-68` to `2^-104` where the kernel alone keeps `2^-34` to `2^-52`.
+`ln_near_one_keeps_relative_accuracy` is the test that would catch the branch
+being removed.
 
 These are software series over exact rationals against silicon, so the ratio is
 large and will stay large. Tens of microseconds is usable for fusion and
@@ -164,12 +211,13 @@ were contributing nothing.
 
 | function | worst observed relative error |
 |---|---|
+| `exp` | 2⁻⁶¹ |
 | `e` | 2⁻⁶² |
+| `ln` (near 1) | 2⁻⁶⁸ to 2⁻¹⁰⁴ |
 | `sqrt`, `ln2` | 2⁻⁶⁰ |
-| `pi`, `exp` (small args) | 2⁻⁵⁹ |
-| `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁸ |
+| `pi` | 2⁻⁵⁹ |
+| `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁹ |
 | `sin`, `cos` | 2⁻⁵⁶ |
-| `exp` (full range) | 2⁻⁵³ |
 
 Every one of those is at or better than `f64`'s 2⁻⁵³. The caveat is in the
 next section, and it matters more than the table does.
@@ -433,9 +481,10 @@ bring the result in through `from_f64_dir`.
 ## What is proven
 
 Everything below is a machine-checked Verus obligation in this repository, not a
-design intention. `871 verified, 0 errors`, no `assume`, no `admit`. The two
-`external_body` functions at the `f64` edge are enumerated in `TRUSTED.md` and
-are the only things taken on trust.
+design intention. `871 verified, 0 errors`, no `assume`, no `admit`. Three
+`external_body` functions are the only things taken on trust, and `TRUSTED.md`
+enumerates them: two at the `f64` edge, and one runtime check that computes
+nothing and is trusted for its panic message.
 
 **Representation — every public operation, no exceptions** (V1, V5)
 
@@ -589,14 +638,14 @@ Specifications and proofs live in the source, inside `verus!` blocks.
 * **`VERIFICATION.md`** — the obligation map (V1–V8), what is proven where, and
   the current status of each.
 * **`TRUSTED.md`** — every `external_body` function, its assumed specification,
-  and the differential tests backing it. There are two.
+  and the tests backing it. There are three.
 * **`docs/SPEC.md` §9** — the six places the specification as written does not
   hold, what the crate does instead, and why. Appended rather than edited into
   the spec body, so the original text stays readable.
 
 **Current status: every proof obligation discharges — `871 verified, 0 errors`,
-as a required CI check.** No `assume`, no `admit`, two `external_body` functions
-at the `f64` edge. `VERIFICATION.md` carries the obligation map, the trajectory,
+as a required CI check.** No `assume`, no `admit`, three `external_body`
+functions: two at the `f64` edge, one a runtime check. `VERIFICATION.md` carries the obligation map, the trajectory,
 and the six Verus lessons the work turned up. The executable behaviour is
 independently validated by the test suite below.
 
@@ -626,7 +675,7 @@ cargo test --release --features serde     # overflow checks stay on in release
 
 `cargo bench` (`benches/arith.rs`) measures `the-q` against the two things it
 sits between: hardware `f64`, and `malachite-q`'s arbitrary-precision `Rational`
-— the same crate used as the differential oracle. Median of seven runs,
+— the same crate used as the differential oracle. Minimum of seven runs,
 deterministic inputs, `bench` profile (which inherits `release`, so
 `overflow-checks = true` is *on*: these are the numbers for the configuration
 the crate actually ships).
@@ -635,49 +684,48 @@ the crate actually ships).
 
 | op | the-q | f64 | exact | q/f64 | exact/q |
 |---|---|---|---|---|---|
-| `add` | 126.8 ns | 2.1 ns | 105.8 ns | 60.9× | 0.8× |
-| `sub` | 130.4 ns | 2.1 ns | 127.7 ns | 62.8× | 1.0× |
-| `mul` | 128.2 ns | 2.3 ns | 145.9 ns | 55.7× | 1.1× |
-| `div` | 138.1 ns | 2.6 ns | 176.1 ns | 52.6× | 1.3× |
-| compare | 5.1 ns | 2.8 ns | 49.0 ns | 1.8× | 9.7× |
+| `add` | 57.0 ns | 3.4 ns | 83.4 ns | 16.6× | 1.5× |
+| `sub` | 58.8 ns | 3.0 ns | 88.9 ns | 19.6× | 1.5× |
+| `mul` | 61.2 ns | 3.0 ns | 109.2 ns | 20.4× | 1.8× |
+| `div` | 61.9 ns | 3.0 ns | 108.3 ns | 20.6× | 1.7× |
+| compare | 4.3 ns | 2.5 ns | 35.0 ns | 1.7× | 8.1× |
 
-On *one* operation with small operands, `the-q` and an exact rational cost about
-the same, and both cost roughly 60× an `f64` op. That comparison is not the
-interesting one, because it is the one case where an exact rational is cheap.
+On *one* operation with small operands `the-q` is now faster than an exact
+rational, which is the case that used to favour the exact backend most. Both
+cost roughly twenty times an `f64` op.
 
 **Chained fusion — `acc = (acc + x) · y`, cost per step at depth `k`**
 
 | depth | the-q | f64 | exact | q/f64 | exact/q | size of exact result |
 |---|---|---|---|---|---|---|
-| `k = 4` | 360.9 ns | 5.0 ns | 465.3 ns | 72.5× | 1.3× | 29 digits |
-| `k = 16` | 1576.3 ns | 4.3 ns | 558.2 ns | 362.7× | 0.4× | 88 digits |
-| `k = 64` | 1864.7 ns | 4.2 ns | 452.9 ns | 446.3× | 0.2× | 311 digits |
-| `k = 256` | 2044.8 ns | 4.2 ns | 640.4 ns | 492.2× | 0.3× | 947 digits |
-| `k = 1024` | 2074.1 ns | 4.1 ns | 1248.3 ns | 500.1× | 0.6× | 2 979 digits |
-| `k = 4096` | 2099.3 ns | 4.1 ns | 3116.1 ns | 507.1× | 1.5× | 8 806 digits |
+| `k = 4` | 166.5 ns | 4.6 ns | 276.1 ns | 36.2× | 1.7× | 29 digits |
+| `k = 64` | 1264.7 ns | 3.9 ns | 356.5 ns | 324.3× | 0.3× | 311 digits |
+| `k = 4096` | 1378.0 ns | 4.0 ns | 2180.9 ns | 344.5× | 1.6× | 8 806 digits |
 
 This is the whole argument for the crate, and it does not flatter it.
 
-`the-q` **rises and then plateaus**: 361 ns/step at `k = 4`, then flat within 2%
-from `k = 256` to `k = 4096`. The rise is not the chain getting longer, it is the
-operands getting *wider* — a few steps in, numerator and denominator fill the
-62-bit budget, so the GCD and the rounding division run at full width on every
-subsequent step. Once they do, depth stops mattering. Same 16 bytes at `k = 4`
-as at `k = 4096`.
+`the-q` **rises and then plateaus**: 167 ns/step at `k = 4`, then flat from
+`k = 64` onward. The rise is not the chain getting longer, it is the operands
+getting *wider* — a few steps in, numerator and denominator fill the 62-bit
+budget, so the gcd and the rounding division run at full width on every
+subsequent step, and every step snaps. Once that happens, depth stops mattering.
+Same 16 bytes at `k = 4` as at `k = 4096`. This column has more than halved: the
+same chain cost 3 148 ns/step at `k = 64` before any of the gcd work.
 
 The exact backend does not plateau, because it cannot: its result is 8 806
 decimal digits at `k = 4096` and still growing. It is **cheaper than `the-q`
 between roughly `k = 8` and `k = 2000`**, and more expensive outside that
 window — increasingly so, without limit.
 
-`f64` is flat at ~4 ns and roughly 500× faster than `the-q`. That number is
-the price, and it is not small.
+`f64` is flat at ~4 ns and roughly 345× faster than `the-q` on a deep chain.
+That number is the price, and it is not small. On a single operation the ratio
+is ~17×.
 
 **`weighted_mean` over 8 (weight, value) pairs**
 
 | the-q | f64 | exact |
 |---|---|---|
-| 9.8 µs | 19.4 ns | 5.6 µs |
+| 7.0 µs | 20.1 ns | 4.2 µs |
 
 ### What the numbers mean
 

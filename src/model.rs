@@ -411,6 +411,26 @@ pub proof fn lemma_divides_trans(a: int, b: int, c: int)
     ;
 }
 
+/// A non-negative divisor of `1` is `1`.
+///
+/// The unit case of divisibility, and the last step of each coprimality proof
+/// in [`crate::gcd`]: a gcd that divides `1` is `1`.
+pub proof fn lemma_divides_one(d: int)
+    requires
+        divides(d, 1int),
+        d >= 0,
+    ensures
+        d == 1,
+{
+    let k = choose|k: int| 1int == #[trigger] (d * k);
+    assert(d > 0) by (nonlinear_arith)
+        requires
+            1int == d * k,
+            d >= 0,
+    ;
+    lemma_divides_le(d, 1int);
+}
+
 // ---------------------------------------------------------------------------
 // Concrete powers of two
 //
@@ -448,6 +468,14 @@ pub proof fn lemma_pow2_62()
         pow2(62) == 4611686018427387904,
 {
     reveal_with_fuel(pow2, 63);
+}
+
+/// `2^63`.
+pub proof fn lemma_pow2_63()
+    ensures
+        pow2(63) == 9223372036854775808,
+{
+    reveal_with_fuel(pow2, 64);
 }
 
 /// `2^64`.

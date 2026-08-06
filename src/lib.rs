@@ -31,8 +31,11 @@
 //! ## `Rat` and `Q`
 //!
 //! [`Rat`] is the verified kernel. It is exact, canonical, bounded and
-//! *partial*. `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, and
-//! `Rat::add(MAX_MAG, MAX_MAG)` silently returns `MAX_MAG`.
+//! *partial*. `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` and
+//! `Rat::zero().recip()` panic, and `Rat::add(MAX_MAG, MAX_MAG)` silently
+//! returns `MAX_MAG`. The type is `#[non_exhaustive]`, thus every `Rat` an
+//! unverified caller can obtain comes from a constructor and satisfies the
+//! invariant.
 //!
 //! [`Q`] extends that kernel. It makes "not a representable rational" an
 //! explicit, observable state. The caller therefore does not have to rule such
@@ -125,6 +128,7 @@ use vstd as _;
 pub mod model;
 pub mod types;
 
+pub mod fx;
 pub mod gcd;
 pub mod round;
 pub mod saturation;

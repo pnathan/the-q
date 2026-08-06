@@ -908,3 +908,67 @@ fn the_subgrid_branch_seam_agrees_across_both_paths() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The unverified-caller guarantees
+//
+// Verified code discharges the `n() != 0` preconditions statically. Unverified
+// code cannot. These tests pin what an unverified caller gets instead: a panic
+// at the boundary, or `None`, and never a value that violates the invariant.
+// ---------------------------------------------------------------------------
+
+/// `checked_div` is total in the divisor, as `i64::checked_div` is.
+#[test]
+fn checked_div_reports_a_zero_divisor_as_none() {
+    let one = Rat::one();
+    let zero = Rat::zero();
+    assert_eq!(Rat::checked_div(one, zero), None);
+    assert_eq!(Rat::checked_div(zero, zero), None);
+    assert_eq!(Rat::checked_div(Rat::new(-3, 7).unwrap(), zero), None);
+    // A nonzero divisor is unaffected.
+    assert_eq!(
+        Rat::checked_div(one, Rat::from_int(4).unwrap()),
+        Rat::new(1, 4)
+    );
+}
+
+/// `div` panics on a zero divisor and returns no value.
+#[test]
+#[should_panic]
+fn div_by_zero_panics() {
+    let _ = Rat::div(Rat::one(), Rat::zero());
+}
+
+/// `recip` panics at zero. The earlier behaviour returned `-1/0`, which
+/// violates I1.
+#[test]
+#[should_panic]
+fn recip_of_zero_panics() {
+    let _ = Rat::recip(Rat::zero());
+}
+
+/// Every value an unverified caller can obtain is well-formed. The type is
+/// `#[non_exhaustive]`, thus a struct literal outside this crate does not
+/// compile, and the constructors are the only entry points.
+#[test]
+fn every_constructor_output_is_well_formed() {
+    let mut rng = Rng::new(0x5EED_1234);
+    for _ in 0..20_000 {
+        let num = rng.next_u64() as i64;
+        let den = rng.next_u64() as i64;
+        if let Some(q) = Rat::new(num, den) {
+            assert_wf(q, "new");
+        }
+        for dir in DIRS {
+            if let Some(q) = Rat::new_rounded(num, den, dir) {
+                assert_wf(q, "new_rounded");
+            }
+        }
+        if let Some(q) = Rat::from_int(num) {
+            assert_wf(q, "from_int");
+        }
+        if let Some(q) = Rat::from_decimal(num, (den.unsigned_abs() % 20) as u8) {
+            assert_wf(q, "from_decimal");
+        }
+    }
+}
