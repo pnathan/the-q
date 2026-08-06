@@ -37,13 +37,13 @@ jobs:
       # Plain rustc must build the annotated sources: the `verus!` macro erases
       # all ghost code, so a Verus-annotated crate is still an ordinary crate.
       - name: Build (plain rustc)
-        run: cargo build --all-features --verbose
+        run: cargo build --locked --all-features --verbose
 
       - name: Build (release, overflow checks on)
-        run: cargo build --release --all-features --verbose
+        run: cargo build --locked --release --all-features --verbose
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Rustfmt
         run: cargo fmt --check
@@ -52,13 +52,13 @@ jobs:
       # (see [profile.release] in Cargo.toml), so the release run is a second
       # independent execution of the V2 no-overflow claim.
       - name: Test (debug)
-        run: cargo test --all-features --verbose
+        run: cargo test --locked --all-features --verbose
 
       - name: Test (release)
-        run: cargo test --release --all-features --verbose
+        run: cargo test --locked --release --all-features --verbose
 
       - name: Documentation builds
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --locked --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -97,12 +97,18 @@ jobs:
       - name: Install Verus
         env:
           # Pinned deliberately, and pinned *together with* the `vstd`,
-          # `verus_builtin` and `verus_builtin_macros` versions in Cargo.toml —
-          # the verifier binary and those libraries are one unit, and a mismatch
-          # is not guaranteed to fail loudly. Tracking `releases/latest`, as this
-          # job used to, would let an upstream release change the outcome of a
-          # *required* check with no commit to this repository. Bump both ends
-          # in the same commit.
+          # `verus_builtin` and `verus_builtin_macros` versions this job
+          # resolves — the verifier binary and those libraries are one unit,
+          # and a mismatch is not guaranteed to fail loudly. Tracking
+          # `releases/latest`, as this job used to, would let an upstream
+          # release change the outcome of a *required* check with no commit to
+          # this repository. Bump this and `Cargo.lock` together.
+          #
+          # `Cargo.toml` states the `vstd` family as a caret requirement, not an
+          # `=` pin, so that this crate can be depended on alongside another
+          # crate that needs a different Verus snapshot. `--locked` on every
+          # `cargo` invocation in this workflow is what keeps this job pinned to
+          # the exact triple it is written against, despite that.
           VERUS_VERSION: 0.2026.07.27.31579f0
         run: |
           set -euo pipefail
@@ -150,4 +156,4 @@ jobs:
       # error per function body, which makes a module with a single early
       # failure look clean. Ask for more so each run is a full picture.
       - name: Verify
-        run: cargo verus verify --all-features -- --multiple-errors 8
+        run: cargo verus verify --locked --all-features -- --multiple-errors 8

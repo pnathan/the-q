@@ -3,17 +3,27 @@ name = "the-q"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "LGPL-2.1-or-later"
+license = "LGPL-3.0-or-later"
 description = "Verified bounded rational (Q) arithmetic with machine-checked directed rounding"
 repository = "https://github.com/pnathan/the-q"
 readme = "README.md"
 keywords = ["rational", "verification", "verus", "arithmetic", "exact"]
 categories = ["mathematics"]
+# CI workflow definitions are neither built nor referenced by anything the
+# README points at; everything else (docs/, scripts/, tests/, benches/) is
+# cited from the README as evidence of the crate's engineering and ships
+# deliberately.
+exclude = [".github/"]
 
 # Opt this crate into `cargo verus verify`. Without it the driver reports
 # "cargo did not find any crates that opted into verification" and does nothing.
 [package.metadata.verus]
 verify = true
+
+# Without this, docs.rs builds only the default feature set and the serde
+# impls in `convert.rs` never appear in the published documentation.
+[package.metadata.docs.rs]
+all-features = true
 
 [lib]
 name = "the_q"
@@ -23,9 +33,18 @@ path = "src/lib.rs"
 # Verus support libraries. These compile as ordinary Rust crates under plain
 # rustc (all ghost code is erased), so `cargo build` works without Verus
 # installed. `verus verify` consumes the same sources with --cfg verus_keep_ghost.
-verus_builtin = "=0.0.0-2026-07-27-0206"
-verus_builtin_macros = "=0.0.0-2026-07-27-0206"
-vstd = "=0.0.0-2026-07-27-0206"
+#
+# Caret requirements, not exact pins. An exact `=` pin on all three makes this
+# crate impossible to depend on alongside any other crate that pins a different
+# Verus snapshot -- Cargo cannot resolve two different exact requirements for
+# the same package, and it fails hard rather than picking one. A caret
+# requirement lets Cargo unify on whichever snapshot satisfies every crate in
+# the graph. `Cargo.lock` is committed and CI builds with `--locked`, so the
+# exact triple this crate is verified against is still reproducible; the
+# caret only widens what a *downstream* Cargo.lock is allowed to choose.
+verus_builtin = "0.0.0-2026-07-27-0206"
+verus_builtin_macros = "0.0.0-2026-07-27-0206"
+vstd = "0.0.0-2026-07-27-0206"
 
 serde = { version = "1", optional = true, default-features = false }
 
