@@ -438,4 +438,183 @@ pub fn fx_exp_reduced(x: i128) -> (r: (i128, i32))
     (t, m as i32)
 }
 
+
+// ---------------------------------------------------------------------------
+// The logarithm, on the grid
+// ---------------------------------------------------------------------------
+
+/// Terms of the `atanh` series on the grid.
+///
+/// The tail after `N` terms at `|z| <= 1/3` is
+/// `z^(2N+3)/((2N+3)(1 − z²))`. At `N = 18` that is `2^-66.9`, at `N = 16` only
+/// `2^-60.4`. Eighteen puts the truncation three bits below the grid.
+pub const FX_ATANH_TERMS: u32 = 18;
+
+/// The largest `atanh` argument the series accepts: `0.34 · 2^63`.
+///
+/// Every caller reduces to `|z| <= 1/3`, which is `3.07e18` on this grid.
+pub const FX_Z_MAX: i128 = 3150000000000000000i128;
+
+/// `atanh(z)` for `|z| <= 1/3`, as `z + z³/3 + z⁵/5 + ...`.
+///
+/// The postcondition is a loose bound on the accumulator, not the value. The
+/// value is at most `atanh(1/3) = ln2/2 ≈ 0.347`; the bound stated is what the
+/// proof carries from eighteen terms each bounded by `FX_Z_MAX / 3`, and its
+/// only job is to discharge the `i128` range checks.
+pub fn fx_atanh_series(z: i128) -> (t: i128)
+    requires
+        abs_int(z as int) <= FX_Z_MAX as int,
+    ensures
+        abs_int(t as int) <= 10350000000000000000i128 as int,
+{
+    proof {
+        crate::model::lemma_pow2_126();
+        lemma_fx_one();
+        assert(abs_int((z as int) * (z as int)) < pow2(126)) by (nonlinear_arith)
+            requires
+                abs_int(z as int) <= FX_Z_MAX as int,
+                pow2(126) == 85070591730234615865843651857942052864,
+        ;
+    }
+    // `zz` is `z²` on the grid, at most `1/9`.
+    let zz: i128 = fx_mul(z, z);
+    proof {
+        assert(abs_int(zz as int) <= 1100000000000000000i128 as int) by (nonlinear_arith)
+            requires
+                abs_int(zz as int) * fx_one() <= abs_int((z as int) * (z as int)) + fx_one(),
+                abs_int(z as int) <= FX_Z_MAX as int,
+                fx_one() == 9223372036854775808,
+        ;
+    }
+    let mut term: i128 = z;
+    let mut sum: i128 = z;
+    let mut k: u32 = 1;
+    while k <= FX_ATANH_TERMS
+        invariant
+            abs_int(term as int) <= FX_Z_MAX as int,
+            abs_int(zz as int) <= 1100000000000000000,
+            abs_int(sum as int) <= (FX_Z_MAX as int) + ((k - 1) as int) * 400000000000000000,
+            1 <= k <= FX_ATANH_TERMS + 1,
+        decreases FX_ATANH_TERMS + 1 - k,
+    {
+        proof {
+            lemma_fx_one();
+            crate::model::lemma_pow2_126();
+            assert(abs_int((term as int) * (zz as int)) < pow2(126)) by (nonlinear_arith)
+                requires
+                    abs_int(term as int) <= FX_Z_MAX as int,
+                    abs_int(zz as int) <= 1100000000000000000,
+                    pow2(126) == 85070591730234615865843651857942052864,
+            ;
+        }
+        // Each term is the previous one times `z²`, thus each shrinks by at
+        // least a factor of eight and the term bound is preserved.
+        let next: i128 = fx_mul(term, zz);
+        proof {
+            lemma_fx_one();
+            assert(abs_int(next as int) <= 1100000000000000000) by (nonlinear_arith)
+                requires
+                    abs_int(next as int) * fx_one() <= abs_int((term as int) * (zz as int))
+                        + fx_one(),
+                    abs_int(term as int) <= FX_Z_MAX as int,
+                    abs_int(zz as int) <= 1100000000000000000,
+                    fx_one() == 9223372036854775808,
+            ;
+        }
+        let piece: i128 = fx_div_int(next, 2 * k + 1);
+        proof {
+            // Each piece is a term divided by at least three, which is what
+            // keeps the sum inside the budget of the `Rat` it becomes.
+            assert(abs_int(piece as int) <= 400000000000000000) by (nonlinear_arith)
+                requires
+                    2 * abs_int((piece as int) * ((2 * k + 1) as int) - (next as int)) <= (2 * k
+                        + 1) as int,
+                    abs_int(next as int) <= 1100000000000000000,
+                    ((2 * k + 1) as int) >= 3,
+            ;
+        }
+        term = next;
+        sum = sum + piece;
+        k = k + 1;
+    }
+    sum
+}
+
+
+/// `z = (N − D) / (N + D)` on the grid, for a ratio `N/D` in `[1/2, 2]`.
+///
+/// This is the shape `ln` needs, and the reason it takes `N` and `D` as
+/// integers rather than a mantissa already on the grid. Quantising the mantissa
+/// first costs `2^-64` of *absolute* error, which is harmless for a result near
+/// `1` and ruinous for one near `0`: at `x = 1 + 2^-40` the answer is `2^-40`
+/// and the quantisation leaves `2^-24` of relative error, because `N − D`
+/// cancels away forty bits that were never recorded. Taking the difference on
+/// the caller's own integers, before any rounding, is what keeps a small result
+/// meaningful. It is the same reason a C library has `log1p`.
+///
+/// The precondition bounds both inputs by `2^62`, which keeps `(N − D) · 2^63`
+/// inside `i128`.
+/// The ratio bound is clamped rather than required. A caller that has reduced
+/// its mantissa into `[1/2, 2]` never reaches the clamp, but proving that it
+/// has means unfolding the order on `Q`, and the clamp costs one comparison.
+// `rem` is consumed by the proof block, which plain rustc erases.
+#[allow(unused_variables)]
+pub fn fx_ratio_z(bign: i128, bigd: i128) -> (z: i128)
+    requires
+        bign > 0,
+        bigd > 0,
+        bign <= 4611686018427387904i128 as int,
+        bigd <= 4611686018427387904i128 as int,
+    ensures
+        abs_int(z as int) <= FX_Z_MAX as int,
+{
+    proof {
+        lemma_fx_one();
+        crate::model::lemma_pow2_126();
+    }
+    let diff: i128 = bign - bigd;
+    let sum: i128 = bign + bigd;
+    let neg: bool = diff < 0;
+    let ad: i128 = if neg {
+        0 - diff
+    } else {
+        diff
+    };
+    proof {
+        // The scaled numerator is at most `2^62 · 2^63`, which is inside
+        // `i128`.
+        assert((ad as int) * fx_one() <= 42535295865117307932921825928971026432)
+            by (nonlinear_arith)
+            requires
+                (ad as int) <= 4611686018427387904,
+                fx_one() == 9223372036854775808,
+        ;
+    }
+    let scaled: i128 = ad * FX_ONE;
+    let q: i128 = scaled / sum;
+    let rem: i128 = scaled % sum;
+    proof {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(scaled as int, sum as int);
+        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(scaled as int, sum as int);
+        vstd::arithmetic::div_mod::lemma_mod_bound(scaled as int, sum as int);
+        assert((scaled as int) == (q as int) * (sum as int) + (rem as int)) by (nonlinear_arith)
+            requires
+                (scaled as int) == (sum as int) * (q as int) + (rem as int),
+        ;
+        assert((q as int) >= 0);
+    }
+    // The clamp. A mantissa in `[1/2, 2]` gives `|z| <= 1/3`, which is below
+    // `FX_Z_MAX`, so this is a guard rather than a rounding.
+    let qc: i128 = if q > FX_Z_MAX {
+        FX_Z_MAX
+    } else {
+        q
+    };
+    if neg {
+        0 - qc
+    } else {
+        qc
+    }
+}
+
 } // verus!

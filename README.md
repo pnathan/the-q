@@ -168,17 +168,29 @@ is slower while carrying 8806-digit numerators.
 
 | function | the-q | f64 (hardware) | at the start |
 |---|---:|---:|---:|
-| **`exp`** | **0.55 µs** | 8.0 ns | 41.4 µs |
+| **`exp`** | **0.58 µs** | 8.0 ns | 41.4 µs |
+| **`ln`** | **1.4 µs** | 8.4 ns | 40.2 µs |
 | `sqrt` | 9.1 µs | 2.5 ns | 20.5 µs |
 | `sin` / `cos` | 14.9 µs | ~10 ns | 32.6 µs |
-| `ln` | 18.5 µs | 8.4 ns | 40.2 µs |
 | `atan` | 24.1 µs | 9.0 ns | 53.3 µs |
 
-`exp` is the one that has moved to the fixed-point kernel in `src/fx.rs`, which
-is why it is two orders of magnitude below the rest. It evaluates its series as
-plain `i128` integers on a `2^-63` grid instead of as `Q` values: one multiply
-and one shift-and-round per term, rather than a canonicalisation, a gcd and a
-rounding. The others still run through `Q` and are the remaining work.
+`exp` and `ln` have moved to the fixed-point kernel in `src/fx.rs`, which is why
+they are one to two orders of magnitude below the rest. The kernel evaluates a
+series as plain `i128` integers on a `2^-63` grid instead of as `Q` values: one
+multiply and one shift-and-round per term, rather than a canonicalisation, a gcd
+and a rounding. `sqrt`, the trigonometric functions and `atan` still run through
+`Q` and are the remaining work.
+
+`ln` keeps the exact rational path for arguments within `2^-8` of one, and the
+reason is worth stating. The kernel quantises to a *dyadic* grid, so its error
+is `2^-63` in absolute terms — comfortably inside R3, which is absolute below
+one. But `ln(1 + 2^-32)` is about `2^-32`, and `2^-63` of absolute error is
+`2^-31` of *relative* error. The exact path never quantises: it works in
+rationals whose denominators need not be powers of two, and a `Rat` holds a very
+good non-dyadic approximation to a small value. Measured on `1 + 2^-k` it keeps
+`2^-68` to `2^-104` where the kernel alone keeps `2^-34` to `2^-52`.
+`ln_near_one_keeps_relative_accuracy` is the test that would catch the branch
+being removed.
 
 These are software series over exact rationals against silicon, so the ratio is
 large and will stay large. Tens of microseconds is usable for fusion and
@@ -201,9 +213,10 @@ were contributing nothing.
 |---|---|
 | `exp` | 2⁻⁶¹ |
 | `e` | 2⁻⁶² |
+| `ln` (near 1) | 2⁻⁶⁸ to 2⁻¹⁰⁴ |
 | `sqrt`, `ln2` | 2⁻⁶⁰ |
 | `pi` | 2⁻⁵⁹ |
-| `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁸ |
+| `ln`, `atan`, `sin²+cos²−1` | 2⁻⁵⁹ |
 | `sin`, `cos` | 2⁻⁵⁶ |
 
 Every one of those is at or better than `f64`'s 2⁻⁵³. The caveat is in the

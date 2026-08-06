@@ -581,6 +581,49 @@ fn pow2_q(m: i32) -> (r: Q)
     }
 }
 
+
+/// A small grid value as a `Q`: `v · 2^-63`, for `|v| <= 2^63`.
+///
+/// The mantissa logarithm is at most `ln 2 / 2` in magnitude, so a shift of two
+/// brings it inside `i64` with the denominator at `2^61`, and the pair is then
+/// an ordinary `Rat`.
+fn fx_small_to_q(v: i128) -> (r: Q)
+    requires
+        crate::model::abs_int(v as int) <= 10350000000000000000i128 as int,
+    ensures
+        r.wf(),
+{
+    proof {
+        crate::model::lemma_max_mag_pow2();
+    }
+    let neg: bool = v < 0;
+    let m: i128 = if neg {
+        0 - v
+    } else {
+        v
+    };
+    // Round to the `2^-61` grid, which is where the crate's own contract sits.
+    let q: i128 = (m + 2) / 4;
+    proof {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod((m as int) + 2, 4int);
+        vstd::arithmetic::div_mod::lemma_mod_bound((m as int) + 2, 4int);
+        assert((q as int) <= 2600000000000000000) by (nonlinear_arith)
+            requires
+                ((m as int) + 2) == 4 * (q as int) + (((m as int) + 2) % 4),
+                (((m as int) + 2) % 4) >= 0,
+                (m as int) <= 10350000000000000000,
+        ;
+    }
+    let num: i128 = if neg {
+        0 - q
+    } else {
+        q
+    };
+    // `Q::new` is total: a numerator past the budget saturates rather than
+    // failing, and this one is inside it whenever the caller's bound holds.
+    Q::new(num as i64, 1i64 << 61)
+}
+
 impl Q {
     /// `e^self`.
     ///
@@ -841,9 +884,70 @@ impl Q {
                     down = down + 1;
                 }
                 // z = (m - 1) / (m + 1), in [-1/3, 1/3] for m in [1/2, 2].
-                let one = Q::one();
-                let z = Q::div(Q::sub(m, one), Q::add(m, one));
-                let ln_m = Q::mul(two, atanh_series(z));
+                //
+                // The numerator and denominator go to the fixed-point kernel as
+                // integers, not as a mantissa already on the grid. For a value
+                // near one the difference cancels the leading bits, and a
+                // quantised mantissa has nothing left underneath them. Taking
+                // the difference on these integers first is what keeps
+                // `ln(1 + 2^-40)` meaningful.
+                let (mn, md): (i64, i64) = match m {
+                    Q::Number(r) => (r.numerator(), r.denominator()),
+                    // Unreachable: halving and doubling a positive number
+                    // toward `[1/2, 2]` cannot leave the representable range.
+                    // Answering `Nan` keeps the function total without a proof
+                    // about the loops above.
+                    _ => {
+                        return Q::Nan;
+                    },
+                };
+                proof {
+                    crate::model::lemma_max_mag_pow2();
+                }
+                // The near-one branch.
+                //
+                // The fixed-point kernel quantises to a *dyadic* grid, thus its
+                // error is `2^-63` in absolute terms. That is well inside R3,
+                // which is absolute below one, and it is fine for a result of
+                // ordinary size. For a result near zero it is not: at
+                // `x = 1 + 2^-32` the answer is about `2^-32`, and `2^-63` of
+                // absolute error is `2^-31` of relative error.
+                //
+                // The exact path does not have this problem, because it never
+                // quantises: it works in rationals whose denominators need not
+                // be powers of two, and a `Rat` can hold a very good non-dyadic
+                // approximation to a small value. Measured on `1 + 2^-k`, it
+                // keeps `2^-68` to `2^-104` where the grid keeps `2^-34` to
+                // `2^-52`.
+                //
+                // So the two paths split on the only thing that separates
+                // them. Away from one, the grid is thirty times faster and
+                // loses nothing. Within `2^-8` of one, the exact path is the
+                // only one that keeps a small answer meaningful, and inputs
+                // that close to one are the ones where a caller is asking
+                // about a ratio, which is exactly when the low bits are the
+                // answer.
+                let diff: i128 = (mn as i128) - (md as i128);
+                let adiff: i128 = if diff < 0 {
+                    0 - diff
+                } else {
+                    diff
+                };
+                let near_one: bool = up == 0 && down == 0 && adiff * 256 < (md as i128);
+                let ln_m = if near_one {
+                    let one = Q::one();
+                    let z = Q::div(Q::sub(m, one), Q::add(m, one));
+                    Q::mul(Q::new(2, 1), atanh_series(z))
+                } else {
+                    if mn <= 0 {
+                        return Q::Nan;
+                    }
+                    let zg: i128 = crate::fx::fx_ratio_z(mn as i128, md as i128);
+                    // `ln(m) = 2·atanh(z)`. The doubling happens in `Q` rather
+                    // than on the grid, so the grid value stays inside the
+                    // budget of the `Rat` it becomes.
+                    Q::mul(Q::new(2, 1), fx_small_to_q(crate::fx::fx_atanh_series(zg)))
+                };
                 // k is the net number of doublings undone; `up` and `down` are
                 // never both nonzero, so this cannot overflow an i64.
                 let k = Q::sub(Q::new(up as i64, 1), Q::new(down as i64, 1));
