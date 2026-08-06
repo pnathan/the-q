@@ -105,6 +105,25 @@
 //! `cargo build` uses plain rustc (ghost code erased); `verus verify` checks the
 //! same sources. See `VERIFICATION.md` for the obligation map (V1–V8) and
 //! `TRUSTED.md` for the enumerated trusted boundary.
+//!
+//! ## What semver covers
+//!
+//! [`Rat`], [`Q`], [`Dir`], [`interval::QI`], the arithmetic and comparison
+//! operations on them, the constructors, and [`nary`] are the API. That
+//! surface follows semver.
+//!
+//! Most other public items exist because a `verus!` proof needs the item it
+//! proves something about to be visible, not because they are meant to be
+//! called by an ordinary consumer: the ghost lemmas in [`gcd`], [`model`],
+//! [`round`] and [`lipschitz`]; the executable helpers those proofs are
+//! attached to, such as `round::round_frac_exec_with_gcd` or
+//! `gcd::strip_twos`; and the fixed-point kernel in [`fx`]. These are public
+//! because Verus's visibility rules require it, not because of an API
+//! decision, and they can change shape between patch releases as the proofs
+//! they support are restructured.
+//!
+//! If a downstream verified proof depends on one of these, say so in an issue
+//! before depending on it in a way that a patch release could break.
 
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::comparison_chain)]

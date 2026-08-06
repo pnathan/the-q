@@ -743,6 +743,11 @@ cargo bench --bench arith
 
 ## Licence
 
-LGPL-2.1-or-later, matching the repository. The LGPL-3.0-only oracle
-`malachite-q` is confined to `[dev-dependencies]` and is never linked into a
-shipped artefact.
+LGPL-3.0-or-later, matching the repository. The LGPL-3.0-only oracle
+`malachite-q` is confined to `[dev-dependencies]` regardless: it is a
+differential-testing tool, not a runtime dependency, and it stays out of the
+shipped artefact whatever its licence.
+
+If the LGPL's terms do not work for your use — for example, static linking
+into a proprietary binary without satisfying the relinking provisions —
+contact the author about a separate licence.
