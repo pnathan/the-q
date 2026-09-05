@@ -2,20 +2,29 @@
 
 > This is the specification this crate was built from, reproduced verbatim as
 > the record of intent. Where the implementation departs from it — and there are
-> three places — the departures are called out in `README.md` ("Honesty notes")
-> and `VERIFICATION.md`, not silently absorbed here.
+> six places — the departures are called out in §9 below, in `README.md`
+> ("Honesty notes") and in `VERIFICATION.md`, not silently absorbed here.
 >
-> The three departures, in brief:
+> The six departures, in brief:
 >
-> 1. **Magnitude saturation.** R3 is stated unconditionally below, but it cannot
->    hold for an exact value whose magnitude exceeds `2^62 − 1`; those results
->    saturate and the `checked_*` variants report them.
-> 2. **`Rat::new`.** §2.1 claims every `i64` pair fits I2 after reduction.
+> 1. **`Rat::new`.** §2.1 claims every `i64` pair fits I2 after reduction.
 >    `Rat::new(i64::MAX, 1)` does not, so `new` returns `None` there too;
 >    `new_rounded` is the total variant.
-> 3. **GCD width.** V5 says "u64 Euclid"; canonicalisation reduces `i128`
+> 2. **Magnitude saturation.** §3's R3 is stated unconditionally below, but it
+>    cannot hold for an exact value whose magnitude exceeds `2^62 − 1`; those
+>    results saturate and the `checked_*` variants report them.
+> 3. **Accumulated error is absolute.** §2.5 / V8's `k·2^-B` is stated against
+>    an explicit magnitude bound on the intermediates, not relatively; the
+>    relative form is not true as written.
+> 4. **GCD width.** §6's V5 says "u64 Euclid"; canonicalisation reduces `i128`
 >    intermediates, so the verified workhorse is `gcd_u128` with `gcd_u64` as a
 >    wrapper.
+> 5. **Roots and transcendentals ship.** §2.6 places them out of scope; the
+>    crate provides them, on `Q` rather than on `Rat`.
+> 6. **`product` and `weighted_mean` each carry an extra hypothesis.** §2.5 /
+>    V8's single accumulation shape does not cover them; each needs its own.
+>
+> §9 gives each of the six in full.
 
 **Purpose.** A standalone Rust crate providing exact-with-verified-rounding
 rational arithmetic, checked by **Verus**, to serve as the numeric backbone of a
@@ -133,7 +142,7 @@ against the ghost order.
 
 | Item | Contract |
 |---|---|
-| `to_f64(q)` | for display/DTO boundary ONLY. This is the one **documented trusted boundary** (`external_body`): proving float rounding in Verus is not worth it. Covered by differential tests instead (§6). Never fed back into Rat arithmetic |
+| `to_f64(q)` | for display/DTO boundary ONLY. This is one of three **documented trusted boundaries** (`external_body`): proving float rounding in Verus is not worth it. Covered by differential tests instead (§6). Never fed back into Rat arithmetic |
 | `Display` | `"num/den"` |
 | `serde` (feature-gated) | serialize as the `(num, den)` integer pair — **exact round-trip**, unlike any f64 encoding |
 | `Hash`, `Eq`, `Ord`, `Clone`, `Copy` | derive; safe because canonical. `Copy` matters: plain 128-bit value type, no heap, trivially `Send + Sync` (the engine holds opinions inside `RwLock`/`Mutex` shared state) |
@@ -261,8 +270,8 @@ Everything else is integer arithmetic — fully inside the verified region.
 
 Ground rules: **zero `assume`/`admit` in shipping code; every `external_body`
 function enumerated in a TRUSTED.md** with its assumed spec and the differential
-tests that back it (target: exactly one — `to_f64` — if `from_f64_dir` goes the
-bit-decomposition route). `cargo build` (plain rustc) and `verus` verification
+tests that back it (currently three: `from_f64_dir`, `to_f64`, and the runtime
+precondition guard). `cargo build` (plain rustc) and `verus` verification
 must both pass in CI on every commit.
 
 ---

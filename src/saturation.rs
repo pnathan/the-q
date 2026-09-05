@@ -29,35 +29,25 @@ use crate::types::{MAX_MAG, Rat};
 
 verus! {
 
-/// Saturation is a **scoping choice, not a necessity**: there are values above
-/// the magnitude ceiling that a well-formed `Rat` does satisfy R3 for.
-///
-/// The opposite claim — that nothing representable is close enough up there, so
-/// the bound is unachievable — is false, and this lemma is the obligation that
-/// contradicts it.
-///
-/// The witness is `n/d = MAX_MAG + 1/2` against `r = MAX_MAG/1`: the error is
-/// exactly `1/2`, and R3 at this magnitude allows nearly `2`.
-///
-/// This is not an argument for widening the contract. Excluding the region
-/// keeps R3 on one side of a clean boundary and keeps `checked_*` honest; it is
-/// simply not forced.
+/// Saturation is a scoping choice, not a necessity: `MAX_MAG + 1/2` is within
+/// R3 of `MAX_MAG/1` (error `1/2`, allowed nearly `2`).
 pub proof fn lemma_saturation_is_a_choice()
     ensures
         !magnitude_fits(2 * max_mag() + 1, 2),
-        (Rat { num: MAX_MAG, den: 1 }).wf(),
-        within_error_bound(Rat { num: MAX_MAG, den: 1 }, 2 * max_mag() + 1, 2),
+        Rat::from_raw_spec(MAX_MAG, 1).wf(),
+        within_error_bound(Rat::from_raw_spec(MAX_MAG, 1), 2 * max_mag() + 1, 2),
 {
     let n = 2 * max_mag() + 1;
-    let r = Rat { num: MAX_MAG, den: 1 };
+    let r = Rat::from_raw_spec(MAX_MAG, 1);
+    Rat::lemma_from_raw_spec_components(MAX_MAG, 1);
     lemma_max_mag_pow2();
-    // Resolve the field accesses on the struct literal before anything reasons
-    // about them arithmetically.
+    // Resolve the closed abstract components before reasoning about them
+    // arithmetically.
     assert(r.n() == max_mag());
     assert(r.d() == 1);
     // I1: gcd(MAX_MAG, 1) unfolds to gcd(1, 0) == 1, so it needs two steps of
     // fuel — the definition recurses on the second argument.
-    assert(gcd_int(r.num as int, r.den as int) == 1) by {
+    assert(gcd_int(r.n(), r.d()) == 1) by {
         reveal_with_fuel(gcd_nat, 3);
     }
     // Outside the ceiling: |n| == 2·MAX_MAG + 1 > MAX_MAG · 2.

@@ -1,32 +1,15 @@
-//! Verified greatest common divisor (obligation V5).
+//! Verified greatest common divisor (V5).
 //!
-//! The implementation is Stein's binary algorithm on `u64`, with Euclid's
-//! algorithm ahead of it to narrow operands that do not fit. Proofs show that
-//! the result equals the ghost `gcd_nat`, that each loop terminates, that the
-//! result divides both arguments, and that it is the greatest such divisor. The
-//! rest of the crate needs the `u128` width: canonicalisation reduces `i128`
-//! intermediates, not `i64` ones. [`gcd_u64`] is the narrow entry point.
+//! Stein's binary algorithm on `u64`, after Euclid steps narrow a `u128`
+//! operand. [`strip_twos`] removes all trailing zeros at once with
+//! `trailing_zeros`, which is where the algorithm's advantage over hardware
+//! division lies. `gcd_u128` is the workhorse because canonicalisation reduces
+//! `i128` intermediates; [`gcd_u64`] is the narrow entry point.
 //!
-//! The gcd is the dominant cost of every arithmetic operation, because
-//! canonicalisation runs one on each result. Two changes made it cheap. First,
-//! Euclid's algorithm needs a remainder, and a `u128` remainder is a software
-//! routine rather than an instruction, thus the algorithm here narrows to `u64`
-//! and then uses halving, comparison and subtraction only. Second, and larger,
-//! [`strip_twos`] removes all the trailing zeros at once with
-//! `u64::trailing_zeros`. A binary gcd that strips one two per iteration is
-//! worth nothing against Euclid on hardware division; the whole advantage is in
-//! that one instruction. Together the two changes took `add` from 262 ns to
-//! 72 ns.
-//!
-//! `gcd_nat` is defined by Euclid's recursion, thus a proof about it by
-//! induction follows the `%` structure, which the binary algorithm does not
-//! have. `lemma_gcd_unique` supplies the bridge: it characterises the gcd by
-//! divisibility, and each step law of the binary algorithm is then a
-//! divisibility argument.
-//!
-//! The last lemma in this file, `lemma_gcd_reduce_coprime`, makes
-//! canonicalisation work. Dividing both arguments by their gcd leaves them
-//! coprime, which is exactly invariant I1.
+//! `gcd_nat` is Euclid's recursion, so induction follows `%`; `lemma_gcd_unique`
+//! characterises the gcd by divisibility, which is the form each binary step
+//! law is proved in. `lemma_gcd_reduce_coprime` — dividing both arguments by
+//! their gcd leaves them coprime — is what canonicalisation stands on.
 
 use verus_builtin_macros::verus;
 
@@ -232,21 +215,10 @@ pub proof fn lemma_gcd_reduce_coprime(a: nat, b: nat)
 // ---------------------------------------------------------------------------
 // The characterisation, and the three step laws the binary algorithm uses
 //
-// `gcd_nat` is defined by Euclid's recursion, thus a proof about it by
-// induction follows the `%` structure. The binary algorithm steps by halving
-// and subtraction instead. Each step law below is therefore proven from the
-// *characterisation* of the gcd — a non-negative common divisor that every
-// common divisor divides — and not from the recursion. `lemma_gcd_unique` is
-// what makes that possible.
-// ---------------------------------------------------------------------------
+// Each binary step law is proved from the divisibility characterisation
+// (`lemma_gcd_unique`), not from Euclid's recursion.
 
-/// The gcd is the unique non-negative common divisor that every common divisor
-/// divides.
-///
-/// `lemma_gcd_divides` and `lemma_gcd_greatest` state the two halves for
-/// `gcd_nat` itself. This lemma states the converse: any `d` with both
-/// properties *is* the gcd. Each step law below establishes the two properties
-/// for its own candidate and then applies this lemma.
+/// Any non-negative common divisor that every common divisor divides is the gcd.
 pub proof fn lemma_gcd_unique(a: nat, b: nat, d: nat)
     requires
         divides(d as int, a as int),
@@ -275,12 +247,8 @@ pub proof fn lemma_gcd_unique(a: nat, b: nat, d: nat)
     }
 }
 
-/// An odd divisor of `2m` divides `m`.
-///
-/// This is the cancellation that the halving law needs. The general form needs
-/// Bezout coefficients, but for the factor `2` they are immediate: an odd `c`
-/// is `2t + 1`, thus `1 == c - 2t`, thus
-/// `m == m·c - t·(2m) == c·(m - t·k)` where `2m == c·k`.
+/// An odd divisor of `2m` divides `m`: with `c = 2t + 1`,
+/// `m == c·(m − t·k)` where `2m == c·k`.
 pub proof fn lemma_odd_divides_half(c: int, m: int)
     requires
         divides(c, 2 * m),
@@ -379,12 +347,7 @@ pub proof fn lemma_gcd_half_odd(x: nat, y: nat)
     lemma_gcd_unique(x, y, d);
 }
 
-/// **The halving law, on the right.** `gcd(x, y) == gcd(x, y / 2)` when `y` is
-/// even and `x` is odd.
-///
-/// The mirror of [`lemma_gcd_half_odd`]. It is proven directly rather than by
-/// composing that lemma with symmetry, because the direct proof is the same
-/// six lines and needs no rewriting step.
+/// `gcd(x, y) == gcd(x, y / 2)` for even `y`, odd `x`.
 pub proof fn lemma_gcd_half_odd_right(x: nat, y: nat)
     requires
         y % 2 == 0,
@@ -431,15 +394,8 @@ pub proof fn lemma_pow2_agrees(n: nat)
     }
 }
 
-/// Divide out all the twos at once.
-///
-/// The three halving steps of the binary gcd each strip the twos from one
-/// operand. Stripping them one at a time costs an iteration per two.
-/// `trailing_zeros` is one instruction, and the shift is one more.
-///
-/// The proof runs through `vstd`'s axioms for `u64::trailing_zeros`, which is a
-/// closed specification: the trailing bits are zero, thus `2^k` divides `x`;
-/// the bit at `k` is one, thus `x >> k` is odd; and `x >> k` is `x / 2^k`.
+/// Strip all trailing zeros at once with `trailing_zeros`; proved through
+/// `vstd`'s axioms for it.
 pub fn strip_twos(x: u64) -> (r: (u64, u32))
     requires
         x > 0,
@@ -493,12 +449,8 @@ pub fn strip_twos(x: u64) -> (r: (u64, u32))
     (y, k)
 }
 
-/// An odd number is coprime to every power of two.
-///
-/// The rounding code needs this. Its second gcd is always taken against `2^s`,
-/// thus the answer is `2^min(v2(n), s)` and no general gcd is required. This
-/// lemma is the base of that: once the common twos are gone, one side is odd
-/// and the rest of the gcd is `1`.
+/// An odd number is coprime to every power of two; the rounder's second gcd
+/// against `2^s` reduces to `2^min(v2(n), s)` by this.
 pub proof fn lemma_gcd_odd_pow2(n: nat, t: nat)
     requires
         n % 2 == 1,
@@ -747,28 +699,11 @@ pub proof fn lemma_divides_cofactor(d: nat, n: nat)
     ;
 }
 
-/// **Cross-reduction.** For two canonical fractions `x1/y1` and `x2/y2`, the
-/// gcd of the product's numerator and denominator splits into two gcds across
-/// the pair:
-///
-/// `gcd(x1·x2, y1·y2) == gcd(x1, y2) · gcd(x2, y1)`
-///
-/// Two `u64` gcds on the *operands* can thus replace one `u128` gcd on the
-/// `i128` product: the operands are bounded by `MAX_MAG`, and the product is
-/// not.
-///
-/// The arithmetic does not currently use this law. Measurement is the reason.
-/// [`gcd_u128`] narrows to [`gcd_bin_u64`] after at most two Euclid steps, thus
-/// the wide gcd is already close to a narrow one, and paying for two narrow
-/// gcds instead measured 8% slower on `mul` and 17% slower on `div`, with no
-/// change on the chain path. The law is kept proven because the version that
-/// would win needs it: cross-reduction can produce the *reduced components*
-/// from `u64` divisions, which removes the two `i128` divisions as well, and
-/// that is where the remaining cost is.
-///
-/// The proof divides each side by the two cross gcds and shows the four
-/// remaining factors are pairwise coprime, which makes the reduced product
-/// coprime by [`lemma_coprime_product`].
+/// Cross-reduction: for canonical `x1/y1`, `x2/y2`,
+/// `gcd(x1·x2, y1·y2) == gcd(x1, y2) · gcd(x2, y1)`. Divide out the two cross
+/// gcds and the remaining factors are pairwise coprime
+/// ([`lemma_coprime_product`]). Not used by the arithmetic: two narrow gcds
+/// measured slower than one wide one.
 pub proof fn lemma_gcd_cross(x1: nat, y1: nat, x2: nat, y2: nat)
     requires
         gcd_nat(x1, y1) == 1,
@@ -836,30 +771,10 @@ pub proof fn lemma_gcd_cross(x1: nat, y1: nat, x2: nat, y2: nat)
 // Executable gcd
 // ---------------------------------------------------------------------------
 
-/// Stein's binary gcd on `u64`.
-///
-/// The algorithm uses halving and subtraction, and never divides. On this
-/// crate's operand shapes it is approximately four times faster than Euclid's
-/// algorithm, because a `u64` remainder is a hardware division and the halving
-/// steps are shifts. `u128` remainder, which Euclid needs for the wide
-/// operands that canonicalisation produces, is a software routine and costs
-/// far more again.
-///
-/// The three steps are:
-///
-/// * both even: divide both by two and record the common factor
-///   (`lemma_gcd_both_even`);
-/// * one even, one odd: divide the even one by two
-///   (`lemma_gcd_half_odd`, `lemma_gcd_half_odd_right`);
-/// * both odd: subtract the smaller from the larger, which yields an even
-///   number (`lemma_gcd_sub`).
-///
-/// The postcondition is the one Euclid's version carries: the result is
-/// `gcd_nat`. Nothing downstream sees a difference.
-///
-/// Termination: `x + y` decreases at each step of the main loop. A halving
-/// decreases `y`, and the subtraction decreases it again because `x > 0`. The
-/// measure is the sum rather than `y` alone, because the swap can raise `y`.
+/// Stein's binary gcd on `u64`: both even → halve both (`lemma_gcd_both_even`);
+/// one even → halve it (`lemma_gcd_half_odd`, `_right`); both odd → subtract
+/// (`lemma_gcd_sub`). Result is `gcd_nat`. Termination measure is `x + y`,
+/// since the swap can raise `y`.
 // `kx` and `ky` below are consumed by the proof blocks, which plain rustc
 // erases. They are live in the verified build and dead in the compiled one.
 #[allow(unused_variables)]
@@ -992,16 +907,8 @@ pub fn gcd_bin_u64(a: u64, b: u64) -> (r: u64)
     x * p
 }
 
-/// Euclid's algorithm on `u128`, narrowing to [`gcd_bin_u64`] as soon as both
-/// operands fit.
-///
-/// Canonicalisation reduces `i128` intermediates, and a `u128` remainder is a
-/// software routine. Each Euclid step here brings an operand below `2^64`, and
-/// at most two steps are needed for the shapes this crate produces: one operand
-/// is always a reduced component, bounded by `MAX_MAG`. The binary algorithm
-/// then runs on hardware-width values.
-///
-/// Termination: `y` strictly decreases, because `x % y < y` whenever `y > 0`.
+/// Euclid on `u128` until both operands fit `u64` (at most two steps for this
+/// crate's shapes), then [`gcd_bin_u64`]. `y` strictly decreases.
 pub fn gcd_u128(a: u128, b: u128) -> (r: u128)
     ensures
         r == gcd_nat(a as nat, b as nat),
@@ -1063,12 +970,8 @@ pub fn gcd_u64(a: u64, b: u64) -> (r: u64)
     g
 }
 
-/// The properties of `gcd_int(n, d)` for a positive `d`, in ghost form.
-///
-/// [`gcd_abs_i128`] establishes these as postconditions of the computation.
-/// A caller that obtains the gcd another way — `Rat::mul_dir` and
-/// `Rat::div_dir` obtain it from [`lemma_gcd_cross`] — needs the same facts
-/// without the call.
+/// The properties of `gcd_int(n, d)`, `d > 0`, for callers that obtain the gcd
+/// without calling [`gcd_abs_i128`].
 pub proof fn lemma_gcd_int_facts(n: int, d: int)
     requires
         d > 0,

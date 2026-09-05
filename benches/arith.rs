@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use malachite_q::Rational;
+use num_rational::Ratio;
 use the_q::{Q, Rat, nary};
 
 /// splitmix64 with a fixed seed. The fixed seed gives repeatability. It does
@@ -178,6 +179,31 @@ fn header(title: &str) {
     );
 }
 
+fn fixed_row(op: &str, q: f64, ratio: f64, float: f64, uint: f64) {
+    println!(
+        "| {:<10} | {:>9.1} | {:>13.1} | {:>9.1} | {:>9.1} | {:>8.1}x | {:>8.1}x |",
+        op,
+        q,
+        ratio,
+        float,
+        uint,
+        q / float,
+        q / uint,
+    );
+}
+
+fn fixed_header() {
+    println!("\n### Fixed-width baseline comparison\n");
+    println!(
+        "| {:<10} | {:>9} | {:>13} | {:>9} | {:>9} | {:>9} | {:>9} |",
+        "op", "the-q ns", "Ratio<i64> ns", "f64 ns", "u64 ns", "q/f64", "q/u64"
+    );
+    println!(
+        "|{:-<12}|{:->11}|{:->15}|{:->11}|{:->11}|{:->11}|{:->11}|",
+        "", "", "", "", "", "", ""
+    );
+}
+
 fn main() {
     let control_first = control();
     let n = 1 << 12;
@@ -192,6 +218,11 @@ fn main() {
     let rs: Vec<Rational> = raw
         .iter()
         .map(|&(a, b)| Rational::from_signeds(a, b))
+        .collect();
+    let ratios: Vec<Ratio<i64>> = raw.iter().map(|&(a, b)| Ratio::new(a, b)).collect();
+    let uints: Vec<u64> = raw
+        .iter()
+        .map(|&(a, b)| (a as u64).wrapping_mul(10_000).wrapping_add(b as u64))
         .collect();
 
     println!("the-q benchmark — {n} distinct operand pairs, minimum of {REPS} runs");
@@ -279,6 +310,95 @@ fn main() {
             let (a, b) = m(i);
             rs[a] < rs[b]
         }),
+    );
+
+    // This table answers a different question from the arbitrary-precision
+    // comparison above: how much does canonical rational arithmetic cost over
+    // a conventional fixed-width Ratio, a hardware float, and a bare integer?
+    // Inputs are prepared outside the timed region. The raw u64 workload uses
+    // wrapping operations so the benchmark measures hardware arithmetic rather
+    // than debug/release overflow policy.
+    fixed_header();
+    fixed_row(
+        "add",
+        time_ns(n, |i| Rat::add(qs[i], qs[n + i])),
+        time_ns(n, |i| ratios[i] + ratios[n + i]),
+        time_ns(n, |i| fs[i] + fs[n + i]),
+        time_ns(n, |i| uints[i].wrapping_add(uints[n + i])),
+    );
+    fixed_row(
+        "sub",
+        time_ns(n, |i| Rat::sub(qs[i], qs[n + i])),
+        time_ns(n, |i| ratios[i] - ratios[n + i]),
+        time_ns(n, |i| fs[i] - fs[n + i]),
+        time_ns(n, |i| uints[i].wrapping_sub(uints[n + i])),
+    );
+    fixed_row(
+        "mul",
+        time_ns(n, |i| Rat::mul(qs[i], qs[n + i])),
+        time_ns(n, |i| ratios[i] * ratios[n + i]),
+        time_ns(n, |i| fs[i] * fs[n + i]),
+        time_ns(n, |i| uints[i].wrapping_mul(uints[n + i])),
+    );
+    fixed_row(
+        "div",
+        time_ns(n, |i| Rat::div(qs[i], qs[n + i])),
+        time_ns(n, |i| ratios[i] / ratios[n + i]),
+        time_ns(n, |i| fs[i] / fs[n + i]),
+        time_ns(n, |i| uints[i] / uints[n + i].max(1)),
+    );
+    fixed_row(
+        "compare",
+        time_ns(n, |i| Rat::lt(qs[i], qs[n + i])),
+        time_ns(n, |i| ratios[i] < ratios[n + i]),
+        time_ns(n, |i| fs[i] < fs[n + i]),
+        time_ns(n, |i| uints[i] < uints[n + i]),
+    );
+
+    // Keep fast exact arithmetic, grid rounding, and magnitude saturation in
+    // separate rows. A mixed benchmark hides the cost of the rare paths and
+    // makes performance regressions depend on the input distribution.
+    header("Rat path separation");
+    let exact_a = Rat::new(1, 3).unwrap();
+    let exact_b = Rat::new(1, 7).unwrap();
+    let exact_fa = 1.0f64 / 3.0;
+    let exact_fb = 1.0f64 / 7.0;
+    let exact_ra = Rational::from_signeds(1, 3);
+    let exact_rb = Rational::from_signeds(1, 7);
+    row(
+        "add exact",
+        time_ns(n, |_| Rat::add(black_box(exact_a), black_box(exact_b))),
+        time_ns(n, |_| black_box(exact_fa) + black_box(exact_fb)),
+        time_ns(n, |_| black_box(&exact_ra) + black_box(&exact_rb)),
+    );
+
+    let rounded_a = Rat::new(1, the_q::MAX_MAG - 1).unwrap();
+    let rounded_b = Rat::new(1, the_q::MAX_MAG).unwrap();
+    let rounded_ra = Rational::from_signeds(1, the_q::MAX_MAG - 1);
+    let rounded_rb = Rational::from_signeds(1, the_q::MAX_MAG);
+    let rounded_fa = 1.0f64 / (the_q::MAX_MAG - 1) as f64;
+    let rounded_fb = 1.0f64 / the_q::MAX_MAG as f64;
+    row(
+        "add rounded",
+        time_ns(n, |_| Rat::add(black_box(rounded_a), black_box(rounded_b))),
+        time_ns(n, |_| black_box(rounded_fa) + black_box(rounded_fb)),
+        time_ns(n, |_| black_box(&rounded_ra) + black_box(&rounded_rb)),
+    );
+    row(
+        "sub rounded",
+        time_ns(n, |_| Rat::sub(black_box(rounded_a), black_box(rounded_b))),
+        time_ns(n, |_| black_box(rounded_fa) - black_box(rounded_fb)),
+        time_ns(n, |_| black_box(&rounded_ra) - black_box(&rounded_rb)),
+    );
+
+    let max = Rat::from_int(the_q::MAX_MAG).unwrap();
+    let max_r = Rational::from(the_q::MAX_MAG);
+    let max_f = the_q::MAX_MAG as f64;
+    row(
+        "add saturated",
+        time_ns(n, |_| Rat::add(black_box(max), black_box(max))),
+        time_ns(n, |_| black_box(max_f) + black_box(max_f)),
+        time_ns(n, |_| black_box(&max_r) + black_box(&max_r)),
     );
 
     // This section is the primary measurement. It runs `acc = (acc + x) * y`

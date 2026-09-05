@@ -1,39 +1,15 @@
-//! N-ary helpers (obligation V8).
+//! N-ary helpers (V8): `sum`, `product`, `weighted_mean`.
 //!
-//! Every helper here is a **binary left fold in a fixed order**. This
-//! restriction gives two properties:
-//!
-//! * V2 safety is inherited for free. No new arithmetic shape appears, thus no
-//!   new overflow analysis is necessary.
-//! * The result is deterministic. `sum(&[a, b, c])` is exactly
-//!   `add(add(a, b), c)` on every machine and in every thread. This makes
-//!   results bit-reproducible.
-//!
-//! N-ary `i128` accumulation re-opens the overflow analysis for no benefit.
-//! This crate therefore does not use it.
-//!
-//! `sum`'s accumulated error after `k` elements is `k · 2^-61 · max(1,
-//! |exact|)` (theorem `theorem_sum_error_accumulation`).
-//!
-//! `product` and `weighted_mean` carry the same shape of bound. Each needs its
-//! own hypothesis, because the underlying operation is not addition:
-//!
-//! * `product` (`theorem_product_error_accumulation`) needs every factor's
-//!   magnitude bounded by `1` (`all_unit`). Multiplication is only
-//!   1-Lipschitz when weighted by the other operand's magnitude. Without that
-//!   hypothesis the carried error amplifies geometrically instead of
-//!   accumulating additively, and no `k · 2^-61` bound holds uniformly in `k`.
-//!   This crate's domain satisfies the hypothesis trivially. Every opinion
-//!   component lies in `[0, 1]`.
-//! * `weighted_mean` gets two separate bounds
-//!   (`theorem_wm_num_error_accumulation`,
-//!   `theorem_wm_denom_error_accumulation`) for its two internal
-//!   accumulators. Each bound uses its own exact target: the true weighted sum
-//!   and the true weight sum. A single bound on the returned value requires
-//!   composing the two through the final division. That composition needs a
-//!   further explicit hypothesis, namely the exact weight sum bounded away
-//!   from zero. This crate does not attempt it. See the doc comment on
-//!   `theorem_wm_num_error_accumulation`.
+//! Each is a binary left fold in a fixed order, so V2 safety is inherited and
+//! results are bit-reproducible. After `k` elements `sum` is within
+//! `k · m · 2^-61` of the exact fold, with `m` bounding the intermediates
+//! (`theorem_sum_error_accumulation`); `product` has the same bound under
+//! `all_unit` (`theorem_product_error_accumulation`), since a factor above 1
+//! amplifies carried error geometrically; `weighted_mean`'s two accumulators
+//! are bounded separately, and `theorem_weighted_mean_return_error` composes
+//! them through the division into `8 · k · delta_den / (delta_num · 2^61)` on
+//! the returned value, given weights and values in `[0, 1]` and an exact
+//! weight sum of at least `delta_num / delta_den`.
 
 use verus_builtin_macros::verus;
 
@@ -230,17 +206,23 @@ pub open spec fn all_wf_pairs(s: Seq<(Rat, Rat)>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> (#[trigger] s[i]).0.wf() && s[i].1.wf()
 }
 
-/// `sum(w_i · x_i) / sum(w_i)`. This is the shape the averaging-belief-fusion
-/// formula needs.
+/// Every weight and value is in the closed unit interval.
 ///
-/// The result is `None` when the *accumulated* weight sum is zero. That total
-/// is `wt_fold_val` below, the fold's own rounded total, not the exact sum.
-/// Two different inputs give this result. First, weights that cancel exactly.
-/// Second, weights whose exact sum is nonzero but too small for the grid, so
-/// the fold rounds it to zero. For example, `1/MAX_MAG` against
-/// `-1/(MAX_MAG - 2)` sums to about `-2^-123`, and the function refuses it. The
-/// mean is undefined in the first case and unrepresentable in the second. This
-/// crate invents a value for neither.
+/// This is the natural domain of subjective-logic averaging and is the
+/// relational fact needed by the returned-value error theorem: for
+/// nonnegative weights and unit values, `0 <= sum(w*x) <= sum(w)`.
+pub open spec fn all_unit_pairs(s: Seq<(Rat, Rat)>) -> bool {
+    forall|i: int| 0 <= i < s.len() ==> {
+        let p = #[trigger] s[i];
+        &&& 0 <= p.0.n()
+        &&& p.0.n() <= p.0.d()
+        &&& 0 <= p.1.n()
+        &&& p.1.n() <= p.1.d()
+    }
+}
+
+/// `sum(w_i · x_i) / sum(w_i)`; `None` when the *rounded* weight sum is zero,
+/// whether the weights cancel or their sum is below the grid.
 pub fn weighted_mean(pairs: &[(Rat, Rat)]) -> (r: Option<Rat>)
     requires
         all_wf_pairs(pairs@),
@@ -333,17 +315,13 @@ pub proof fn lemma_wm_fold_snoc(s: Seq<(Rat, Rat)>, i: int)
 // V8 — accumulated error
 // ---------------------------------------------------------------------------
 
-/// The value the left fold of `s` produces, as a *function*.
-///
-/// This is a function, not an `exists`-shaped predicate. The induction below
-/// unfolds it at every step, and an existential forces the solver to guess a
-/// witness each time. A function also makes the exec `sum`'s postcondition an
-/// equality, which pins determinism.
+/// The value of the left fold of `s`, as a function so the exec `sum`'s
+/// postcondition is an equality.
 pub open spec fn fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Rat { num: 0, den: 1 }
+        Rat::from_raw_spec(0, 1)
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -361,7 +339,7 @@ pub open spec fn prod_fold_val(s: Seq<Rat>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Rat { num: 1, den: 1 }
+        Rat::from_raw_spec(1, 1)
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -373,13 +351,8 @@ pub open spec fn prod_fold_val(s: Seq<Rat>) -> Rat
     }
 }
 
-/// Every prefix of the fold has step values bounded by `m`, and stays on a
-/// non-saturating path. V8 needs this hypothesis and cannot invent it. Without
-/// a magnitude bound on the intermediates there is nothing to measure the
-/// accumulated error against.
-///
-/// This crate's domain satisfies the hypothesis trivially. Opinions lie in
-/// `[0, 1]`, thus `m == 1`.
+/// Every prefix of the fold is bounded by `m` and non-saturating; the
+/// hypothesis V8 measures error against.
 pub open spec fn fold_bounded(s: Seq<Rat>, m: int) -> bool
     decreases s.len(),
 {
@@ -410,6 +383,7 @@ pub proof fn lemma_fold_wf(s: Seq<Rat>)
     decreases s.len(),
 {
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         crate::round::lemma_gcd_one();
     } else {
         let init = s.subrange(0, s.len() as int - 1);
@@ -468,6 +442,7 @@ pub proof fn lemma_prod_fold_wf(s: Seq<Rat>)
     decreases s.len(),
 {
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(1, 1);
         crate::round::lemma_gcd_one();
     } else {
         let init = s.subrange(0, s.len() as int - 1);
@@ -492,22 +467,10 @@ pub proof fn lemma_prod_fold_wf(s: Seq<Rat>)
     }
 }
 
-/// **The V8 induction step for `product`.** One more rounded `mul` on top of
-/// an accumulator already within `k` units takes the total to `k + 1` units.
-/// This holds **provided the new factor has magnitude at most `1`**.
-///
-/// Multiplication is not 1-Lipschitz on an unbounded domain the way addition
-/// is. The identity `|prev·next − prev'·next| = |next| · |prev − prev'|`
-/// scales the carried error by `|next|`, not by `1` (see
-/// `lemma_mul_lipschitz`). If `|next| <= 1` that scale factor cannot grow the
-/// carried error, and the step behaves exactly like `sum`'s. It costs one more
-/// unit from this step's own rounding (R3, converted to absolute form by the
-/// magnitude hypothesis), plus the carried error passed through with a scale
-/// factor at most `1`. Without `|next| <= 1` no such bound holds uniformly in
-/// `k`. A run of factors with magnitude `> 1` amplifies the carried error
-/// geometrically, not additively, thus no per-step "one more unit" law exists.
-/// For this reason `theorem_product_error_accumulation` carries the extra
-/// `all_unit` hypothesis that `theorem_sum_error_accumulation` does not need.
+/// V8 induction step for `product`, under `|next| <= 1`: the carried error is
+/// scaled by `|next|` (`|prev·next − prev'·next| = |next| · |prev − prev'|`),
+/// so a unit factor passes it through and the step costs one more R3 unit. A
+/// factor above 1 would amplify geometrically; hence `all_unit`.
 pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r: Rat, k: nat, m: int)
     requires
         prev.wf(),
@@ -607,15 +570,8 @@ pub proof fn lemma_abs_error_mul_step(prev: Rat, pn: int, pd: int, next: Rat, r:
     assert(m + (k as int) * m == ((k + 1) as int) * m) by (nonlinear_arith);
 }
 
-/// **V8 for `product`.** After `k` folded elements the accumulated error
-/// against the exact product is at most `k · m · 2^-61`. This holds
-/// **provided every factor has magnitude at most `1`** (`all_unit(s)`).
-///
-/// The extra hypothesis over `theorem_sum_error_accumulation` is necessary.
-/// It is not an artifact of the proof. See `lemma_abs_error_mul_step`. This
-/// crate's domain satisfies it trivially, because every opinion component
-/// lies in `[0, 1]`. There it coincides with `fold_bounded`'s own `m == 1`
-/// case, exactly as `docs/SPEC.md` §9 documents.
+/// V8 for `product`: within `k · m · 2^-61` of the exact product, given
+/// `all_unit(s)`; see `lemma_abs_error_mul_step` for why that is necessary.
 pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
@@ -628,6 +584,7 @@ pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
 {
     lemma_prod_fold_wf(s);
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(1, 1);
         assert(prod_num(s) == 1 && prod_den(s) == 1);
         assert(prod_fold_val(s).n() == 1 && prod_fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
@@ -680,18 +637,8 @@ pub proof fn theorem_product_error_accumulation(s: Seq<Rat>, m: int)
     }
 }
 
-/// **V8.** After `k` folded elements the accumulated error against the exact
-/// fold is at most `k · m · 2^-61`.
-///
-/// The induction is a two-line argument. Each `add` contributes one fresh
-/// `2^-61` unit (R3). The error already accumulated passes through the addition
-/// untouched, because addition is exactly 1-Lipschitz. Both halves live in
-/// `crate::lipschitz::lemma_abs_error_step`.
-///
-/// For the consuming engine's worst case of ~2·10⁴ sequential operations with
-/// `m == 1` this is `2·10⁴ · 2^-61 ≈ 2^-46.7 ≈ 1·10^-14`. That is the same
-/// precision class as `f64` accumulation. Unlike `f64`, this bound is
-/// deterministic and proven rather than assumed.
+/// V8: after `k` folded elements the error against the exact fold is at most
+/// `k · m · 2^-61`. Induction by `crate::lipschitz::lemma_abs_error_step`.
 pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
     requires
         all_wf(s),
@@ -703,6 +650,7 @@ pub proof fn theorem_sum_error_accumulation(s: Seq<Rat>, m: int)
 {
     lemma_fold_wf(s);
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         assert(sum_num(s) == 0 && sum_den(s) == 1);
         assert(fold_val(s).n() == 0 && fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
@@ -765,6 +713,7 @@ pub proof fn theorem_exact_fold_is_exact(s: Seq<Rat>)
 {
     lemma_fold_wf(s);
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         assert(sum_num(s) == 0 && sum_den(s) == 1);
     } else {
         let init = s.subrange(0, s.len() as int - 1);
@@ -805,14 +754,9 @@ pub open spec fn fold_exact(s: Seq<Rat>) -> bool
     }
 }
 
-/// Composing two exact steps stays exact.
-///
-/// `#[verifier::rlimit(20)]`: this module also holds the `product` and
-/// `weighted_mean` V8 material. At that module size, this tight six-atom,
-/// degree-four proof (see the comment below) exceeds the default resource
-/// limit. `crate::lipschitz` uses the same annotation for comparably sized
-/// proofs (`lemma_triangle`, `lemma_mul_lipschitz`, `lemma_div_lipschitz`).
-#[verifier::rlimit(20)]
+/// Composing two exact steps stays exact. `rlimit` raised: a six-atom,
+/// degree-four identity at this module size.
+#[verifier::rlimit(40)]
 pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn: int, td: int)
     requires
         prev.wf(),
@@ -872,16 +816,9 @@ pub proof fn lemma_exact_step(prev: Rat, last: Rat, r: Rat, pn: int, pd: int, tn
 // V8 — accumulated error for `weighted_mean`
 // ---------------------------------------------------------------------------
 //
-// `weighted_mean` folds two accumulators in the same loop. `acc_num` is a sum
-// of rounded per-pair products. `acc_w` is a plain sum of weights, exactly
-// `sum`'s fold restricted to the weight half of each pair. Each accumulator
-// gets its own V8 bound below, stated against the corresponding *exact*
-// target. Those targets are `wsum_num`/`wsum_den` for the true weighted sum
-// `Σ w_i·x_i`, and `wt_num`/`wt_den` for the true weight sum `Σ w_i`. Neither
-// target contains any rounding. Composing the two through the final division
-// is therefore a separate step. The doc comment on
-// `theorem_wm_num_error_accumulation` states why this module does NOT attempt
-// that composition.
+// Two accumulators in one loop: `acc_num`, a sum of rounded products, and
+// `acc_w`, `sum`'s fold on the weights. Each is bounded against its exact
+// target below; `theorem_weighted_mean_return_error` composes them.
 
 /// Numerator of the exact left-fold sum of just the weights in `s`.
 pub open spec fn wt_num(s: Seq<(Rat, Rat)>) -> int
@@ -947,7 +884,7 @@ pub open spec fn wt_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Rat { num: 0, den: 1 }
+        Rat::from_raw_spec(0, 1)
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1].0;
@@ -966,7 +903,7 @@ pub open spec fn wm_num_fold_val(s: Seq<(Rat, Rat)>) -> Rat
     decreases s.len(),
 {
     if s.len() == 0 {
-        Rat { num: 0, den: 1 }
+        Rat::from_raw_spec(0, 1)
     } else {
         let init = s.subrange(0, s.len() as int - 1);
         let last = s[s.len() as int - 1];
@@ -1047,6 +984,7 @@ pub proof fn lemma_wt_fold_wf(s: Seq<(Rat, Rat)>)
     decreases s.len(),
 {
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         crate::round::lemma_gcd_one();
     } else {
         let init = s.subrange(0, s.len() as int - 1);
@@ -1082,6 +1020,7 @@ pub proof fn lemma_wm_num_fold_wf(s: Seq<(Rat, Rat)>)
     decreases s.len(),
 {
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         crate::round::lemma_gcd_one();
     } else {
         let init = s.subrange(0, s.len() as int - 1);
@@ -1112,14 +1051,146 @@ pub proof fn lemma_wm_num_fold_wf(s: Seq<(Rat, Rat)>)
     }
 }
 
-/// **V8 for `weighted_mean`'s weight accumulator.** After `k` pairs the
-/// weight accumulator's error against the exact weight sum is at most
-/// `k · m · 2^-61`.
-///
-/// This is a direct restatement of `theorem_sum_error_accumulation` for the
-/// weight half of each pair. The induction and the lemma it calls
-/// (`crate::lipschitz::lemma_abs_error_step`) are identical. Only the indexing
-/// differs: `s[i].0` instead of `s[i]`.
+/// For nonnegative weights and values in `[0,1]`, the exact weighted
+/// numerator is itself nonnegative and is no greater than the exact weight
+/// sum.  The comparison is division-free because the two exact folds use
+/// different (positive) denominators.
+proof fn lemma_reorder_ab_cd_to_db_ac(a: int, b: int, c: int, d: int)
+    ensures
+        (a * b) * (c * d) == (d * b) * (a * c),
+{
+    assert((a * b) * (c * d) == (d * b) * (a * c)) by (nonlinear_arith);
+}
+
+proof fn lemma_reorder_ab_cd_to_acd_b(a: int, b: int, c: int, d: int)
+    ensures
+        (a * b) * (c * d) == ((a * c) * d) * b,
+{
+    assert((a * b) * (c * d) == ((a * c) * d) * b) by (nonlinear_arith);
+}
+
+#[verifier::rlimit(30)]
+pub proof fn lemma_wm_exact_numerator_le_denominator(s: Seq<(Rat, Rat)>)
+    requires
+        all_wf_pairs(s),
+        all_unit_pairs(s),
+    ensures
+        0 <= wsum_num(s),
+        0 <= wt_num(s),
+        wsum_num(s) * wt_den(s) <= wt_num(s) * wsum_den(s),
+        wt_num(s) <= (s.len() as int) * wt_den(s),
+        wsum_den(s) > 0,
+        wt_den(s) > 0,
+    decreases s.len(),
+{
+    lemma_wm_num_fold_wf(s);
+    lemma_wt_fold_wf(s);
+    if s.len() == 0 {
+    } else {
+        let init = s.subrange(0, s.len() as int - 1);
+        let last = s[s.len() as int - 1];
+        let w = last.0;
+        let x = last.1;
+        assert(all_wf_pairs(init));
+        assert(all_unit_pairs(init));
+        assert(0 <= w.n() && w.n() <= w.d());
+        assert(0 <= x.n() && x.n() <= x.d());
+        lemma_wm_exact_numerator_le_denominator(init);
+
+        let an = wsum_num(init);
+        let ad = wsum_den(init);
+        let bn = wt_num(init);
+        let bd = wt_den(init);
+        let wn = w.n();
+        let wd = w.d();
+        let xn = x.n();
+        let xd = x.d();
+
+        assert(wsum_num(s) == an * (wd * xd) + (wn * xn) * ad);
+        assert(wsum_den(s) == ad * (wd * xd));
+        assert(wt_num(s) == bn * wd + wn * bd);
+        assert(wt_den(s) == bd * wd);
+
+        assert(0 <= an * (wd * xd)) by (nonlinear_arith)
+            requires an >= 0, wd > 0, xd > 0;
+        assert(0 <= (wn * xn) * ad) by (nonlinear_arith)
+            requires wn >= 0, xn >= 0, ad > 0;
+        assert(0 <= wsum_num(s));
+        assert(0 <= bn * wd) by (nonlinear_arith)
+            requires bn >= 0, wd > 0;
+        assert(0 <= wn * bd) by (nonlinear_arith)
+            requires wn >= 0, bd > 0;
+        assert(0 <= wt_num(s));
+
+        // The old weighted numerator is below the old weight sum.  Scale
+        // that inequality by the positive denominator contribution of the
+        // new pair.
+        crate::lipschitz::lemma_mul_le_mono(wd * wd * xd, an * bd, bn * ad);
+        assert((wd * wd * xd) * (an * bd) <= (wd * wd * xd) * (bn * ad));
+
+        // The new contribution satisfies w*x <= w because x <= 1.
+        crate::lipschitz::lemma_mul_le_mono(wn * ad * bd * wd, xn, xd);
+        assert((wn * ad * bd * wd) * xn <= (wn * ad * bd * wd) * xd);
+
+        // Adding those two scaled inequalities is exactly the desired
+        // cross-multiplied comparison for the extended folds.
+        let wl = an * (wd * xd);
+        let wc = (wn * xn) * ad;
+        let dl = bn * wd;
+        let dc = wn * bd;
+        let wz = bd * wd;
+        let dz = ad * (wd * xd);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_add_other_way(wz, wl, wc);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_add_other_way(dz, dl, dc);
+
+        lemma_reorder_ab_cd_to_db_ac(an, wd * xd, bd, wd);
+        vstd::arithmetic::mul::lemma_mul_is_associative(wd, wd, xd);
+        assert(wl * wz == (wd * wd * xd) * (an * bd));
+
+        lemma_reorder_ab_cd_to_acd_b(wn, xn, ad, bd * wd);
+        vstd::arithmetic::mul::lemma_mul_is_associative(wn * xn, ad, bd * wd);
+        assert(wc * wz == ((wn * ad) * (bd * wd)) * xn);
+        vstd::arithmetic::mul::lemma_mul_is_associative(wn * ad, bd, wd);
+        assert((wn * ad) * (bd * wd) == wn * ad * bd * wd);
+        assert(wc * wz == (wn * ad * bd * wd) * xn);
+
+        lemma_reorder_ab_cd_to_db_ac(bn, wd, ad, wd * xd);
+        vstd::arithmetic::mul::lemma_mul_is_associative(wd, wd, xd);
+        assert(dl * dz == (wd * wd * xd) * (bn * ad));
+
+        lemma_reorder_ab_cd_to_acd_b(wn, bd, ad, wd * xd);
+        vstd::arithmetic::mul::lemma_mul_is_associative(wn * ad, wd, xd);
+        assert(dc * dz == (wn * ad * wd * xd) * bd);
+        assert((wn * ad * wd * xd) * bd == (wn * ad * bd * wd) * xd)
+            by (nonlinear_arith);
+
+        assert(wsum_num(s) * wt_den(s) == wl * wz + wc * wz);
+        assert(wt_num(s) * wsum_den(s) == dl * dz + dc * dz);
+
+        assert(bn * wd <= (init.len() as int) * bd * wd) by (nonlinear_arith)
+            requires
+                bn <= (init.len() as int) * bd,
+                wd > 0,
+        ;
+        assert(wn * bd <= wd * bd) by (nonlinear_arith)
+            requires
+                wn <= wd,
+                bd > 0,
+        ;
+        assert(s.len() == init.len() + 1);
+        assert(wt_num(s) <= (s.len() as int) * wt_den(s)) by (nonlinear_arith)
+            requires
+                wt_num(s) == bn * wd + wn * bd,
+                wt_den(s) == bd * wd,
+                bn * wd <= (init.len() as int) * bd * wd,
+                wn * bd <= wd * bd,
+                s.len() == init.len() + 1,
+        ;
+    }
+}
+
+/// V8 for the weight accumulator: within `k · m · 2^-61` of `Σ w_i`;
+/// `theorem_sum_error_accumulation` on the weight half of each pair.
 pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
@@ -1131,6 +1202,7 @@ pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
 {
     lemma_wt_fold_wf(s);
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         assert(wt_num(s) == 0 && wt_den(s) == 1);
         assert(wt_fold_val(s).n() == 0 && wt_fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
@@ -1178,6 +1250,375 @@ pub proof fn theorem_wm_denom_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     }
 }
 
+/// If the exact weight sum is at least `delta` and the accumulated weight
+/// error is at most `delta/2`, then the rounded denominator is at least
+/// `delta/2` as well.  All comparisons are cross-multiplied.
+pub proof fn lemma_wm_rounded_denominator_positive(
+    s: Seq<(Rat, Rat)>,
+    delta_num: int,
+    delta_den: int,
+)
+    requires
+        all_wf_pairs(s),
+        delta_num > 0,
+        delta_den > 0,
+        delta_num * wt_den(s) <= delta_den * wt_num(s),
+        within_abs_error(wt_fold_val(s), wt_num(s), wt_den(s), s.len(), 1),
+        2 * (s.len() as int) * delta_den <= delta_num * pow2(precision_b()),
+    ensures
+        wt_fold_val(s).n() > 0,
+        delta_num * wt_fold_val(s).d()
+            <= 2 * delta_den * wt_fold_val(s).n(),
+{
+    lemma_wt_fold_wf(s);
+    lemma_pow2_pos(precision_b());
+    let b = wt_fold_val(s);
+    let bn = wt_num(s);
+    let bd = wt_den(s);
+    let k = s.len() as int;
+    let e = pow2(precision_b());
+    let z = b.n() * bd - bn * b.d();
+
+    assert(abs_int(z) * e <= k * (b.d() * bd));
+    assert(0 <= abs_int(z));
+    assert(-abs_int(z) <= z);
+
+    assert((2 * delta_den) * (abs_int(z) * e)
+        <= (2 * delta_den) * (k * (b.d() * bd))) by (nonlinear_arith)
+        requires
+            delta_den > 0,
+            abs_int(z) * e <= k * (b.d() * bd),
+    ;
+    assert((2 * delta_den) * (k * (b.d() * bd))
+        <= (delta_num * e) * (b.d() * bd)) by (nonlinear_arith)
+        requires
+            2 * k * delta_den <= delta_num * e,
+            b.d() > 0,
+            bd > 0,
+    ;
+    assert(2 * delta_den * abs_int(z) <= delta_num * b.d() * bd)
+        by (nonlinear_arith)
+        requires
+            e > 0,
+            (2 * delta_den) * (abs_int(z) * e)
+                <= (delta_num * e) * (b.d() * bd),
+    ;
+    assert(delta_num * b.d() * bd <= delta_den * bn * b.d())
+        by (nonlinear_arith)
+        requires
+            delta_num * bd <= delta_den * bn,
+            b.d() > 0,
+    ;
+    assert(2 * delta_den * abs_int(z) <= delta_den * bn * b.d());
+    assert(2 * abs_int(z) <= bn * b.d()) by (nonlinear_arith)
+        requires
+            delta_den > 0,
+            2 * delta_den * abs_int(z) <= delta_den * bn * b.d(),
+    ;
+    assert(bn * b.d() - b.n() * bd <= abs_int(z));
+    assert(bn * b.d() <= 2 * b.n() * bd) by (nonlinear_arith)
+        requires
+            2 * abs_int(z) <= bn * b.d(),
+            bn * b.d() - b.n() * bd <= abs_int(z),
+    ;
+    assert(delta_num * b.d() * bd <= 2 * delta_den * b.n() * bd)
+        by (nonlinear_arith)
+        requires
+            delta_num * bd <= delta_den * bn,
+            b.d() > 0,
+            bn * b.d() <= 2 * b.n() * bd,
+            delta_den > 0,
+    ;
+    assert(delta_num * b.d() <= 2 * delta_den * b.n()) by (nonlinear_arith)
+        requires
+            bd > 0,
+            delta_num * b.d() * bd <= 2 * delta_den * b.n() * bd,
+    ;
+    assert(b.n() > 0) by (nonlinear_arith)
+        requires
+            delta_num > 0,
+            b.d() > 0,
+            delta_den > 0,
+            delta_num * b.d() <= 2 * delta_den * b.n(),
+    ;
+}
+
+/// Compose the two accumulator bounds through the exact final quotient. The
+/// relation `0 <= Σ w·x <= Σ w` replaces the generic numerator magnitude bound
+/// and removes a factor of `k`; pre-rounding bound `6k/(delta · 2^61)`.
+#[verifier::rlimit(30)]
+pub proof fn lemma_wm_return_bound_composition(
+    s: Seq<(Rat, Rat)>,
+    delta_num: int,
+    delta_den: int,
+)
+    requires
+        all_wf_pairs(s),
+        all_unit_pairs(s),
+        delta_num > 0,
+        delta_den > 0,
+        delta_num * wt_den(s) <= delta_den * wt_num(s),
+        within_abs_error(wm_num_fold_val(s), wsum_num(s), wsum_den(s), (2 * s.len()) as nat, 1),
+        within_abs_error(wt_fold_val(s), wt_num(s), wt_den(s), s.len(), 1),
+        2 * (s.len() as int) * delta_den <= delta_num * pow2(precision_b()),
+    ensures
+        wt_fold_val(s).n() > 0,
+        crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)) > 0,
+        max_int(
+            crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+            abs_int(crate::q::div_n(wm_num_fold_val(s), wt_fold_val(s))),
+        ) <= 4 * crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+        crate::lipschitz::frac_diff_le(
+            crate::q::div_n(wm_num_fold_val(s), wt_fold_val(s)),
+            crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+            wsum_num(s) * wt_den(s),
+            wsum_den(s) * wt_num(s),
+            6 * (s.len() as int) * delta_den,
+            delta_num * pow2(precision_b()),
+        ),
+{
+    lemma_wm_num_fold_wf(s);
+    lemma_wt_fold_wf(s);
+    lemma_wm_exact_numerator_le_denominator(s);
+    lemma_wm_rounded_denominator_positive(s, delta_num, delta_den);
+
+    let a = wm_num_fold_val(s);
+    let b = wt_fold_val(s);
+    let an = wsum_num(s);
+    let ad = wsum_den(s);
+    let bn = wt_num(s);
+    let bd = wt_den(s);
+    let k = s.len() as int;
+    let e = pow2(precision_b());
+    let p = a.n() * ad - an * a.d();
+    let q = b.n() * bd - bn * b.d();
+    let x = crate::q::div_n(a, b) * (ad * bn)
+        - (an * bd) * crate::q::div_d(a, b);
+
+    lemma_pow2_pos(precision_b());
+    assert(e > 0);
+
+    assert(crate::q::div_n(a, b) == a.n() * b.d());
+    assert(crate::q::div_d(a, b) == a.d() * b.n());
+    assert(bn > 0) by (nonlinear_arith)
+        requires
+            delta_num > 0,
+            bd > 0,
+            delta_den > 0,
+            delta_num * bd <= delta_den * bn,
+    ;
+    assert(k > 0) by {
+        if k <= 0 {
+            assert(s.len() == 0);
+            assert(wt_num(s) == 0);
+            assert(wt_den(s) == 1);
+            assert(false) by (nonlinear_arith)
+                requires
+                    delta_num > 0,
+                    delta_num * wt_den(s) <= delta_den * wt_num(s),
+                    wt_num(s) == 0,
+                    wt_den(s) == 1,
+                ;
+        }
+    }
+
+    assert(abs_int(p) * e <= (2 * k) * (a.d() * ad));
+    assert(abs_int(q) * e <= k * (b.d() * bd));
+    assert(0 <= an);
+    assert(an * bd <= bn * ad);
+
+    // Expand the quotient difference into its numerator- and
+    // denominator-perturbation terms.
+    let aa = a.n() * ad;
+    let bb = an * a.d();
+    let cc = b.d() * bn;
+    let dd = b.n() * bd;
+    assert(p == aa - bb);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(b.d(), bn);
+    assert(cc == bn * b.d());
+    assert(q == dd - cc);
+    assert(crate::q::div_n(a, b) * (ad * bn) == aa * cc) by (nonlinear_arith)
+        requires
+            crate::q::div_n(a, b) == a.n() * b.d(),
+            aa == a.n() * ad,
+            cc == b.d() * bn,
+    ;
+    assert((an * bd) * crate::q::div_d(a, b) == bb * dd) by (nonlinear_arith)
+        requires
+            crate::q::div_d(a, b) == a.d() * b.n(),
+            bb == an * a.d(),
+            dd == b.n() * bd,
+    ;
+    assert(x == aa * cc - bb * dd);
+    assert(p * cc - q * bb == aa * cc - bb * dd) by (nonlinear_arith)
+        requires
+            p == aa - bb,
+            q == dd - cc,
+    ;
+    assert(x == p * (b.d() * bn) - q * (an * a.d()))
+        by (nonlinear_arith)
+        requires
+            x == aa * cc - bb * dd,
+            p * cc - q * bb == aa * cc - bb * dd,
+            cc == b.d() * bn,
+            bb == an * a.d(),
+    ;
+    crate::lipschitz::lemma_abs_triangle(p * (b.d() * bn), q * (an * a.d()));
+    crate::lipschitz::lemma_abs_prod(p, b.d() * bn);
+    crate::lipschitz::lemma_abs_prod(q, an * a.d());
+    assert(abs_int(b.d() * bn) == b.d() * bn);
+    assert(abs_int(an * a.d()) == an * a.d());
+    assert(abs_int(x)
+        <= abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d()));
+
+    // Scale the two accumulator-error hypotheses by the other positive
+    // factors in the quotient identity.
+    assert((abs_int(p) * e) * (b.d() * bn)
+        <= ((2 * k) * (a.d() * ad)) * (b.d() * bn)) by (nonlinear_arith)
+        requires
+            abs_int(p) * e <= (2 * k) * (a.d() * ad),
+            b.d() > 0,
+            bn > 0,
+    ;
+    assert((abs_int(q) * e) * (an * a.d())
+        <= (k * (b.d() * bd)) * (an * a.d())) by (nonlinear_arith)
+        requires
+            abs_int(q) * e <= k * (b.d() * bd),
+            an >= 0,
+            a.d() > 0,
+    ;
+    assert((k * (b.d() * bd)) * (an * a.d())
+        <= k * b.d() * bn * ad * a.d()) by (nonlinear_arith)
+        requires
+            an * bd <= bn * ad,
+            k > 0,
+            b.d() > 0,
+            a.d() > 0,
+    ;
+    let g = k * a.d() * ad * b.d() * bn;
+    assert(((2 * k) * (a.d() * ad)) * (b.d() * bn) == 2 * g)
+        by (nonlinear_arith)
+        requires g == k * a.d() * ad * b.d() * bn;
+    assert((k * (b.d() * bd)) * (an * a.d()) <= g)
+        by (nonlinear_arith)
+        requires
+            (k * (b.d() * bd)) * (an * a.d())
+                <= k * b.d() * bn * ad * a.d(),
+            g == k * a.d() * ad * b.d() * bn,
+    ;
+    assert(abs_int(x) * e
+        <= (abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d())) * e)
+        by (nonlinear_arith)
+        requires
+            e > 0,
+            abs_int(x)
+                <= abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d()),
+    ;
+    assert((abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d())) * e
+        == (abs_int(p) * e) * (b.d() * bn)
+            + (abs_int(q) * e) * (an * a.d())) by (nonlinear_arith);
+    assert(abs_int(x) * e <= 3 * g) by (nonlinear_arith)
+        requires
+            abs_int(x) * e
+                <= (abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d())) * e,
+            (abs_int(p) * (b.d() * bn) + abs_int(q) * (an * a.d())) * e
+                == (abs_int(p) * e) * (b.d() * bn)
+                    + (abs_int(q) * e) * (an * a.d()),
+            (abs_int(p) * e) * (b.d() * bn) <= 2 * g,
+            (abs_int(q) * e) * (an * a.d()) <= g,
+    ;
+    assert(abs_int(x) * e <= 3 * k * a.d() * ad * b.d() * bn)
+        by (nonlinear_arith)
+        requires
+            abs_int(x) * e <= 3 * g,
+            g == k * a.d() * ad * b.d() * bn,
+    ;
+
+    // `b >= delta/2` turns the three error units above into six units
+    // divided by delta.
+    assert(delta_num * b.d() <= 2 * delta_den * b.n());
+    assert(abs_int(x) * (delta_num * e)
+        <= (6 * k * delta_den)
+            * ((a.d() * b.n()) * (ad * bn))) by (nonlinear_arith)
+        requires
+            abs_int(x) * e <= 3 * k * a.d() * ad * b.d() * bn,
+            delta_num * b.d() <= 2 * delta_den * b.n(),
+            k > 0,
+            a.d() > 0,
+            ad > 0,
+            bn > 0,
+            delta_num > 0,
+            e > 0,
+    ;
+
+    // The exact mean lies in [0,1], while the just-proved quotient error is
+    // at most 3 under the half-delta hypothesis.  Therefore the unrounded
+    // quotient has magnitude at most 4.  This is the magnitude needed to
+    // turn the final nearest-rounding R3 bound into an absolute 2/2^61.
+    let qn = crate::q::div_n(a, b);
+    let qd = crate::q::div_d(a, b);
+    let un = an * bd;
+    let ud = ad * bn;
+    assert(qd > 0) by (nonlinear_arith)
+        requires
+            a.d() > 0,
+            b.n() > 0,
+            qd == a.d() * b.n(),
+    ;
+    assert(ud > 0) by (nonlinear_arith)
+        requires ad > 0, bn > 0, ud == ad * bn;
+    assert(0 <= un && un <= ud) by (nonlinear_arith)
+        requires
+            an >= 0,
+            bd > 0,
+            an * bd <= bn * ad,
+            un == an * bd,
+            ud == ad * bn,
+    ;
+    assert(6 * k * delta_den <= 3 * delta_num * e) by (nonlinear_arith)
+        requires
+            2 * k * delta_den <= delta_num * e,
+    ;
+    assert(abs_int(x) <= 3 * qd * ud) by (nonlinear_arith)
+        requires
+            delta_num > 0,
+            e > 0,
+            qd > 0,
+            ud > 0,
+            abs_int(x) * (delta_num * e)
+                <= (6 * k * delta_den) * (qd * ud),
+            6 * k * delta_den <= 3 * delta_num * e,
+    ;
+    assert(qn * ud == x + un * qd) by (nonlinear_arith)
+        requires
+            x == qn * (ad * bn) - (an * bd) * qd,
+            un == an * bd,
+            ud == ad * bn,
+    ;
+    crate::lipschitz::lemma_abs_triangle(x, un * qd);
+    crate::lipschitz::lemma_abs_prod(qn, ud);
+    assert(abs_int(ud) == ud);
+    assert(abs_int(un * qd) == un * qd);
+    assert(abs_int(qn) * ud <= abs_int(x) + un * qd);
+    assert(abs_int(qn) * ud <= 4 * qd * ud) by (nonlinear_arith)
+        requires
+            abs_int(qn) * ud <= abs_int(x) + un * qd,
+            abs_int(x) <= 3 * qd * ud,
+            un <= ud,
+            qd > 0,
+    ;
+    assert(abs_int(qn) <= 4 * qd) by (nonlinear_arith)
+        requires
+            ud > 0,
+            abs_int(qn) * ud <= 4 * qd * ud,
+    ;
+    assert(max_int(qd, abs_int(qn)) <= 4 * qd) by (nonlinear_arith)
+        requires
+            qd > 0,
+            abs_int(qn) <= 4 * qd,
+    ;
+}
+
 /// R3 plus a magnitude bound on the exact value converts to a one-step
 /// absolute-error bound. This is "part (a)" of every V8 induction step
 /// elsewhere in this file. It is a separate lemma because
@@ -1203,32 +1644,11 @@ pub proof fn lemma_r3_to_abs_error_1(r: Rat, n: int, d: int, m: int)
     ;
 }
 
-/// **V8 for `weighted_mean`'s numerator accumulator.** After `k` pairs the
-/// numerator accumulator's error against the true weighted sum `Σ w_i · x_i`
-/// is at most `2k · m · 2^-61`. That is twice `sum`'s rate, because each pair
-/// costs two roundings (the `mul` and the `add`) instead of one.
-///
-/// Unlike `theorem_product_error_accumulation`, this theorem needs no
-/// `all_unit` hypothesis. This accumulator is a *sum* of independently rounded
-/// per-pair products, not a running product. The carried error therefore
-/// passes through the outer `add` unchanged, because addition is exactly
-/// 1-Lipschitz, and this holds for any pair's magnitude. Only the per-step
-/// magnitude bound `wm_num_bounded` is required. It applies twice per step, to
-/// convert each rounding's relative R3 bound to an absolute one. This is the
-/// same kind of hypothesis that `fold_bounded` supplies for `sum`, applied
-/// twice.
-///
-/// This theorem bounds the numerator accumulator alone, against the exact
-/// (unrounded) weighted sum. It does not bound the value `weighted_mean`
-/// finally returns after dividing by the weight accumulator. Composing this
-/// bound with `theorem_wm_denom_error_accumulation` through the division needs
-/// a further explicit hypothesis: the exact weight sum bounded away from zero.
-/// Division is not Lipschitz otherwise, and
-/// `crate::lipschitz::lemma_div_lipschitz` states only the algebraic core, not
-/// a finished bound. This module leaves that composition unproven. The gap is
-/// explicit. The two theorems in this section are the "n-ary helper" bound V8
-/// asks for, namely the internal accumulation. `docs/SPEC.md` §9 documents
-/// them as the state of this obligation for `weighted_mean`.
+/// V8 for `weighted_mean`'s numerator accumulator: within `2k · m · 2^-61` of
+/// `Σ w_i · x_i` after `k` pairs, twice `sum`'s rate because each pair rounds
+/// twice. No `all_unit` is needed: it is a sum of independently rounded
+/// products. `theorem_weighted_mean_return_error` composes this with the
+/// denominator bound through the division.
 pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
     requires
         all_wf_pairs(s),
@@ -1240,6 +1660,7 @@ pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
 {
     lemma_wm_num_fold_wf(s);
     if s.len() == 0 {
+        Rat::lemma_from_raw_spec_components(0, 1);
         assert(wsum_num(s) == 0 && wsum_den(s) == 1);
         assert(wm_num_fold_val(s).n() == 0 && wm_num_fold_val(s).d() == 1);
         crate::model::lemma_pow2_pos(crate::model::precision_b());
@@ -1339,6 +1760,157 @@ pub proof fn theorem_wm_num_error_accumulation(s: Seq<(Rat, Rat)>, m: int)
             m,
         ));
     }
+}
+
+/// Returned value of `weighted_mean`: with weights and values in `[0, 1]`,
+/// non-saturating prefixes, and exact weight sum at least `delta_num/delta_den`,
+/// the result is within `8 · len(s) · delta_den / (delta_num · 2^61)` of the
+/// exact mean. The half-delta hypothesis keeps the rounded denominator
+/// positive and conditions the quotient bound.
+pub proof fn theorem_weighted_mean_return_error(
+    s: Seq<(Rat, Rat)>,
+    delta_num: int,
+    delta_den: int,
+)
+    requires
+        all_wf_pairs(s),
+        all_unit_pairs(s),
+        delta_num > 0,
+        delta_den > 0,
+        // Exact weight sum >= delta.
+        delta_num * wt_den(s) <= delta_den * wt_num(s),
+        // Explicit non-saturating, unit-magnitude prefix hypotheses used by
+        // the two existing accumulation inductions.
+        wt_bounded(s, 1),
+        wm_num_bounded(s, 1),
+        // len(s)/2^61 <= delta/2.
+        2 * (s.len() as int) * delta_den <= delta_num * pow2(precision_b()),
+        // The final quotient must remain on the ordinary R3 path.
+        !crate::round::saturated(
+            crate::q::div_n(wm_num_fold_val(s), wt_fold_val(s)),
+            crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+        ),
+    ensures
+        wt_fold_val(s).n() > 0,
+        crate::lipschitz::frac_diff_le(
+            crate::round::round_frac(
+                crate::q::div_n(wm_num_fold_val(s), wt_fold_val(s)),
+                crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+                Dir::Nearest,
+            ).n(),
+            crate::round::round_frac(
+                crate::q::div_n(wm_num_fold_val(s), wt_fold_val(s)),
+                crate::q::div_d(wm_num_fold_val(s), wt_fold_val(s)),
+                Dir::Nearest,
+            ).d(),
+            wsum_num(s) * wt_den(s),
+            wsum_den(s) * wt_num(s),
+            8 * (s.len() as int) * delta_den,
+            delta_num * pow2(precision_b()),
+        ),
+{
+    lemma_wm_num_fold_wf(s);
+    lemma_wt_fold_wf(s);
+    theorem_wm_num_error_accumulation(s, 1);
+    theorem_wm_denom_error_accumulation(s, 1);
+    lemma_wm_exact_numerator_le_denominator(s);
+    lemma_wm_return_bound_composition(s, delta_num, delta_den);
+
+    let a = wm_num_fold_val(s);
+    let b = wt_fold_val(s);
+    let qn = crate::q::div_n(a, b);
+    let qd = crate::q::div_d(a, b);
+    let un = wsum_num(s) * wt_den(s);
+    let ud = wsum_den(s) * wt_num(s);
+    let r = crate::round::round_frac(qn, qd, Dir::Nearest);
+    let k = s.len() as int;
+    let e = pow2(precision_b());
+
+    crate::q::lemma_op_widths(a, b);
+    crate::round::lemma_round_frac_wf(qn, qd, Dir::Nearest);
+    crate::round::lemma_r3_error_nearest(qn, qd);
+    lemma_pow2_pos(precision_b());
+    assert(e > 0);
+    assert(pow2(precision_b_nearest()) == 2 * e);
+    assert(qd > 0);
+    assert(wt_num(s) > 0) by (nonlinear_arith)
+        requires
+            delta_num > 0,
+            wt_den(s) > 0,
+            delta_den > 0,
+            delta_num * wt_den(s) <= delta_den * wt_num(s),
+    ;
+    assert(ud > 0) by (nonlinear_arith)
+        requires
+            wsum_den(s) > 0,
+            wt_num(s) > 0,
+            ud == wsum_den(s) * wt_num(s),
+    ;
+    assert(max_int(qd, abs_int(qn)) <= 4 * qd);
+
+    // Nearest rounding contributes at most 4/2^62 == 2/2^61 because the
+    // pre-rounding quotient has magnitude at most four.
+    assert(abs_int(r.n() * qd - qn * r.d()) * (2 * e)
+        <= r.d() * max_int(qd, abs_int(qn)));
+    assert(abs_int(r.n() * qd - qn * r.d()) * e <= 2 * (r.d() * qd))
+        by (nonlinear_arith)
+        requires
+            e > 0,
+            abs_int(r.n() * qd - qn * r.d()) * (2 * e)
+                <= r.d() * max_int(qd, abs_int(qn)),
+            max_int(qd, abs_int(qn)) <= 4 * qd,
+            r.d() > 0,
+            qd > 0,
+    ;
+    assert(abs_int(r.n() * qd - qn * r.d()) * (delta_num * e)
+        <= (2 * delta_num) * (r.d() * qd)) by (nonlinear_arith)
+        requires
+            delta_num > 0,
+            abs_int(r.n() * qd - qn * r.d()) * e <= 2 * (r.d() * qd),
+    ;
+    assert(delta_num * e > 0) by (nonlinear_arith)
+        requires delta_num > 0, e > 0;
+
+    // Compose final rounding (2*delta_num units on the common denominator)
+    // with the pre-rounding quotient perturbation (6*k*delta_den units).
+    crate::lipschitz::lemma_frac_triangle(
+        r.n(),
+        r.d(),
+        qn,
+        qd,
+        un,
+        ud,
+        2 * delta_num,
+        6 * k * delta_den,
+        delta_num * e,
+    );
+
+    // Unit weights give exact sum(w) <= k, while delta <= sum(w), hence
+    // delta <= k.  This absorbs the two final-rounding units into the stated
+    // loose constant eight.
+    assert(delta_num * wt_den(s) <= delta_den * wt_num(s));
+    assert(wt_num(s) <= k * wt_den(s));
+    assert(delta_num <= k * delta_den) by (nonlinear_arith)
+        requires
+            wt_den(s) > 0,
+            delta_den > 0,
+            delta_num * wt_den(s) <= delta_den * wt_num(s),
+            wt_num(s) <= k * wt_den(s),
+    ;
+    assert(2 * delta_num + 6 * k * delta_den <= 8 * k * delta_den)
+        by (nonlinear_arith)
+        requires
+            delta_num <= k * delta_den,
+    ;
+    assert(abs_int(r.n() * ud - un * r.d()) * (delta_num * e)
+        <= (8 * k * delta_den) * (r.d() * ud)) by (nonlinear_arith)
+        requires
+            abs_int(r.n() * ud - un * r.d()) * (delta_num * e)
+                <= (2 * delta_num + 6 * k * delta_den) * (r.d() * ud),
+            2 * delta_num + 6 * k * delta_den <= 8 * k * delta_den,
+            r.d() > 0,
+            ud > 0,
+    ;
 }
 
 } // verus!

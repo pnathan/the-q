@@ -21,6 +21,16 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  msrv:
+    name: MSRV (Rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +1.85.0 check --locked --lib --no-default-features
+      - run: cargo +1.85.0 check --locked --lib --all-features
+
   build-and-test:
     name: cargo build + test
     runs-on: ubuntu-latest
@@ -52,15 +62,24 @@ jobs:
       # (see [profile.release] in Cargo.toml), so the release run is a second
       # independent execution of the V2 no-overflow claim.
       - name: Test (debug)
+        run: cargo test --locked --verbose
+
+      - name: Test (debug, all features)
         run: cargo test --locked --all-features --verbose
 
       - name: Test (release)
+        run: cargo test --locked --release --verbose
+
+      - name: Test (release, all features)
         run: cargo test --locked --release --all-features --verbose
 
       - name: Documentation builds
         run: cargo doc --locked --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+      - name: Rat and QI representations are private downstream
+        run: ./scripts/check-rat-privacy.sh
 
   licences:
     name: no copyleft in the shipped tree

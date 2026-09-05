@@ -1,24 +1,11 @@
 //! The public `Rat` API: constructors, arithmetic, comparison, predicates.
 //!
-//! Each operation computes its exact result in `i128` and passes that result
-//! to [`crate::round::round_frac_exec`]. That function canonicalises the pair,
-//! and rounds it only when the exact result does not fit the budget. No
-//! operation in this module can panic. Division by zero is a precondition that
-//! the caller discharges, and each `i128` intermediate is proven in range
-//! (V2).
-//!
-//! ## Widths
-//!
-//! | operation | widest intermediate | bound under I2 |
-//! |---|---|---|
-//! | `mul` | `num1·num2`, `den1·den2` | `< 2^124` |
-//! | `add`/`sub` | `num1·den2 ± num2·den1` | `< 2^125` |
-//! | `div` | `num1·den2`, `den1·num2` | `< 2^124` |
-//! | `cmp` | `num1·den2` vs `num2·den1` | `< 2^124` |
-//!
-//! `i128::MAX` is `2^127 - 1`, thus each column has at least two bits of
-//! headroom. With a `2^63` budget the `add` row reaches `2^127` and overflows.
-//! The budget is `2^62` for that reason.
+//! Each operation computes its exact result in `i128` and passes it to
+//! [`crate::round::round_frac_exec`]. Widest intermediates under the budget:
+//! `mul`/`div`/`cmp` products below `2^124`, `add`/`sub` sums below `2^125`,
+//! leaving two bits under `i128::MAX`; a `2^63` budget would overflow the
+//! `add` row. Division by zero is a precondition; [`require_condition`] turns
+//! it into a panic for unverified callers.
 
 use verus_builtin_macros::verus;
 
@@ -41,27 +28,15 @@ verus! {
 // The runtime half of the division preconditions
 // ---------------------------------------------------------------------------
 
-/// Panic with `msg` unless `nonzero` holds.
-///
-/// `Rat::div_dir` and `Rat::recip` carry `n() != 0` as a precondition, because
-/// their exactness contracts need it. Verified code discharges the precondition
-/// and this call compiles to a branch that is never taken. Unverified code
-/// cannot discharge a precondition, thus this check is what stands between an
-/// unverified caller and a division by zero inside the rounding code, or a
-/// returned `Rat { num: -1, den: 0 }`.
-///
-/// The function is `external_body` for its message only. `vstd`'s
-/// `runtime_assert` has the identical contract and needs no trusted code here,
-/// but it panics with `assertion failed: b` at a line inside `vstd`, which
-/// names neither the operation nor the fix. `TRUSTED.md` §3 states the assumed
-/// specification: the function returns when `nonzero` is true and panics when
-/// it is false. It performs no arithmetic and returns no value.
+/// Panic with `msg` unless `condition` holds. Verified callers discharge the
+/// precondition and never reach it; for unverified callers it is the
+/// division-by-zero panic. `external_body` for its message only (`TRUSTED.md`).
 #[verifier::external_body]
-pub fn require_nonzero(nonzero: bool, msg: &str)
+pub fn require_condition(condition: bool, msg: &str)
     requires
-        nonzero,
+        condition,
 {
-    assert!(nonzero, "{}", msg);
+    assert!(condition, "{}", msg);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,14 +82,8 @@ pub open spec fn div_d(a: Rat, b: Rat) -> int {
     }
 }
 
-/// `num` with the sign of a negative `den` folded onto it.
-///
-/// `round_frac` takes a positive denominator, thus [`Rat::new_rounded`]
-/// normalises the sign before it rounds. The pair that it rounds is
-/// `(signed_den_num(num, den), abs_int(den))`, and its postconditions use that
-/// pair. The pair has the same value as `num / den`. The normalisation is
-/// necessary: rounding `-3 / -4` in direction `Down` means rounding `3 / 4`
-/// down, and not `-3 / 4` down.
+/// `num` with a negative `den`'s sign folded onto it, so `-3 / -4` rounds as
+/// `3 / 4` and not as `-3 / 4`.
 pub open spec fn signed_den_num(num: int, den: int) -> int {
     if den < 0 {
         -num
@@ -132,6 +101,7 @@ impl Rat {
     pub fn zero() -> (r: Rat)
         ensures
             r.wf(),
+            r == Rat::from_raw_spec(0, 1),
             r.n() == 0,
             r.d() == 1,
     {
@@ -139,13 +109,14 @@ impl Rat {
             crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
-        Rat { num: 0, den: 1 }
+        Rat::from_raw_parts(0, 1)
     }
 
     /// `1`.
     pub fn one() -> (r: Rat)
         ensures
             r.wf(),
+            r == Rat::from_raw_spec(1, 1),
             r.n() == 1,
             r.d() == 1,
     {
@@ -153,7 +124,7 @@ impl Rat {
             crate::round::lemma_gcd_one();
             lemma_max_mag_pow2();
         }
-        Rat { num: 1, den: 1 }
+        Rat::from_raw_parts(1, 1)
     }
 
     /// `-1`.
@@ -186,19 +157,13 @@ impl Rat {
                 crate::round::lemma_gcd_one();
                 lemma_max_mag_pow2();
             }
-            Some(Rat { num: i, den: 1 })
+            Some(Rat::from_raw_parts(i, 1))
         }
     }
 
-    /// The exact rational `num / den`, canonicalised.
-    ///
-    /// The result is `None` when `den == 0`, and also when the reduced form
-    /// does not fit the budget. The second case needs `|num|` or `|den|` above
-    /// `2^62 - 1`, which is the top bit of the `i64` range. This behaviour is
-    /// an intentional departure from a literal reading of the specification,
-    /// which states that each `i64` pair fits after reduction.
-    /// `Rat::new(i64::MAX, 1)` is a counterexample to that statement.
-    /// [`Rat::new_rounded`] is the total variant, which rounds instead.
+    /// The exact rational `num / den`, canonicalised. `None` when `den == 0` or
+    /// the reduced form exceeds the budget (`Rat::new(i64::MAX, 1)`);
+    /// [`Rat::new_rounded`] rounds instead.
     pub fn new(num: i64, den: i64) -> (r: Option<Rat>)
         ensures
             den == 0 ==> r.is_none(),
@@ -265,16 +230,18 @@ impl Rat {
                     g as int,
                     neg,
                 );
-                // The zero clause of I1 on the returned pair: `rn == 0` forces
-                // `rd == 1`. The step above gives `rd == d` when `num == 0`,
-                // and `d == 1` follows from `lemma_gcd_zero` and
-                // `lemma_fundamental_div_mod_converse`. This separate step
-                // keeps the proof stable against unrelated additions to the
-                // module. The `saturation` module header describes that
-                // effect.
-                assert(rn == 0 ==> rd == 1);
+                // I1's zero clause: `rn == 0` forces `rd == 1`, via `lemma_gcd_zero`.
+                if rn == 0 {
+                    assert(n == 0) by (nonlinear_arith)
+                        requires
+                            n as int == (rn as int) * (g as int),
+                            rn == 0,
+                    ;
+                    assert(num == 0);
+                    assert(rd == 1);
+                }
             }
-            Some(Rat { num: rn as i64, den: rd as i64 })
+            Some(Rat::from_raw_parts(rn as i64, rd as i64))
         } else {
             proof {
                 // Completeness, discharged contrapositively on this path only.
@@ -294,14 +261,8 @@ impl Rat {
         }
     }
 
-    /// The rational `num / den`, rounded to the budget if it does not fit.
-    ///
-    /// `None` **iff** `den == 0`.
-    ///
-    /// The function normalises the sign onto the numerator before it rounds.
-    /// A negative `den` thus rounds the same value in the same direction, and
-    /// not the mirrored one. `signed_den_num` holds that convention, and the
-    /// postconditions below use it.
+    /// `num / den`, rounded to the budget if it does not fit; `None` iff
+    /// `den == 0`. The sign is normalised onto the numerator before rounding.
     pub fn new_rounded(num: i64, den: i64, dir: Dir) -> (r: Option<Rat>)
         ensures
             r.is_none() <==> den == 0,
@@ -362,14 +323,8 @@ impl Rat {
         Some(round_frac_exec(n, d, dir))
     }
 
-    /// The exact decimal `mantissa · 10^-dec_places`, e.g. `(85, 2)` is `0.85`.
-    ///
-    /// This constructor is the primary ingestion path of the crate.
-    /// Reliabilities, competences and weights arrive as short decimals, and
-    /// this constructor converts them with no rounding.
-    ///
-    /// `None` when `dec_places > 18` (the scale factor would leave the budget)
-    /// or `|mantissa| > MAX_MAG`.
+    /// The exact decimal `mantissa · 10^-dec_places`; `(85, 2)` is `0.85`. `None`
+    /// when `dec_places > 18` or `|mantissa| > MAX_MAG`.
     pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Rat>)
         ensures
             r.is_some() ==> r.unwrap().wf(),
@@ -403,13 +358,8 @@ impl Rat {
     }
 }
 
-/// `10^n` for `n <= 18`, as a literal table.
-///
-/// The function uses a table and not a loop. A loop needs an invariant that
-/// relates the accumulator to `10^(n-i)`, and a bound that proves that the next
-/// multiplication cannot overflow. That is three proof obligations and one
-/// lemma for the same result. Nineteen literals are clear to the verifier and
-/// to the reader.
+/// `10^n` for `n <= 18`, as a literal table (a loop needs an invariant and an
+/// overflow lemma for the same result).
 pub fn pow10_i64(n: u8) -> (r: i64)
     requires
         n <= MAX_DEC_PLACES,
@@ -469,8 +419,9 @@ impl Rat {
         proof {
             lemma_op_widths(a, b);
         }
-        let n: i128 = (a.num as i128) * (b.den as i128) + (b.num as i128) * (a.den as i128);
-        let d: i128 = (a.den as i128) * (b.den as i128);
+        let n: i128 = (a.numerator() as i128) * (b.denominator() as i128)
+            + (b.numerator() as i128) * (a.denominator() as i128);
+        let d: i128 = (a.denominator() as i128) * (b.denominator() as i128);
         let r = round_frac_exec(n, d, dir);
         proof {
             if exact_path(add_n(a, b), prod_d(a, b)) {
@@ -501,8 +452,9 @@ impl Rat {
         proof {
             lemma_op_widths(a, b);
         }
-        let n: i128 = (a.num as i128) * (b.den as i128) - (b.num as i128) * (a.den as i128);
-        let d: i128 = (a.den as i128) * (b.den as i128);
+        let n: i128 = (a.numerator() as i128) * (b.denominator() as i128)
+            - (b.numerator() as i128) * (a.denominator() as i128);
+        let d: i128 = (a.denominator() as i128) * (b.denominator() as i128);
         let r = round_frac_exec(n, d, dir);
         proof {
             if exact_path(sub_n(a, b), prod_d(a, b)) {
@@ -533,8 +485,8 @@ impl Rat {
         proof {
             lemma_op_widths(a, b);
         }
-        let n: i128 = (a.num as i128) * (b.num as i128);
-        let d: i128 = (a.den as i128) * (b.den as i128);
+        let n: i128 = (a.numerator() as i128) * (b.numerator() as i128);
+        let d: i128 = (a.denominator() as i128) * (b.denominator() as i128);
         let r = round_frac_exec(n, d, dir);
         proof {
             if exact_path(mul_n(a, b), prod_d(a, b)) {
@@ -547,16 +499,8 @@ impl Rat {
         r
     }
 
-    /// `a / b`, rounded in direction `dir`.
-    ///
-    /// `b.n() != 0` is a precondition. Verified code discharges it statically,
-    /// thus this function has no reachable panic there.
-    ///
-    /// Unverified code cannot discharge a precondition. A zero divisor from
-    /// unverified code therefore fails a runtime check at this boundary, and
-    /// the call panics. It does not return a value. Use [`Rat::checked_div`],
-    /// which is total in the divisor, or [`crate::Q::div`], which gives an
-    /// infinity or `Nan`.
+    /// `a / b` in direction `dir`. `b != 0` is a precondition; an unverified caller
+    /// with a zero divisor panics here. Use [`Rat::checked_div`] or [`crate::Q::div`].
     pub fn div_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -575,8 +519,8 @@ impl Rat {
         // The runtime half of the precondition. Verified code proves this and
         // pays nothing. Unverified code that passes a zero divisor panics here
         // instead of reaching the division inside `round_frac_exec`.
-        require_nonzero(
-            b.num != 0,
+        require_condition(
+            b.numerator() != 0,
             "the-q: Rat::div by zero. Rat::div requires a nonzero divisor. Use \
              Rat::checked_div, which returns None, or Q::div, which returns an \
              infinity or Nan.",
@@ -596,8 +540,8 @@ impl Rat {
                     a.d() > 0,
             ;
         }
-        let mut n: i128 = (a.num as i128) * (b.den as i128);
-        let mut d: i128 = (a.den as i128) * (b.num as i128);
+        let mut n: i128 = (a.numerator() as i128) * (b.denominator() as i128);
+        let mut d: i128 = (a.denominator() as i128) * (b.numerator() as i128);
         if d < 0 {
             n = 0 - n;
             d = 0 - d;
@@ -794,16 +738,46 @@ impl Rat {
         }
     }
 
-    /// `a / b`, or `None` if there is no representable quotient.
-    ///
-    /// This operation is total in the divisor. A zero divisor gives `None`, as
-    /// `i64::checked_div` and `num-traits` do for the same input. It is thus the
-    /// one member of the family that a caller can use without discharging
-    /// `b.n() != 0` first.
-    ///
-    /// The other `None` case is magnitude. Division saturates on the ceiling
-    /// that `add`, `sub` and `mul` use. For example, `(MAX_MAG/1) / (1/MAX_MAG)`
-    /// is far above that ceiling.
+    /// `a - b`, rounded in `dir`, or `None` if the exact difference is too
+    /// large in magnitude. Unlike [`Rat::checked_sub`], this preserves the
+    /// requested rounding direction when the result is not exact.
+    pub fn checked_sub_dir(a: Rat, b: Rat, dir: Dir) -> (r: Option<Rat>)
+        requires
+            a.wf(),
+            b.wf(),
+        ensures
+            r.is_none() <==> saturated(sub_n(a, b), prod_d(a, b)),
+            r.is_some() ==> r.unwrap() == round_frac(sub_n(a, b), prod_d(a, b), dir),
+            r.is_some() ==> r.unwrap().wf(),
+            r.is_some() && dir == Dir::Down ==> q_le_frac(
+                r.unwrap(), sub_n(a, b), prod_d(a, b),
+            ),
+            r.is_some() && dir == Dir::Up ==> q_ge_frac(
+                r.unwrap(), sub_n(a, b), prod_d(a, b),
+            ),
+            r.is_some() && exact_path(sub_n(a, b), prod_d(a, b)) ==> q_is(
+                r.unwrap(), sub_n(a, b), prod_d(a, b),
+            ),
+            r.is_some() ==> within_error_bound(
+                r.unwrap(), sub_n(a, b), prod_d(a, b),
+            ),
+    {
+        proof {
+            lemma_op_widths(a, b);
+            crate::model::lemma_pow2_126();
+        }
+        if magnitude_fits_exec(sub_n_exec(a, b), prod_d_exec(a, b)) {
+            let value = Rat::sub_dir(a, b, dir);
+            proof {
+                crate::round::lemma_r2_directed(sub_n(a, b), prod_d(a, b));
+            }
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// `a / b`, or `None` on a zero divisor or a quotient past the budget.
     pub fn checked_div(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -815,7 +789,7 @@ impl Rat {
             r.is_some() ==> r.unwrap() == round_frac(div_n(a, b), div_d(a, b), Dir::Nearest),
             r.is_some() ==> r.unwrap().wf(),
     {
-        if b.num == 0 {
+        if b.numerator() == 0 {
             return None;
         }
         proof {
@@ -842,7 +816,7 @@ impl Rat {
             lemma_max_mag_pow2();
             assert(gcd_int(-self.n(), self.d()) == gcd_int(self.n(), self.d()));
         }
-        Rat { num: 0 - self.num, den: self.den }
+        Rat::from_raw_parts(0 - self.numerator(), self.denominator())
     }
 
     /// `|a|`. Always exact.
@@ -854,19 +828,15 @@ impl Rat {
             r.n() == abs_int(self.n()),
             r.d() == self.d(),
     {
-        if self.num < 0 {
+        if self.numerator() < 0 {
             self.neg()
         } else {
             self
         }
     }
 
-    /// `1 / a`. Always exact. The operation swaps the numerator and the
-    /// denominator, and I2 is symmetric between them.
-    ///
-    /// `self.n() != 0` is a precondition. A zero from unverified code fails a
-    /// runtime check and panics. The reciprocal of zero is not a rational, and
-    /// no `Rat` denotes it. [`crate::Q::recip`] returns `PosInf` for that input.
+    /// `1 / a`, exact (a swap of a canonical pair). Zero is a precondition and
+    /// panics for an unverified caller; [`crate::Q::recip`] gives `PosInf`.
     pub fn recip(self) -> (r: Rat)
         requires
             self.wf(),
@@ -878,8 +848,8 @@ impl Rat {
     {
         // Without this check a zero receiver returns `Rat { num: -1, den: 0 }`,
         // which violates I1 and fails in a later operation, far from the cause.
-        require_nonzero(
-            self.num != 0,
+        require_condition(
+            self.numerator() != 0,
             "the-q: Rat::recip of zero. The reciprocal of zero is not a \
              rational and no Rat denotes it. Use Q::recip, which returns \
              PosInf.",
@@ -887,7 +857,7 @@ impl Rat {
         proof {
             lemma_max_mag_pow2();
         }
-        if self.num > 0 {
+        if self.numerator() > 0 {
             proof {
                 assert(gcd_int(self.d(), self.n()) == gcd_int(self.n(), self.d())) by {
                     lemma_gcd_sym(abs_int(self.n()) as nat, self.d() as nat);
@@ -898,7 +868,7 @@ impl Rat {
                         self.n() > 0,
                 ;
             }
-            Rat { num: self.den, den: self.num }
+            Rat::from_raw_parts(self.denominator(), self.numerator())
         } else {
             proof {
                 assert(gcd_int(-self.d(), -self.n()) == gcd_int(self.n(), self.d())) by {
@@ -911,7 +881,7 @@ impl Rat {
                 ;
                 assert((-self.d()) * self.n() == self.d() * (-self.n())) by (nonlinear_arith);
             }
-            Rat { num: 0 - self.den, den: 0 - self.num }
+            Rat::from_raw_parts(0 - self.denominator(), 0 - self.numerator())
         }
     }
 
@@ -1070,7 +1040,8 @@ pub fn add_n_exec(a: Rat, b: Rat) -> (r: i128)
         lemma_op_widths(a, b);
         lemma_pow2_126();
     }
-    (a.num as i128) * (b.den as i128) + (b.num as i128) * (a.den as i128)
+    (a.numerator() as i128) * (b.denominator() as i128)
+        + (b.numerator() as i128) * (a.denominator() as i128)
 }
 
 /// Exec mirror of `sub_n`.
@@ -1085,7 +1056,8 @@ pub fn sub_n_exec(a: Rat, b: Rat) -> (r: i128)
         lemma_op_widths(a, b);
         lemma_pow2_126();
     }
-    (a.num as i128) * (b.den as i128) - (b.num as i128) * (a.den as i128)
+    (a.numerator() as i128) * (b.denominator() as i128)
+        - (b.numerator() as i128) * (a.denominator() as i128)
 }
 
 /// Exec mirror of `mul_n`.
@@ -1100,7 +1072,7 @@ pub fn mul_n_exec(a: Rat, b: Rat) -> (r: i128)
         lemma_op_widths(a, b);
         lemma_pow2_126();
     }
-    (a.num as i128) * (b.num as i128)
+    (a.numerator() as i128) * (b.numerator() as i128)
 }
 
 /// Exec mirror of `prod_d`.
@@ -1116,7 +1088,7 @@ pub fn prod_d_exec(a: Rat, b: Rat) -> (r: i128)
         lemma_op_widths(a, b);
         lemma_pow2_126();
     }
-    (a.den as i128) * (b.den as i128)
+    (a.denominator() as i128) * (b.denominator() as i128)
 }
 
 /// Exec mirror of `div_n`: sign-normalised the same way [`Rat::div_dir`]
@@ -1141,8 +1113,8 @@ pub fn div_n_exec(a: Rat, b: Rat) -> (r: i128)
                 a.d() > 0,
         ;
     }
-    let mut n: i128 = (a.num as i128) * (b.den as i128);
-    let d: i128 = (a.den as i128) * (b.num as i128);
+    let mut n: i128 = (a.numerator() as i128) * (b.denominator() as i128);
+    let d: i128 = (a.denominator() as i128) * (b.numerator() as i128);
     if d < 0 {
         n = 0 - n;
     }
@@ -1172,7 +1144,7 @@ pub fn div_d_exec(a: Rat, b: Rat) -> (r: i128)
                 a.d() > 0,
         ;
     }
-    let mut d: i128 = (a.den as i128) * (b.num as i128);
+    let mut d: i128 = (a.denominator() as i128) * (b.numerator() as i128);
     if d < 0 {
         d = 0 - d;
     }
@@ -1210,12 +1182,7 @@ pub fn magnitude_fits_exec(n: i128, d: i128) -> (r: bool)
 // ---------------------------------------------------------------------------
 
 impl Rat {
-    /// Three-way comparison: `-1`, `0`, `1`.
-    ///
-    /// Exact, by `i128` cross-multiplication. `ℚ` is totally ordered, which is
-    /// a genuine upgrade over `f64`'s `PartialOrd`: there is no `NaN`, so there
-    /// are no incomparable pairs and no need for `partial_cmp` to return
-    /// `None`.
+    /// Three-way comparison, `-1`/`0`/`1`, exact by `i128` cross-multiplication.
     pub fn compare(a: Rat, b: Rat) -> (r: i32)
         requires
             a.wf(),
@@ -1228,8 +1195,8 @@ impl Rat {
         proof {
             lemma_op_widths(a, b);
         }
-        let l: i128 = (a.num as i128) * (b.den as i128);
-        let r: i128 = (b.num as i128) * (a.den as i128);
+        let l: i128 = (a.numerator() as i128) * (b.denominator() as i128);
+        let r: i128 = (b.numerator() as i128) * (a.denominator() as i128);
         if l < r {
             -1
         } else if l > r {
@@ -1301,7 +1268,7 @@ impl Rat {
         ensures
             r <==> self.n() == 0,
     {
-        self.num == 0
+        self.numerator() == 0
     }
 
     /// `a == 1`.
@@ -1324,7 +1291,7 @@ impl Rat {
                 crate::model::lemma_divides_le(self.n(), 1);
             }
         }
-        self.num == 1 && self.den == 1
+        self.numerator() == 1 && self.denominator() == 1
     }
 
     /// `-1`, `0` or `1` according to the sign.
@@ -1336,9 +1303,9 @@ impl Rat {
             r < 0 <==> self.n() < 0,
             r > 0 <==> self.n() > 0,
     {
-        if self.num < 0 {
+        if self.numerator() < 0 {
             -1
-        } else if self.num > 0 {
+        } else if self.numerator() > 0 {
             1
         } else {
             0
@@ -1356,7 +1323,7 @@ impl Rat {
         ensures
             r <==> (self.n() >= 0 && self.n() <= self.d()),
     {
-        self.num >= 0 && self.num <= self.den
+        self.numerator() >= 0 && self.numerator() <= self.denominator()
     }
 
     /// The smaller of `a` and `b`. Exact.
@@ -1418,14 +1385,7 @@ impl Rat {
             q_le(r, hi),
             // ...and *which* of the three.
             //
-            // The four clauses above do not pin the result: for `lo < a < hi`
-            // the value `lo` satisfies every one of them, so a `clamp` that
-            // ignored `a` entirely and always returned `lo` would verify. That
-            // is the same defect the extended `Q::clamp` had, and the same one
-            // the old `isqrt_i64` postcondition had — a contract wide enough to
-            // admit a wrong answer. It was found by proving the extended
-            // version's contract categorical, failing, and checking whether the
-            // kernel shared the weakness. It did.
+            // Without this clause a `clamp` that always returned `lo` would verify.
             (q_le(lo, a) && q_le(a, hi)) ==> r == a,
             !q_le(lo, a) ==> r == lo,
             !q_le(a, hi) ==> r == hi,

@@ -1,15 +1,9 @@
-//! `QI` — a rational interval built on the directed rounding modes (M6).
+//! [`QI`], a closed rational interval on the directed rounding modes.
 //!
-//! This module is the reason R2 exists. An interval `[lo, hi]` that brackets a
-//! true value keeps bracketing it when every lower endpoint uses [`Dir::Down`]
-//! and every upper endpoint uses [`Dir::Up`]. R2 states exactly that those
-//! modes never cross the exact value. The containment theorem therefore needs
-//! **no new rounding proofs**. It is a corollary of R2 plus the monotonicity of
-//! the underlying rational operations.
-//!
-//! The interval layer measures the rounding cost of one specific computation.
-//! The width of the result is that measurement, rather than a worst-case
-//! bound.
+//! Lower endpoints round `Down`, upper endpoints `Up`, so enclosure is a
+//! corollary of R2 and the monotonicity of the exact operations; no new
+//! rounding proof is needed. Endpoints are crate-private and ordered:
+//! `new` guards `lo <= hi` at run time, `checked_new` is total.
 
 use verus_builtin_macros::verus;
 
@@ -18,6 +12,7 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
+use crate::ext::Q;
 #[allow(unused_imports)]
 use crate::model::*;
 #[allow(unused_imports)]
@@ -28,22 +23,60 @@ use crate::types::{Dir, Rat};
 
 verus! {
 
-/// A closed rational interval `[lo, hi]`.
+/// A closed rational interval `[lo, hi]`. Endpoints are private; use
+/// [`QI::checked_new`] for untrusted endpoints.
+///
+/// ```compile_fail
+/// use the_q::{QI, Rat};
+/// let _ = QI { lo: Rat::zero(), hi: Rat::one() };
+/// ```
+///
+/// ```compile_fail
+/// use the_q::{QI, Rat};
+/// let mut i = QI::exact(Rat::zero());
+/// i.lo = Rat::one();
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct QI {
     /// The lower endpoint. Always computed with [`Dir::Down`].
-    pub lo: Rat,
+    pub(crate) lo: Rat,
     /// The upper endpoint. Always computed with [`Dir::Up`].
-    pub hi: Rat,
+    pub(crate) hi: Rat,
 }
 
 impl QI {
+    /// The lower endpoint in specifications.
+    pub closed spec fn spec_lower(self) -> Rat {
+        self.lo
+    }
+
+    /// The upper endpoint in specifications.
+    pub closed spec fn spec_upper(self) -> Rat {
+        self.hi
+    }
+
+    /// The lower endpoint.
+    pub fn lower(&self) -> (r: Rat)
+        ensures r == self.spec_lower(),
+    {
+        proof { reveal(QI::spec_lower); }
+        self.lo
+    }
+
+    /// The upper endpoint.
+    pub fn upper(&self) -> (r: Rat)
+        ensures r == self.spec_upper(),
+    {
+        proof { reveal(QI::spec_upper); }
+        self.hi
+    }
+
     /// The interval invariant: both endpoints well-formed and correctly
     /// ordered.
     pub open spec fn wf(self) -> bool {
-        &&& self.lo.wf()
-        &&& self.hi.wf()
-        &&& q_le(self.lo, self.hi)
+        &&& self.spec_lower().wf()
+        &&& self.spec_upper().wf()
+        &&& q_le(self.spec_lower(), self.spec_upper())
     }
 
     /// The degenerate interval `[a, a]`.
@@ -52,8 +85,8 @@ impl QI {
             a.wf(),
         ensures
             r.wf(),
-            r.lo == a,
-            r.hi == a,
+            r.spec_lower() == a,
+            r.spec_upper() == a,
     {
         QI { lo: a, hi: a }
     }
@@ -66,10 +99,32 @@ impl QI {
             q_le(lo, hi),
         ensures
             r.wf(),
-            r.lo == lo,
-            r.hi == hi,
+            r.spec_lower() == lo,
+            r.spec_upper() == hi,
     {
+        crate::q::require_condition(
+            Rat::le(lo, hi),
+            "the-q: QI::new requires lo <= hi. Use QI::checked_new for untrusted input.",
+        );
         QI { lo, hi }
+    }
+
+    /// Constructs `[lo, hi]`, returning `None` when the endpoints are reversed.
+    pub fn checked_new(lo: Rat, hi: Rat) -> (r: Option<QI>)
+        requires
+            lo.wf(),
+            hi.wf(),
+        ensures
+            r.is_some() <==> q_le(lo, hi),
+            r.is_some() ==> r.unwrap().wf(),
+            r.is_some() ==> r.unwrap().spec_lower() == lo,
+            r.is_some() ==> r.unwrap().spec_upper() == hi,
+    {
+        if Rat::le(lo, hi) {
+            Some(QI { lo, hi })
+        } else {
+            None
+        }
     }
 
     /// Whether `x` lies inside the interval.
@@ -78,39 +133,92 @@ impl QI {
             self.wf(),
             x.wf(),
         ensures
-            r <==> (q_le(self.lo, x) && q_le(x, self.hi)),
+            r <==> (q_le(self.spec_lower(), x) && q_le(x, self.spec_upper())),
     {
         Rat::le(self.lo, x) && Rat::le(x, self.hi)
     }
 
-    /// `hi - lo`. This is the precision the computation loses. Zero means the
-    /// whole computation stays on the exact path.
-    pub fn width(&self) -> (r: Rat)
+    /// An upward-rounded `hi - lo`, or `None` when its magnitude exceeds the
+    /// representable range.
+    pub fn checked_width(&self) -> (r: Option<Rat>)
+        requires
+            self.wf(),
+        ensures
+            r.is_none() <==> crate::round::saturated(
+                sub_n(self.spec_upper(), self.spec_lower()),
+                prod_d(self.spec_upper(), self.spec_lower()),
+            ),
+            r.is_some() ==> r.unwrap().wf(),
+            r.is_some() ==> q_ge_frac(
+                r.unwrap(),
+                sub_n(self.spec_upper(), self.spec_lower()),
+                prod_d(self.spec_upper(), self.spec_lower()),
+            ),
+            r.is_some() ==> r.unwrap().n() >= 0,
+    {
+        proof {
+            reveal(QI::spec_lower);
+            reveal(QI::spec_upper);
+            theorem_qi_exact_width_nonnegative(*self);
+        }
+        let result = Rat::checked_sub_dir(self.hi, self.lo, Dir::Up);
+        proof {
+            reveal(QI::spec_lower);
+            reveal(QI::spec_upper);
+            theorem_qi_exact_width_nonnegative(*self);
+            assert(prod_d(self.hi, self.lo) > 0);
+            assert(sub_n(self.hi, self.lo) >= 0);
+            if result.is_some() {
+                assert(result.unwrap().n() * prod_d(self.hi, self.lo)
+                    >= sub_n(self.hi, self.lo) * result.unwrap().d());
+                assert(sub_n(self.hi, self.lo) * result.unwrap().d() >= 0) by (nonlinear_arith)
+                    requires
+                        sub_n(self.hi, self.lo) >= 0,
+                        result.unwrap().d() > 0,
+                ;
+                assert(result.unwrap().n() * prod_d(self.hi, self.lo) >= 0);
+                if result.unwrap().n() < 0 {
+                    vstd::arithmetic::mul::lemma_mul_strictly_positive(
+                        -result.unwrap().n(),
+                        prod_d(self.hi, self.lo),
+                    );
+                    assert(
+                        result.unwrap().n() * prod_d(self.hi, self.lo)
+                            == -((-result.unwrap().n()) * prod_d(self.hi, self.lo))
+                    ) by (nonlinear_arith);
+                    assert(false);
+                }
+            }
+        }
+        result
+    }
+
+    /// The upward-rounded width, with magnitude overflow reported as
+    /// [`Q::PosSat`]. Zero means the computation stayed on the exact path.
+    pub fn width(&self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
-            !crate::round::saturated(sub_n(self.hi, self.lo), prod_d(self.hi, self.lo)) ==> q_ge_frac(
-                r,
-                sub_n(self.hi, self.lo),
-                prod_d(self.hi, self.lo),
-            ),
+            !crate::round::saturated(
+                sub_n(self.spec_upper(), self.spec_lower()),
+                prod_d(self.spec_upper(), self.spec_lower()),
+            ) ==> r.spec_is_number(),
+            crate::round::saturated(
+                sub_n(self.spec_upper(), self.spec_lower()),
+                prod_d(self.spec_upper(), self.spec_lower()),
+            ) ==> r == Q::PosSat,
+            r != Q::NegSat,
+            !r.spec_is_infinite(),
+            !r.spec_is_nan(),
     {
-        let r = Rat::sub_dir(self.hi, self.lo, Dir::Up);
-        proof {
-            crate::q::lemma_op_widths(self.hi, self.lo);
-            if !crate::round::saturated(sub_n(self.hi, self.lo), prod_d(self.hi, self.lo)) {
-                crate::round::lemma_r2_directed(sub_n(self.hi, self.lo), prod_d(self.hi, self.lo));
-            }
+        match self.checked_width() {
+            Some(width) => Q::Number(width),
+            None => Q::PosSat,
         }
-        r
     }
 
-    /// Interval addition: `[a.lo + b.lo, a.hi + b.hi]` with outward rounding.
-    ///
-    /// `r.wf()` lets the result compose with the next operation inside
-    /// verified code. It is a corollary of R2 plus the fact that `a.wf()` and
-    /// `b.wf()` order the exact endpoint sums. See
+    /// `[a.lo + b.lo, a.hi + b.hi]`, outward rounded; `wf` by
     /// `lemma_directed_round_order`.
     pub fn add(a: QI, b: QI) -> (r: QI)
         requires
@@ -118,15 +226,15 @@ impl QI {
             b.wf(),
         ensures
             r.wf(),
-            !crate::round::saturated(add_n(a.lo, b.lo), prod_d(a.lo, b.lo)) ==> q_le_frac(
-                r.lo,
-                add_n(a.lo, b.lo),
-                prod_d(a.lo, b.lo),
+            !crate::round::saturated(add_n(a.spec_lower(), b.spec_lower()), prod_d(a.spec_lower(), b.spec_lower())) ==> q_le_frac(
+                r.spec_lower(),
+                add_n(a.spec_lower(), b.spec_lower()),
+                prod_d(a.spec_lower(), b.spec_lower()),
             ),
-            !crate::round::saturated(add_n(a.hi, b.hi), prod_d(a.hi, b.hi)) ==> q_ge_frac(
-                r.hi,
-                add_n(a.hi, b.hi),
-                prod_d(a.hi, b.hi),
+            !crate::round::saturated(add_n(a.spec_upper(), b.spec_upper()), prod_d(a.spec_upper(), b.spec_upper())) ==> q_ge_frac(
+                r.spec_upper(),
+                add_n(a.spec_upper(), b.spec_upper()),
+                prod_d(a.spec_upper(), b.spec_upper()),
             ),
     {
         let lo = Rat::add_dir(a.lo, b.lo, Dir::Down);
@@ -162,28 +270,22 @@ impl QI {
         QI { lo, hi }
     }
 
-    /// Interval subtraction: `[a.lo - b.hi, a.hi - b.lo]` with outward
-    /// rounding.
-    ///
-    /// `r.wf()` holds for the same reason as in [`QI::add`]. The exact
-    /// lo-difference never exceeds the exact hi-difference, because
-    /// `a.lo - b.hi` is `a.lo + (-b.hi)` and `-b.hi <= -b.lo` follows from
-    /// `b.wf()`.
+    /// `[a.lo - b.hi, a.hi - b.lo]`, outward rounded.
     pub fn sub(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
             b.wf(),
         ensures
             r.wf(),
-            !crate::round::saturated(sub_n(a.lo, b.hi), prod_d(a.lo, b.hi)) ==> q_le_frac(
-                r.lo,
-                sub_n(a.lo, b.hi),
-                prod_d(a.lo, b.hi),
+            !crate::round::saturated(sub_n(a.spec_lower(), b.spec_upper()), prod_d(a.spec_lower(), b.spec_upper())) ==> q_le_frac(
+                r.spec_lower(),
+                sub_n(a.spec_lower(), b.spec_upper()),
+                prod_d(a.spec_lower(), b.spec_upper()),
             ),
-            !crate::round::saturated(sub_n(a.hi, b.lo), prod_d(a.hi, b.lo)) ==> q_ge_frac(
-                r.hi,
-                sub_n(a.hi, b.lo),
-                prod_d(a.hi, b.lo),
+            !crate::round::saturated(sub_n(a.spec_upper(), b.spec_lower()), prod_d(a.spec_upper(), b.spec_lower())) ==> q_ge_frac(
+                r.spec_upper(),
+                sub_n(a.spec_upper(), b.spec_lower()),
+                prod_d(a.spec_upper(), b.spec_lower()),
             ),
     {
         let lo = Rat::sub_dir(a.lo, b.hi, Dir::Down);
@@ -240,8 +342,8 @@ impl QI {
             a.wf(),
         ensures
             r.wf(),
-            r.lo.n() == -a.hi.n(),
-            r.hi.n() == -a.lo.n(),
+            r.spec_lower().n() == -a.spec_upper().n(),
+            r.spec_upper().n() == -a.spec_lower().n(),
     {
         let lo = a.hi.neg();
         let hi = a.lo.neg();
@@ -258,14 +360,8 @@ impl QI {
         QI { lo, hi }
     }
 
-    /// Interval multiplication: the four corner products, outward rounded.
-    ///
-    /// The corner rule states that the extremal corner products bracket the
-    /// exact product for every sign pattern. `theorem_interval_mul_contains`
-    /// proves it. `r.wf()` needs none of that case analysis. `lo` is the min
-    /// and `hi` the max over all four *rounded* corners. Thus any single
-    /// corner's `Down`/`Up` pair, such as the `ll` one, already chains
-    /// `lo <= ll_lo <= ll_hi <= hi`.
+    /// Min and max of the four outward-rounded corner products;
+    /// `theorem_interval_mul_contains` is the corner rule.
     pub fn mul(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -311,12 +407,12 @@ impl QI {
             b.wf(),
         ensures
             r.wf(),
-            r.lo == a.lo || r.lo == b.lo,
-            r.hi == a.hi || r.hi == b.hi,
-            q_le(r.lo, a.lo),
-            q_le(r.lo, b.lo),
-            q_le(a.hi, r.hi),
-            q_le(b.hi, r.hi),
+            r.spec_lower() == a.spec_lower() || r.spec_lower() == b.spec_lower(),
+            r.spec_upper() == a.spec_upper() || r.spec_upper() == b.spec_upper(),
+            q_le(r.spec_lower(), a.spec_lower()),
+            q_le(r.spec_lower(), b.spec_lower()),
+            q_le(a.spec_upper(), r.spec_upper()),
+            q_le(b.spec_upper(), r.spec_upper()),
     {
         let lo = Rat::min(a.lo, b.lo);
         let hi = Rat::max(a.hi, b.hi);
@@ -326,6 +422,20 @@ impl QI {
         }
         QI { lo, hi }
     }
+}
+
+/// The mathematical width of a well-formed interval is nonnegative and has a
+/// positive denominator, independently of whether it fits in [`Rat`].
+pub proof fn theorem_qi_exact_width_nonnegative(i: QI)
+    requires
+        i.wf(),
+    ensures
+        sub_n(i.spec_upper(), i.spec_lower()) >= 0,
+        prod_d(i.spec_upper(), i.spec_lower()) > 0,
+{
+    reveal(QI::spec_lower);
+    reveal(QI::spec_upper);
+    crate::q::lemma_op_widths(i.hi, i.lo);
 }
 
 /// **The containment theorem.** If the inputs bracket their true values, the
@@ -338,16 +448,16 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
         b.wf(),
         x.wf(),
         y.wf(),
-        q_le(a.lo, x),
-        q_le(x, a.hi),
-        q_le(b.lo, y),
-        q_le(y, b.hi),
+        q_le(a.spec_lower(), x),
+        q_le(x, a.spec_upper()),
+        q_le(b.spec_lower(), y),
+        q_le(y, b.spec_upper()),
     ensures
         // The exact sum of x and y lies between the exact sums of the
         // endpoints. After outward rounding it therefore lies inside
         // `QI::add(a, b)`.
-        add_n(a.lo, b.lo) * prod_d(x, y) <= add_n(x, y) * prod_d(a.lo, b.lo),
-        add_n(x, y) * prod_d(a.hi, b.hi) <= add_n(a.hi, b.hi) * prod_d(x, y),
+        add_n(a.spec_lower(), b.spec_lower()) * prod_d(x, y) <= add_n(x, y) * prod_d(a.spec_lower(), b.spec_lower()),
+        add_n(x, y) * prod_d(a.spec_upper(), b.spec_upper()) <= add_n(a.spec_upper(), b.spec_upper()) * prod_d(x, y),
 {
     lemma_add_endpoint_order(
         a.lo.n(),
@@ -362,28 +472,24 @@ pub proof fn theorem_interval_add_contains(a: QI, b: QI, x: Rat, y: Rat)
     lemma_add_endpoint_order(x.n(), x.d(), y.n(), y.d(), a.hi.n(), a.hi.d(), b.hi.n(), b.hi.d());
 }
 
-/// **The containment theorem for subtraction.** If the inputs bracket their
-/// true values, the interval difference brackets the true difference.
-///
-/// `a.lo - b.hi` is `a.lo + (-b.hi)`. This is therefore the same corollary of
-/// R2 as [`theorem_interval_add_contains`], applied to `a.lo`/`a.hi` and the
-/// negation of `b.hi`/`b.lo`.
+/// Enclosure for subtraction: `a.lo - b.hi` is `a.lo + (-b.hi)`, so this is
+/// [`theorem_interval_add_contains`] on the negation.
 pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
         x.wf(),
         y.wf(),
-        q_le(a.lo, x),
-        q_le(x, a.hi),
-        q_le(b.lo, y),
-        q_le(y, b.hi),
+        q_le(a.spec_lower(), x),
+        q_le(x, a.spec_upper()),
+        q_le(b.spec_lower(), y),
+        q_le(y, b.spec_upper()),
     ensures
         // The exact difference of x and y lies between the exact differences
         // of the endpoints. After outward rounding it therefore lies inside
         // `QI::sub(a, b)`.
-        sub_n(a.lo, b.hi) * prod_d(x, y) <= sub_n(x, y) * prod_d(a.lo, b.hi),
-        sub_n(x, y) * prod_d(a.hi, b.lo) <= sub_n(a.hi, b.lo) * prod_d(x, y),
+        sub_n(a.spec_lower(), b.spec_upper()) * prod_d(x, y) <= sub_n(x, y) * prod_d(a.spec_lower(), b.spec_upper()),
+        sub_n(x, y) * prod_d(a.spec_upper(), b.spec_lower()) <= sub_n(a.spec_upper(), b.spec_lower()) * prod_d(x, y),
 {
     // Negating `q_le(y, b.hi)` and `q_le(b.lo, y)` gives the two hypotheses
     // that each call below needs.
@@ -432,11 +538,6 @@ pub proof fn theorem_interval_sub_contains(a: QI, b: QI, x: Rat, y: Rat)
 }
 
 /// Adding two ordered pairs of fractions preserves the order.
-///
-/// The proof uses four small steps instead of one whole `nonlinear_arith`
-/// goal. It scales each hypothesis by the other pair's positive denominators.
-/// Two ring identities then line the sums up with the goal. The solver handles
-/// these steps well and the combined form badly.
 pub proof fn lemma_add_endpoint_order(
     an: int,
     ad: int,
@@ -484,13 +585,8 @@ pub proof fn lemma_add_endpoint_order(
     assert((yn * xd) * (ad * bd) == (yn * bd) * (ad * xd)) by (nonlinear_arith);
 }
 
-/// Chains three fraction comparisons across three different denominators:
-/// `rl <= n1/d1 <= n2/d2 <= rh` implies `rl <= rh`.
-///
-/// This is [`crate::q::lemma_le_trans`] generalised off `Rat`. The middle link
-/// is a raw fraction inequality, as [`lemma_add_endpoint_order`] produces, not
-/// another well-formed `Rat`. The proof therefore redoes the cancellation by
-/// hand.
+/// `rl <= n1/d1 <= n2/d2 <= rh` implies `rl <= rh`, with a raw fraction in the
+/// middle.
 pub proof fn lemma_frac_chain_le(
     rln: int,
     rld: int,
@@ -546,19 +642,9 @@ pub proof fn lemma_frac_chain_le(
     ;
 }
 
-/// If the exact `n1/d1 <= n2/d2`, then rounding the first `Down` and the
-/// second `Up` preserves the order. This holds **even across saturation**,
-/// where R2 alone does not apply.
-///
-/// This lemma makes `QI::add`, `QI::sub` and, through a single corner,
-/// `QI::mul` produce a well-formed result. Each of them computes its `lo` and
-/// `hi` endpoints by rounding two *ordered* exact fractions in opposite
-/// directions. This lemma carries the transition from ordered inputs to
-/// ordered rounded outputs, whether or not either side saturates.
-///
-/// The saturated cases use I2 alone. Every well-formed `Rat` lies in
-/// `[-MAX_MAG, MAX_MAG]`. A clamped endpoint therefore lies on the correct
-/// side of whatever the other endpoint rounds to.
+/// `n1/d1 <= n2/d2` implies `round(·, Down) <= round(·, Up)`, including across
+/// saturation, where I2 alone places a clamped endpoint on the right side.
+/// This is what makes `QI::add`/`sub`/`mul` well-formed.
 pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     requires
         d1 > 0,
@@ -574,6 +660,8 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
     let rhi = crate::round::round_frac(n2, d2, Dir::Up);
     crate::round::lemma_round_frac_wf(n1, d1, Dir::Down);
     crate::round::lemma_round_frac_wf(n2, d2, Dir::Up);
+    Rat::lemma_from_raw_spec_components((-(MAX_MAG as int)) as i64, 1);
+    Rat::lemma_from_raw_spec_components(MAX_MAG, 1);
     // I2 alone. Every well-formed `Rat` lies in `[-MAX_MAG, MAX_MAG]`.
     assert(rlo.n() <= max_mag() * rlo.d()) by (nonlinear_arith)
         requires
@@ -595,7 +683,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
         if n1 < 0 {
             // `rlo` clamps to `-MAX_MAG`. That is a lower bound on every
             // well-formed `Rat`, and in particular on `rhi`.
-            assert(rlo == Rat { num: (-(MAX_MAG as int)) as i64, den: 1 });
+            assert(rlo == Rat::from_raw_spec((-(MAX_MAG as int)) as i64, 1));
             assert(rlo.n() == 0 - max_mag() && rlo.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
                 requires
@@ -608,7 +696,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
             // `rlo` clamps to `MAX_MAG`. `n1/d1 <= n2/d2` holds, and `n1/d1`
             // exceeds `MAX_MAG`. Thus `n2/d2` exceeds `MAX_MAG` too, `n2`
             // saturates the same way, and `rhi` clamps to the same value.
-            assert(rlo == Rat { num: MAX_MAG, den: 1 });
+            assert(rlo == Rat::from_raw_spec(MAX_MAG, 1));
             assert(n2 > max_mag() * d2) by (nonlinear_arith)
                 requires
                     n1 > max_mag() * d1,
@@ -617,7 +705,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
                     d2 > 0,
             ;
             assert(n2 != 0 && !magnitude_fits(n2, d2));
-            assert(rhi == Rat { num: MAX_MAG, den: 1 });
+            assert(rhi == Rat::from_raw_spec(MAX_MAG, 1));
             assert(rlo.n() == max_mag() && rlo.d() == 1);
             assert(rhi.n() == max_mag() && rhi.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
@@ -634,7 +722,7 @@ pub proof fn lemma_directed_round_order(n1: int, d1: int, n2: int, d2: int)
         if n2 > 0 {
             // `rhi` clamps to `MAX_MAG`. That is an upper bound on every
             // well-formed `Rat`, and in particular on `rlo`.
-            assert(rhi == Rat { num: MAX_MAG, den: 1 });
+            assert(rhi == Rat::from_raw_spec(MAX_MAG, 1));
             assert(rhi.n() == max_mag() && rhi.d() == 1);
             assert(q_le(rlo, rhi)) by (nonlinear_arith)
                 requires
@@ -875,39 +963,34 @@ pub proof fn lemma_mul_scale_order(lo: Rat, hi: Rat, x: Rat, c: Rat)
     }
 }
 
-/// One of the four corners is a lower bound on the exact product `x*y`, for
-/// `x` in `a`'s range and `y` in `b`'s range.
-///
-/// The winning corner is the textbook one. The sign of `y` selects the
-/// `a`-endpoint. The sign of that `a`-endpoint then selects the `b`-endpoint.
-/// The proof applies [`lemma_mul_scale_order`] twice and chains the results
-/// through [`lemma_frac_le_trans`].
+/// One corner is a lower bound on `x*y`: the sign of `y` selects the
+/// `a`-endpoint, whose sign selects the `b`-endpoint.
 pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
         x.wf(),
         y.wf(),
-        q_le(a.lo, x),
-        q_le(x, a.hi),
-        q_le(b.lo, y),
-        q_le(y, b.hi),
+        q_le(a.spec_lower(), x),
+        q_le(x, a.spec_upper()),
+        q_le(b.spec_lower(), y),
+        q_le(y, b.spec_upper()),
     ensures
-        (y.n() >= 0 && a.lo.n() >= 0) ==> mul_n(a.lo, b.lo) * prod_d(x, y) <= mul_n(x, y) * prod_d(
-            a.lo,
-            b.lo,
+        (y.n() >= 0 && a.spec_lower().n() >= 0) ==> mul_n(a.spec_lower(), b.spec_lower()) * prod_d(x, y) <= mul_n(x, y) * prod_d(
+            a.spec_lower(),
+            b.spec_lower(),
         ),
-        (y.n() >= 0 && a.lo.n() < 0) ==> mul_n(a.lo, b.hi) * prod_d(x, y) <= mul_n(x, y) * prod_d(
-            a.lo,
-            b.hi,
+        (y.n() >= 0 && a.spec_lower().n() < 0) ==> mul_n(a.spec_lower(), b.spec_upper()) * prod_d(x, y) <= mul_n(x, y) * prod_d(
+            a.spec_lower(),
+            b.spec_upper(),
         ),
-        (y.n() < 0 && a.hi.n() >= 0) ==> mul_n(a.hi, b.lo) * prod_d(x, y) <= mul_n(x, y) * prod_d(
-            a.hi,
-            b.lo,
+        (y.n() < 0 && a.spec_upper().n() >= 0) ==> mul_n(a.spec_upper(), b.spec_lower()) * prod_d(x, y) <= mul_n(x, y) * prod_d(
+            a.spec_upper(),
+            b.spec_lower(),
         ),
-        (y.n() < 0 && a.hi.n() < 0) ==> mul_n(a.hi, b.hi) * prod_d(x, y) <= mul_n(x, y) * prod_d(
-            a.hi,
-            b.hi,
+        (y.n() < 0 && a.spec_upper().n() < 0) ==> mul_n(a.spec_upper(), b.spec_upper()) * prod_d(x, y) <= mul_n(x, y) * prod_d(
+            a.spec_upper(),
+            b.spec_upper(),
         ),
 {
     crate::q::lemma_op_widths(a.lo, b.lo);
@@ -924,8 +1007,8 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
             lemma_mul_scale_order(b.lo, b.hi, y, a.lo);
             // `a.lo * b.lo <= a.lo * y`, via `mul_n`/`prod_d` symmetry.
             assert(mul_n(b.lo, a.lo) * prod_d(y, a.lo) <= mul_n(y, a.lo) * prod_d(b.lo, a.lo));
-            assert(mul_n(b.lo, a.lo) == mul_n(a.lo, b.lo));
-            assert(mul_n(y, a.lo) == mul_n(a.lo, y));
+            assert(mul_n(b.lo, a.lo) == mul_n(a.lo, b.lo)) by (nonlinear_arith);
+            assert(mul_n(y, a.lo) == mul_n(a.lo, y)) by (nonlinear_arith);
             assert(prod_d(y, a.lo) == prod_d(a.lo, y));
             assert(prod_d(b.lo, a.lo) == prod_d(a.lo, b.lo));
             lemma_frac_le_trans(
@@ -940,8 +1023,8 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
             lemma_mul_scale_order(b.lo, b.hi, y, a.lo);
             // `a.lo < 0`: `a.lo * b.hi <= a.lo * y`.
             assert(mul_n(b.hi, a.lo) * prod_d(y, a.lo) <= mul_n(y, a.lo) * prod_d(b.hi, a.lo));
-            assert(mul_n(b.hi, a.lo) == mul_n(a.lo, b.hi));
-            assert(mul_n(y, a.lo) == mul_n(a.lo, y));
+            assert(mul_n(b.hi, a.lo) == mul_n(a.lo, b.hi)) by (nonlinear_arith);
+            assert(mul_n(y, a.lo) == mul_n(a.lo, y)) by (nonlinear_arith);
             assert(prod_d(y, a.lo) == prod_d(a.lo, y));
             assert(prod_d(b.hi, a.lo) == prod_d(a.lo, b.hi));
             lemma_frac_le_trans(
@@ -958,8 +1041,8 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
         if a.hi.n() >= 0 {
             lemma_mul_scale_order(b.lo, b.hi, y, a.hi);
             assert(mul_n(b.lo, a.hi) * prod_d(y, a.hi) <= mul_n(y, a.hi) * prod_d(b.lo, a.hi));
-            assert(mul_n(b.lo, a.hi) == mul_n(a.hi, b.lo));
-            assert(mul_n(y, a.hi) == mul_n(a.hi, y));
+            assert(mul_n(b.lo, a.hi) == mul_n(a.hi, b.lo)) by (nonlinear_arith);
+            assert(mul_n(y, a.hi) == mul_n(a.hi, y)) by (nonlinear_arith);
             assert(prod_d(y, a.hi) == prod_d(a.hi, y));
             assert(prod_d(b.lo, a.hi) == prod_d(a.hi, b.lo));
             lemma_frac_le_trans(
@@ -973,8 +1056,8 @@ pub proof fn lemma_mul_corner_lower(a: QI, b: QI, x: Rat, y: Rat)
         } else {
             lemma_mul_scale_order(b.lo, b.hi, y, a.hi);
             assert(mul_n(b.hi, a.hi) * prod_d(y, a.hi) <= mul_n(y, a.hi) * prod_d(b.hi, a.hi));
-            assert(mul_n(b.hi, a.hi) == mul_n(a.hi, b.hi));
-            assert(mul_n(y, a.hi) == mul_n(a.hi, y));
+            assert(mul_n(b.hi, a.hi) == mul_n(a.hi, b.hi)) by (nonlinear_arith);
+            assert(mul_n(y, a.hi) == mul_n(a.hi, y)) by (nonlinear_arith);
             assert(prod_d(y, a.hi) == prod_d(a.hi, y));
             assert(prod_d(b.hi, a.hi) == prod_d(a.hi, b.hi));
             lemma_frac_le_trans(
@@ -997,26 +1080,26 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
         b.wf(),
         x.wf(),
         y.wf(),
-        q_le(a.lo, x),
-        q_le(x, a.hi),
-        q_le(b.lo, y),
-        q_le(y, b.hi),
+        q_le(a.spec_lower(), x),
+        q_le(x, a.spec_upper()),
+        q_le(b.spec_lower(), y),
+        q_le(y, b.spec_upper()),
     ensures
-        (y.n() >= 0 && a.hi.n() >= 0) ==> mul_n(x, y) * prod_d(a.hi, b.hi) <= mul_n(
-            a.hi,
-            b.hi,
+        (y.n() >= 0 && a.spec_upper().n() >= 0) ==> mul_n(x, y) * prod_d(a.spec_upper(), b.spec_upper()) <= mul_n(
+            a.spec_upper(),
+            b.spec_upper(),
         ) * prod_d(x, y),
-        (y.n() >= 0 && a.hi.n() < 0) ==> mul_n(x, y) * prod_d(a.hi, b.lo) <= mul_n(
-            a.hi,
-            b.lo,
+        (y.n() >= 0 && a.spec_upper().n() < 0) ==> mul_n(x, y) * prod_d(a.spec_upper(), b.spec_lower()) <= mul_n(
+            a.spec_upper(),
+            b.spec_lower(),
         ) * prod_d(x, y),
-        (y.n() < 0 && a.lo.n() >= 0) ==> mul_n(x, y) * prod_d(a.lo, b.hi) <= mul_n(
-            a.lo,
-            b.hi,
+        (y.n() < 0 && a.spec_lower().n() >= 0) ==> mul_n(x, y) * prod_d(a.spec_lower(), b.spec_upper()) <= mul_n(
+            a.spec_lower(),
+            b.spec_upper(),
         ) * prod_d(x, y),
-        (y.n() < 0 && a.lo.n() < 0) ==> mul_n(x, y) * prod_d(a.lo, b.lo) <= mul_n(
-            a.lo,
-            b.lo,
+        (y.n() < 0 && a.spec_lower().n() < 0) ==> mul_n(x, y) * prod_d(a.spec_lower(), b.spec_lower()) <= mul_n(
+            a.spec_lower(),
+            b.spec_lower(),
         ) * prod_d(x, y),
 {
     crate::q::lemma_op_widths(a.lo, b.lo);
@@ -1033,8 +1116,8 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
             lemma_mul_scale_order(b.lo, b.hi, y, a.hi);
             // `a.hi * y <= a.hi * b.hi`.
             assert(mul_n(y, a.hi) * prod_d(b.hi, a.hi) <= mul_n(b.hi, a.hi) * prod_d(y, a.hi));
-            assert(mul_n(b.hi, a.hi) == mul_n(a.hi, b.hi));
-            assert(mul_n(y, a.hi) == mul_n(a.hi, y));
+            assert(mul_n(b.hi, a.hi) == mul_n(a.hi, b.hi)) by (nonlinear_arith);
+            assert(mul_n(y, a.hi) == mul_n(a.hi, y)) by (nonlinear_arith);
             assert(prod_d(y, a.hi) == prod_d(a.hi, y));
             assert(prod_d(b.hi, a.hi) == prod_d(a.hi, b.hi));
             lemma_frac_le_trans(
@@ -1049,8 +1132,8 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
             lemma_mul_scale_order(b.lo, b.hi, y, a.hi);
             // `a.hi < 0`: `a.hi * y <= a.hi * b.lo`.
             assert(mul_n(y, a.hi) * prod_d(b.lo, a.hi) <= mul_n(b.lo, a.hi) * prod_d(y, a.hi));
-            assert(mul_n(b.lo, a.hi) == mul_n(a.hi, b.lo));
-            assert(mul_n(y, a.hi) == mul_n(a.hi, y));
+            assert(mul_n(b.lo, a.hi) == mul_n(a.hi, b.lo)) by (nonlinear_arith);
+            assert(mul_n(y, a.hi) == mul_n(a.hi, y)) by (nonlinear_arith);
             assert(prod_d(y, a.hi) == prod_d(a.hi, y));
             assert(prod_d(b.lo, a.hi) == prod_d(a.hi, b.lo));
             lemma_frac_le_trans(
@@ -1067,8 +1150,8 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
         if a.lo.n() >= 0 {
             lemma_mul_scale_order(b.lo, b.hi, y, a.lo);
             assert(mul_n(y, a.lo) * prod_d(b.hi, a.lo) <= mul_n(b.hi, a.lo) * prod_d(y, a.lo));
-            assert(mul_n(b.hi, a.lo) == mul_n(a.lo, b.hi));
-            assert(mul_n(y, a.lo) == mul_n(a.lo, y));
+            assert(mul_n(b.hi, a.lo) == mul_n(a.lo, b.hi)) by (nonlinear_arith);
+            assert(mul_n(y, a.lo) == mul_n(a.lo, y)) by (nonlinear_arith);
             assert(prod_d(y, a.lo) == prod_d(a.lo, y));
             assert(prod_d(b.hi, a.lo) == prod_d(a.lo, b.hi));
             lemma_frac_le_trans(
@@ -1082,8 +1165,8 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
         } else {
             lemma_mul_scale_order(b.lo, b.hi, y, a.lo);
             assert(mul_n(y, a.lo) * prod_d(b.lo, a.lo) <= mul_n(b.lo, a.lo) * prod_d(y, a.lo));
-            assert(mul_n(b.lo, a.lo) == mul_n(a.lo, b.lo));
-            assert(mul_n(y, a.lo) == mul_n(a.lo, y));
+            assert(mul_n(b.lo, a.lo) == mul_n(a.lo, b.lo)) by (nonlinear_arith);
+            assert(mul_n(y, a.lo) == mul_n(a.lo, y)) by (nonlinear_arith);
             assert(prod_d(y, a.lo) == prod_d(a.lo, y));
             assert(prod_d(b.lo, a.lo) == prod_d(a.lo, b.lo));
             lemma_frac_le_trans(
@@ -1098,50 +1181,44 @@ pub proof fn lemma_mul_corner_upper(a: QI, b: QI, x: Rat, y: Rat)
     }
 }
 
-/// **The corner rule.** The exact product `x*y`, for `x` in `a`'s range and
-/// `y` in `b`'s range, lies between the min and the max of the four exact
-/// corner products. This holds for *every* sign pattern, and no case split is
-/// visible at this level. [`lemma_mul_corner_lower`] and
-/// [`lemma_mul_corner_upper`] each return some corner that brackets `x*y`.
-/// [`frac_min`] and [`frac_max`] of all four corners are themselves bounds on
-/// every corner (`lemma_frac_min4_le` and `lemma_frac_max4_ge`). The returned
-/// corner therefore chains through to the global min and max.
+/// The corner rule: `x*y` lies between the min and max of the four exact
+/// corner products, for every sign pattern.
 pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Rat, y: Rat)
     requires
         a.wf(),
         b.wf(),
         x.wf(),
         y.wf(),
-        q_le(a.lo, x),
-        q_le(x, a.hi),
-        q_le(b.lo, y),
-        q_le(y, b.hi),
+        q_le(a.spec_lower(), x),
+        q_le(x, a.spec_upper()),
+        q_le(b.spec_lower(), y),
+        q_le(y, b.spec_upper()),
     ensures
         ({
             let (mn, md) = frac_min(
                 frac_min(
-                    mul_n(a.lo, b.lo),
-                    prod_d(a.lo, b.lo),
-                    mul_n(a.lo, b.hi),
-                    prod_d(a.lo, b.hi),
+                    mul_n(a.spec_lower(), b.spec_lower()),
+                    prod_d(a.spec_lower(), b.spec_lower()),
+                    mul_n(a.spec_lower(), b.spec_upper()),
+                    prod_d(a.spec_lower(), b.spec_upper()),
                 ).0,
                 frac_min(
-                    mul_n(a.lo, b.lo),
-                    prod_d(a.lo, b.lo),
-                    mul_n(a.lo, b.hi),
-                    prod_d(a.lo, b.hi),
+                    mul_n(a.spec_lower(), b.spec_lower()),
+                    prod_d(a.spec_lower(), b.spec_lower()),
+                    mul_n(a.spec_lower(), b.spec_upper()),
+                    prod_d(a.spec_lower(), b.spec_upper()),
                 ).1,
                 frac_min(
-                    mul_n(a.hi, b.lo),
-                    prod_d(a.hi, b.lo),
-                    mul_n(a.hi, b.hi),
-                    prod_d(a.hi, b.hi),
+                    mul_n(a.spec_upper(), b.spec_lower()),
+                    prod_d(a.spec_upper(), b.spec_lower()),
+                    mul_n(a.spec_upper(), b.spec_upper()),
+                    prod_d(a.spec_upper(), b.spec_upper()),
                 ).0,
                 frac_min(
-                    mul_n(a.hi, b.lo),
-                    prod_d(a.hi, b.lo),
-                    mul_n(a.hi, b.hi),
-                    prod_d(a.hi, b.hi),
+                    mul_n(a.spec_upper(), b.spec_lower()),
+                    prod_d(a.spec_upper(), b.spec_lower()),
+                    mul_n(a.spec_upper(), b.spec_upper()),
+                    prod_d(a.spec_upper(), b.spec_upper()),
                 ).1,
             );
             mn * prod_d(x, y) <= mul_n(x, y) * md
@@ -1149,28 +1226,28 @@ pub proof fn theorem_interval_mul_contains(a: QI, b: QI, x: Rat, y: Rat)
         ({
             let (mx, mxd) = frac_max(
                 frac_max(
-                    mul_n(a.lo, b.lo),
-                    prod_d(a.lo, b.lo),
-                    mul_n(a.lo, b.hi),
-                    prod_d(a.lo, b.hi),
+                    mul_n(a.spec_lower(), b.spec_lower()),
+                    prod_d(a.spec_lower(), b.spec_lower()),
+                    mul_n(a.spec_lower(), b.spec_upper()),
+                    prod_d(a.spec_lower(), b.spec_upper()),
                 ).0,
                 frac_max(
-                    mul_n(a.lo, b.lo),
-                    prod_d(a.lo, b.lo),
-                    mul_n(a.lo, b.hi),
-                    prod_d(a.lo, b.hi),
+                    mul_n(a.spec_lower(), b.spec_lower()),
+                    prod_d(a.spec_lower(), b.spec_lower()),
+                    mul_n(a.spec_lower(), b.spec_upper()),
+                    prod_d(a.spec_lower(), b.spec_upper()),
                 ).1,
                 frac_max(
-                    mul_n(a.hi, b.lo),
-                    prod_d(a.hi, b.lo),
-                    mul_n(a.hi, b.hi),
-                    prod_d(a.hi, b.hi),
+                    mul_n(a.spec_upper(), b.spec_lower()),
+                    prod_d(a.spec_upper(), b.spec_lower()),
+                    mul_n(a.spec_upper(), b.spec_upper()),
+                    prod_d(a.spec_upper(), b.spec_upper()),
                 ).0,
                 frac_max(
-                    mul_n(a.hi, b.lo),
-                    prod_d(a.hi, b.lo),
-                    mul_n(a.hi, b.hi),
-                    prod_d(a.hi, b.hi),
+                    mul_n(a.spec_upper(), b.spec_lower()),
+                    prod_d(a.spec_upper(), b.spec_lower()),
+                    mul_n(a.spec_upper(), b.spec_upper()),
+                    prod_d(a.spec_upper(), b.spec_upper()),
                 ).1,
             );
             mul_n(x, y) * mxd <= mx * prod_d(x, y)

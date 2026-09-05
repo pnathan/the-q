@@ -1,30 +1,11 @@
-//! Error-propagation (Lipschitz) lemmas, obligation V7.
+//! Error-propagation (Lipschitz) lemmas (V7), the layer under interval
+//! arithmetic and the accumulation bounds.
 //!
-//! These lemmas are the enabling layer for interval arithmetic
-//! ([`crate::interval`]) and for the n-ary accumulation bound (V8). They state
-//! how far apart two results lie when their inputs are close:
-//!
-//! * `add`/`sub`: Lipschitz constant `1` in each argument. Errors add.
-//! * `mul`: on a bounded domain, `|ab - a'b'| <= |a|·|b - b'| + |b'|·|a - a'|`.
-//!   Every engine value lies in `[0, 1]`, thus the constant is `1` there too.
-//! * `div`: with the denominator bounded away from zero by `m > 0`, the
-//!   constant is `1/m` in the numerator and `|a|/m^2` in the denominator.
-//!
-//! Every statement is division-free through `frac_diff_le`.
-//!
-//! `mul` and `div` each appear twice. The first form is a bare algebraic
-//! identity (`lemma_mul_lipschitz`, `lemma_div_lipschitz`). The second form is
-//! the bound that identity supports (`lemma_mul_lipschitz_bound`,
-//! `lemma_div_lipschitz_bound`). Callers depend on the identities, thus this
-//! module keeps them unchanged. The bounds are the usable form for composing
-//! two `frac_diff_le` hypotheses through a product or a quotient. The identity
-//! alone does not do that composition.
-//!
-//! The quotient bound does *not* build on the quotient identity. Division is
-//! multiplication by the reciprocal. The quotient bound therefore feeds
-//! `lemma_recip_lipschitz_bound` into `lemma_mul_lipschitz_bound`. That form is
-//! shorter to state and far cheaper for the solver than the four-way
-//! cross-multiplied difference taken head-on.
+//! Stated division-free through `frac_diff_le`. `add`/`sub` have constant 1;
+//! `mul` is bounded by `|a|·|b - b'| + |b'|·|a - a'|`; `recip` costs
+//! `md²/mn²` for a denominator bounded below by `mn/md`; `div` composes the
+//! two. For `mul` and `div` the bare identities (`lemma_mul_lipschitz`,
+//! `lemma_div_lipschitz`) are kept beside the bounds because callers use both.
 
 use verus_builtin_macros::verus;
 
@@ -48,12 +29,7 @@ pub open spec fn frac_diff_le(n1: int, d1: int, n2: int, d2: int, en: int, ed: i
     abs_int(n1 * d2 - n2 * d1) * ed <= en * (d1 * d2)
 }
 
-/// `|u + v| <= |u| + |v|` and `|u - v| <= |u| + |v|`.
-///
-/// One lemma states both directions, because the product bound needs the first
-/// and the quotient bound needs the second. The proof is a case split on two
-/// signs, thus it costs nothing. The lemma lets call sites name the step
-/// instead of relying on the solver to take it.
+/// `|u ± v| <= |u| + |v|`.
 pub proof fn lemma_abs_triangle(u: int, v: int)
     ensures
         abs_int(u + v) <= abs_int(u) + abs_int(v),
@@ -61,12 +37,7 @@ pub proof fn lemma_abs_triangle(u: int, v: int)
 {
 }
 
-/// `|u · v| == |u| · |v|`, both signs unknown.
-///
-/// [`crate::model::lemma_abs_mul_pos`] covers the case where one factor is
-/// known positive, which covers most call sites. This lemma is the general
-/// case. It applies when a numerator of unknown sign multiplies a difference of
-/// unknown sign. The product and quotient bounds both meet that case.
+/// `|u · v| == |u| · |v|` with both signs unknown.
 pub proof fn lemma_abs_prod(u: int, v: int)
     ensures
         abs_int(u * v) == abs_int(u) * abs_int(v),
@@ -327,21 +298,10 @@ pub proof fn lemma_mul_lipschitz(
     assert((a2n * b2n) * (ad * bd) == (b2n * bd) * (a2n * ad)) by (nonlinear_arith);
 }
 
-/// **The product bound.** Two `frac_diff_le` hypotheses compose through a
-/// multiplication.
-///
-/// Given `|a - a'| <= e1/ed`, `|b - b'| <= e2/ed`, `|a| <= ca` and `|b'| <= cb`,
-/// this lemma concludes `|a·b - a'·b'| <= (ca·e2 + cb·e1)/ed`. The two
-/// magnitude bounds are division-free as `|an| <= ca·ad` and `|b2n| <= cb·b2d`.
-///
-/// Each magnitude bound sits on a specific side. They are `|a|`, the *first*
-/// argument and unprimed, and `|b'|`, the *second* argument and primed.
-/// [`lemma_mul_lipschitz`]'s identity produces that diagonal. The other
-/// diagonal needs a different identity.
-///
-/// On `[0, 1]` both constants are `1`. That case is
-/// [`lemma_mul_lipschitz_unit`], which the module header describes when it
-/// states that errors add.
+/// Product bound: `|a - a'| <= e1/ed`, `|b - b'| <= e2/ed`, `|a| <= ca`,
+/// `|b'| <= cb` give `|a·b - a'·b'| <= (ca·e2 + cb·e1)/ed`. The magnitude
+/// bounds sit on the diagonal [`lemma_mul_lipschitz`] produces (`a` unprimed,
+/// `b` primed). [`lemma_mul_lipschitz_unit`] is the `ca = cb = 1` case.
 #[verifier::rlimit(40)]
 pub proof fn lemma_mul_lipschitz_bound(
     an: int,
@@ -375,12 +335,8 @@ pub proof fn lemma_mul_lipschitz_bound(
     ensures
         frac_diff_le(an * bn, ad * bd, a2n * b2n, a2d * b2d, ca * e2 + cb * e1, ed),
 {
-    // Every absolute value gets a name before it reaches a nonlinear goal.
-    // `abs_int` is an open spec fn. Inline, it unfolds to an if-then-else
-    // inside the polynomial, and the arithmetic solver case-splits under every
-    // product. That form runs for about 25 minutes and then exceeds the rlimit.
-    // Named, each absolute value is an opaque atom, and the goals below are
-    // plain ring identities.
+    // Name every absolute value first: inline, `abs_int` unfolds to an
+    // if-then-else under every product and the solver exceeds its limit.
     let x = an * a2d - a2n * ad;
     let y = bn * b2d - b2n * bd;
     let p = (an * bn) * (a2d * b2d) - (a2n * b2n) * (ad * bd);
@@ -432,12 +388,8 @@ pub proof fn lemma_mul_lipschitz_bound(
     lemma_mul_le_mono(pa * a2d, ay * ed, e2 * (bd * b2d));
     lemma_mul_le_mono(pb * bd, ax * ed, e1 * (ad * a2d));
 
-    // Step 5: replace the two magnitudes by their ceilings. The multiplier in
-    // each case is everything except the magnitude itself, which sets this
-    // operand order. The products appear in full rather than under a name. A
-    // `let` binding is invisible inside `by (nonlinear_arith)`, whose context
-    // holds only its own `requires`. A goal such as `m1 >= 0` over a named
-    // product is therefore unprovable there.
+    // Step 5: replace the magnitudes by their ceilings. Products appear in full:
+    // a `let` binding is invisible inside `by (nonlinear_arith)`.
     assert(a2d * (e2 * (bd * b2d)) >= 0) by (nonlinear_arith)
         requires
             a2d > 0,
@@ -466,12 +418,7 @@ pub proof fn lemma_mul_lipschitz_bound(
         + cb * e1) * ((ad * bd) * (a2d * b2d))) by (nonlinear_arith);
 }
 
-/// The product bound on the unit domain. With `|a| <= 1` and `|b'| <= 1` the
-/// errors add.
-///
-/// Every opinion component in the fusion engine is in this case, and the module
-/// header makes this claim. A separate lemma lets callers on `[0, 1]` omit a
-/// pair of magnitude constants that are always both `1`.
+/// The product bound with `|a|, |b'| <= 1`: errors add.
 pub proof fn lemma_mul_lipschitz_unit(
     an: int,
     ad: int,
@@ -506,12 +453,8 @@ pub proof fn lemma_mul_lipschitz_unit(
     assert(1 * e2 + 1 * e1 == e1 + e2);
 }
 
-/// **Division with the denominator bounded away from zero.**
-///
-/// With `|b| >= m > 0` and `|b'| >= m`, `|a/b - a'/b'|` is controlled by
-/// `(|b'|·|a - a'| + |a|·|b - b'|) / (|b|·|b'|)`, hence by `1/m^2` times the
-/// numerator perturbations on a bounded domain. The identity below is the
-/// algebraic core. The bound follows by dividing through.
+/// The algebraic core of the quotient bound:
+/// `a/b - a'/b' == (b'·(a - a') + a·(b' - b)) / (b·b')`.
 #[verifier::rlimit(20)]
 pub proof fn lemma_div_lipschitz(
     an: int,
@@ -549,16 +492,8 @@ pub proof fn lemma_div_lipschitz(
     assert((a2n * b2d) * (ad * bn) == (a2n * ad) * (bn * b2d)) by (nonlinear_arith);
 }
 
-/// **The reciprocal bound.** If `b` and `b'` are both at least `m == mn/md > 0`
-/// and `|b - b'| <= e2/ed`, then `|1/b - 1/b'| <= (e2·md^2)/(ed·mn^2)`.
-///
-/// This lemma holds the quadratic cost of perturbing a divisor. The identity
-/// `1/b - 1/b' == (b' - b)/(b·b')` passes the numerator perturbation through
-/// unchanged, and the denominator contributes `1/m` twice.
-///
-/// The caller supplies the lower bound division-free as `mn·bd <= md·bn`. That
-/// is `b >= mn/md` cross-multiplied. Callers with `b >= 1/2` pass
-/// `mn = 1, md = 2`.
+/// Reciprocal bound: for `b, b' >= mn/md > 0` (given as `mn·bd <= md·bn`) and
+/// `|b - b'| <= e2/ed`, `|1/b - 1/b'| <= (e2·md²)/(ed·mn²)`.
 pub proof fn lemma_recip_lipschitz_bound(
     bn: int,
     bd: int,
@@ -621,32 +556,11 @@ pub proof fn lemma_recip_lipschitz_bound(
     assert(e2 * ((md * bn) * (md * b2n)) == (e2 * (md * md)) * (bn * b2n)) by (nonlinear_arith);
 }
 
-/// **The quotient bound.** Two `frac_diff_le` hypotheses compose through a
-/// division, given a positive lower bound on both divisors.
-///
-/// The lower bound is a rational `m == mn/md`. The caller supplies it
-/// division-free as `mn·bd <= md·bn` and `mn·b2d <= md·b2n`, that is, `b >= m`
-/// and `b' >= m`. With `|a| <= ca`, the conclusion is
-///
-/// ```text
-/// |a/b - a'/b'| <= (ca·e2·md^2 + md·e1·mn^2) / (ed·mn^2)
-/// ```
-///
-/// Callers with `b >= 1/2` pass `mn = 1, md = 2`, where this reads
-/// `(4·ca·e2 + 2·e1)/ed`. The `md^2` on the divisor perturbation is real. See
-/// [`lemma_recip_lipschitz_bound`]. It makes a near-zero divisor expensive.
-///
-/// The proof does *not* build on [`lemma_div_lipschitz`]'s identity. Division
-/// is multiplication by the reciprocal. This proof therefore feeds
-/// [`lemma_recip_lipschitz_bound`] into [`lemma_mul_lipschitz_bound`]. That
-/// composition is shorter and far cheaper for the solver than the four-way
-/// cross-multiplied difference taken head-on. The identity lemma stays
-/// unchanged for the callers that use it directly.
-///
-/// This lemma requires both divisors strictly positive rather than merely
-/// nonzero. That keeps `ad·bn` and `a2d·b2n` positive, which `frac_diff_le`
-/// needs. A two-sided version must case-split on the sign, and this crate does
-/// not provide one until a caller needs it.
+/// Quotient bound: with `b, b' >= mn/md > 0` (division-free as `mn·bd <= md·bn`)
+/// and `|a| <= ca`,
+/// `|a/b - a'/b'| <= (ca·e2·md² + md·e1·mn²) / (ed·mn²)`.
+/// Proved as [`lemma_recip_lipschitz_bound`] fed into
+/// [`lemma_mul_lipschitz_bound`]. Divisors must be strictly positive.
 pub proof fn lemma_div_lipschitz_bound(
     an: int,
     ad: int,
@@ -735,15 +649,8 @@ pub proof fn lemma_div_lipschitz_bound(
     );
 }
 
-/// **The triangle inequality on fractions**, division-free.
-///
-/// If `|x - y| <= e1/E` and `|y - z| <= e2/E` then `|x - z| <= (e1+e2)/E`.
-///
-/// The whole proof is one algebraic identity,
-/// `(xn·zd - zn·xd)·yd == (xn·yd - yn·xd)·zd + (yn·zd - zn·yd)·xd`. The
-/// ordinary integer triangle inequality follows, then the positive `yd`
-/// cancels. Every step below is degree three or less, which keeps the proof
-/// inside the solver's budget.
+/// Triangle inequality on fractions: `|x - y| <= e1/E` and `|y - z| <= e2/E`
+/// give `|x - z| <= (e1 + e2)/E`.
 pub proof fn lemma_frac_triangle(
     xn: int,
     xd: int,
@@ -821,18 +728,9 @@ pub proof fn lemma_frac_triangle(
     ;
 }
 
-/// **The V8 induction step.** One more rounded `add` on top of an accumulator
-/// already within `k` units takes the total to `k + 1` units.
-///
-/// Two contributions add:
-///
-/// * This step's own rounding error, at most one unit by R3. That is the
-///   `within_error_bound` hypothesis. The magnitude hypothesis
-///   `max(1, |step value|) <= m` converts it to an absolute bound.
-/// * The error already carried in the accumulator. It passes through the
-///   addition untouched, because addition is exactly 1-Lipschitz. That step is
-///   the `bd^2` scaling below. Adding the same `next` to both the accumulator
-///   and the exact partial sum cancels out of the difference entirely.
+/// V8 induction step: one rounded `add` on an accumulator within `k` units is
+/// within `k + 1`. This step's R3 unit (made absolute by `max(1, |v|) <= m`)
+/// plus the carried error, which addition passes through unchanged.
 pub proof fn lemma_abs_error_step(prev: Rat, pn: int, pd: int, next: Rat, r: Rat, k: nat, m: int)
     requires
         prev.wf(),

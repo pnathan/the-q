@@ -1,70 +1,18 @@
-//! The rounding contract R1–R4 (obligation V4), and the single canonicalising
-//! entry point that every arithmetic operation uses.
+//! The rounding contract R1–R4 (V4) and the single canonicalising entry point
+//! every arithmetic operation uses, [`round_frac_exec`].
 //!
-//! # The algorithm
+//! Given an exact `n / d` in `i128`: zero → `0/1`; `|n/d| > MAX_MAG` →
+//! saturate to `±MAX_MAG/1` (R3 does not apply there; `checked_*` reports it);
+//! reduce by the gcd and return exactly if the pair fits (R1); otherwise snap
+//! `n·2^s / d` to an integer in the requested direction over `2^s`, with
+//! `s = 62 - k` for `k = bitlen(floor(|x|))`, capped at 61. The grid step
+//! `2^-s` meets R3's `2^-61 · max(1, |x|)` exactly, so `B = 61` for the
+//! directed modes and `B = 62` for `Nearest` (a half step). Ties go to even.
 //!
-//! [`round_frac_exec`] takes an *exact* fraction `n / d` computed in `i128` and
-//! produces the `Rat` that the operation returns:
-//!
-//! 1. `n == 0` → `0/1`.
-//! 2. `|n/d| > MAX_MAG` → **saturate** to `±MAX_MAG/1`. R3 does not apply
-//!    outside the representable range. This is a choice, not a necessity, as
-//!    `model::magnitude_fits` explains. The `checked_*` operations instead
-//!    surface this case as `None`.
-//! 3. Reduce by `gcd(|n|, d)`. If the reduced pair fits the budget, return it
-//!    **exactly**. This is R1. Thus small investigations pay zero rounding.
-//! 4. Otherwise **dyadic snap**: pick a shift `s`, round `n·2^s / d` to an
-//!    integer in the requested direction, and return that over `2^s`
-//!    (re-reduced).
-//!
-//! # Choosing the shift
-//!
-//! With `k = bitlen(floor(|x|))` (so `2^(k-1) <= |x| < 2^k` for `|x| >= 1`, and
-//! `k = 0` for `|x| < 1`), the shift is `s = 62 - k`, capped at `61` and
-//! floored at `0`.
-//!
-//! * The grid step is `2^-s`, which is `2^(k-62)` for `k >= 1` and `2^-61` at
-//!   the cap (`k == 0`).
-//! * The bound R3 demands is `2^-61 · max(1, |x|)`: that is `2^-61` for
-//!   `|x| < 1`, and `>= 2^-61 · 2^(k-1) = 2^(k-62)` above.
-//!
-//! The two meet exactly in both regimes. Therefore **`B = 61` holds for the
-//! directed modes**, one bit better than the specification's `B >= 60` bar.
-//!
-//! `Dir::Nearest` is a half grid step, and every default operation uses it.
-//! It therefore satisfies `B = 62`. The uniform R3 contract stays at `B = 61`
-//! for all three directions, because the directed modes achieve no better.
-//! `Dir::Nearest` additionally carries the tighter bound as its own guarantee.
-//! `lemma_grid_error_step_nearest_half` is the half-step form (division-free:
-//! `2·|sn·rd − rn·2^s| <= rd`), `lemma_r3_error_nearest` composes it into the
-//! full bound, and `Rat::add`/`sub`/`mul`/`div` each `ensures` it alongside
-//! the uniform one.
-//!
-//! # Why the shift is `62 - k` and not `61 - k`
-//!
-//! A shift of `61 - k` reserves a bit of headroom. It gives `|x| · 2^s < 2^61`,
-//! thus a rounding carry can never push the numerator past the budget. That
-//! costs a bit of precision to avoid a case that is cheap to handle directly.
-//!
-//! A shift of `62 - k` spends the whole budget. It gives
-//! `|x| · 2^s < 2^k · 2^(62-k) = 2^62`, thus rounding up can land on `2^62`
-//! exactly, one past `MAX_MAG`. That case is the *carry*, and it costs nothing.
-//! The pair is then `±2^62 / 2^s` with `s >= 1`, and `2^s` divides `2^62`.
-//! The reduction that every operation already performs thus turns it into
-//! `±2^(62-s) / 1`, comfortably inside I2. The proof is `lemma_carry_reduces`
-//! (no intra-doc link: items inside `verus!` are not resolvable from module
-//! docs). The cap at `s <= 61` keeps the *denominator* `2^s` inside the budget
-//! in the `k == 0` case, where no carry is possible.
-//!
-//! Ties break to even, as IEEE-754 does. Long fold chains thus do not drift in
-//! a fixed direction.
-//!
-//! # No overflow (V2)
-//!
-//! The code *never* materialises `n·2^s`, because that overflows `i128`.
-//! [`shift_div`] instead walks `s <= 61` doubling steps. It carries only a
-//! quotient (`< 2^62`) and a remainder (`< d <= 2^124`), so the widest live
-//! value is `2·d < 2^125`.
+//! Spending the whole budget (`62 - k`, not `61 - k`) lets a rounding carry
+//! land on `2^62`; the pair is then `2^62 / 2^s` and reduces back into budget
+//! (`lemma_carry_reduces`). `n·2^s` is never formed: [`shift_div`] walks `s`
+//! doubling steps with a quotient below `2^62` and a remainder below `d`.
 
 use verus_builtin_macros::verus;
 
@@ -101,12 +49,9 @@ pub open spec fn snap_shift(n: int, d: int) -> nat {
     }
 }
 
-/// The integer `n·2^s / d` rounded in direction `dir`.
-///
-/// Verus `int` division is Euclidean, which for `d > 0` is floor division.
-/// Thus `a / d` is `floor(a/d)` and `-((-a) / d)` is `ceil(a/d)`. This holds
-/// for negative `a` as well. `Nearest` breaks ties to an even numerator, which
-/// is sign-symmetric: rounding `-x` gives the negation of rounding `x`.
+/// `n·2^s / d` rounded in direction `dir`. Verus `int` division is Euclidean,
+/// so `a / d` is floor and `-((-a) / d)` is ceil for `d > 0`; `Nearest` ties
+/// to even, which is sign-symmetric.
 pub open spec fn grid_num(n: int, d: int, s: nat, dir: Dir) -> int {
     let a = n * pow2(s);
     match dir {
@@ -144,33 +89,28 @@ pub open spec fn exact_path(n: int, d: int) -> bool {
     n == 0 || fits_budget(red_num(n, d), red_den(n, d))
 }
 
-/// The complete rounding function, in ghost form.
-///
-/// Every arithmetic operation `ensures` that its result is *equal to* this
-/// function applied to the exact numerator and denominator. A definition as a
-/// function, rather than only as a set of properties, makes commutativity and
-/// cross-run determinism provable. `add(a, b)` and `add(b, a)` feed provably
-/// equal `int`s into the same function.
+/// The rounding function in ghost form. Every operation ensures its result
+/// *equals* this, which is what makes commutativity and determinism provable.
 pub open spec fn round_frac(n: int, d: int, dir: Dir) -> Rat {
     if n == 0 {
-        Rat { num: 0, den: 1 }
+        Rat::from_raw_spec(0, 1)
     } else if !magnitude_fits(n, d) {
         if n > 0 {
-            Rat { num: MAX_MAG, den: 1 }
+            Rat::from_raw_spec(MAX_MAG, 1)
         } else {
-            Rat { num: (-(MAX_MAG as int)) as i64, den: 1 }
+            Rat::from_raw_spec((-(MAX_MAG as int)) as i64, 1)
         }
     } else {
         let rn = red_num(n, d);
         let rd = red_den(n, d);
         if fits_budget(rn, rd) {
-            Rat { num: rn as i64, den: rd as i64 }
+            Rat::from_raw_spec(rn as i64, rd as i64)
         } else {
             let s = snap_shift(rn, rd);
             let sn = grid_num(rn, rd, s, dir);
             let sd = pow2(s);
             let g2 = gcd_int(sn, sd);
-            Rat { num: (sn / g2) as i64, den: (sd / g2) as i64 }
+            Rat::from_raw_spec((sn / g2) as i64, (sd / g2) as i64)
         }
     }
 }
@@ -201,7 +141,8 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
 {
     crate::model::lemma_max_mag_pow2();
     if n == 0 {
-        assert(round_frac(n, d, dir) == Rat { num: 0, den: 1 });
+        Rat::lemma_from_raw_spec_components(0, 1);
+        assert(round_frac(n, d, dir) == Rat::from_raw_spec(0, 1));
         lemma_gcd_one();
     } else {
         let g = gcd_int(n, d);
@@ -225,7 +166,8 @@ pub proof fn lemma_r1_identity(n: int, d: int, dir: Dir)
                 d == rd * g,
         ;
         let r = round_frac(n, d, dir);
-        assert(r == Rat { num: rn as i64, den: rd as i64 });
+        Rat::lemma_from_raw_spec_components(rn as i64, rd as i64);
+        assert(r == Rat::from_raw_spec(rn as i64, rd as i64));
         // I1's zero clause: `n != 0` and `n == rn·g` force `rn != 0`. The
         // clause is thus vacuous here.
         assert(rn != 0) by (nonlinear_arith)
@@ -308,12 +250,8 @@ pub proof fn lemma_reduce_shrinks(n: int, d: int)
     ;
 }
 
-/// The magnitude of the reduced numerator is the reduction of the magnitude:
-/// `|n| / g == |n / g|`.
-///
-/// This lemma bridges [`crate::gcd::lemma_gcd_reduce_coprime`], which is stated
-/// on `nat` magnitudes, and `gcd_int(red_num, red_den) == 1`, which invariant
-/// I1 requires.
+/// `|n| / g == |n / g|`, bridging the `nat`-stated
+/// [`crate::gcd::lemma_gcd_reduce_coprime`] to I1 on `int`.
 pub proof fn lemma_reduce_abs(n: int, d: int)
     requires
         d > 0,
@@ -334,14 +272,8 @@ pub proof fn lemma_reduce_abs(n: int, d: int)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(abs_int(n), g, abs_int(rn), 0);
 }
 
-/// `round_frac` always produces a well-formed `Rat`. This is the V1 obligation
-/// at the specification level. Proof code can thus use it without going through
-/// the executable function.
-///
-/// The proof has four cases, one per branch: zero, saturation, the exact path,
-/// and the dyadic snap. Canonicality comes from `lemma_gcd_reduce_coprime` in
-/// the two reducing branches. The bounds come from `fits_budget` and
-/// `lemma_snap_in_budget` respectively.
+/// `round_frac` always produces a well-formed `Rat` (V1 at the spec level),
+/// by cases: zero, saturation, exact path, snap.
 pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
     requires
         d > 0,
@@ -350,6 +282,9 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
 {
     lemma_gcd_one();
     crate::model::lemma_max_mag_pow2();
+    Rat::lemma_from_raw_spec_components(0, 1);
+    Rat::lemma_from_raw_spec_components(MAX_MAG, 1);
+    Rat::lemma_from_raw_spec_components((-(MAX_MAG as int)) as i64, 1);
     if n == 0 {
     } else if !magnitude_fits(n, d) {
     } else {
@@ -372,6 +307,7 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             // `wf` reads the `i64` fields. `fits_budget` bounds the `int`s.
             assert(((rn as i64) as int) == rn);
             assert(((rd as i64) as int) == rd);
+            Rat::lemma_from_raw_spec_components(rn as i64, rd as i64);
         } else {
             let s = snap_shift(rn, rd);
             let sn = grid_num(rn, rd, s, dir);
@@ -415,7 +351,7 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
                 assert(od == 1);
             }
-            assert(round_frac(n, d, dir) == Rat { num: on as i64, den: od as i64 });
+            assert(round_frac(n, d, dir) == Rat::from_raw_spec(on as i64, od as i64));
             assert(od > 0);
             assert(abs_int(on) <= max_mag());
             assert(od <= max_mag());
@@ -428,6 +364,7 @@ pub proof fn lemma_round_frac_wf(n: int, d: int, dir: Dir)
             crate::model::lemma_max_mag_pow2();
             assert(((on as i64) as int) == on);
             assert(((od as i64) as int) == od);
+            Rat::lemma_from_raw_spec_components(on as i64, od as i64);
         }
     }
 }
@@ -482,6 +419,7 @@ pub proof fn lemma_snap_result_fields(n: int, d: int, dir: Dir)
     lemma_gcd_reduce_coprime(abs_int(sn) as nat, sd as nat);
     lemma_reduce_abs(sn, sd);
     lemma_reduce_shrinks(sn, sd);
+    Rat::lemma_from_raw_spec_components(red_num(sn, sd) as i64, red_den(sn, sd) as i64);
     if sn == 0 {
         crate::gcd::lemma_gcd_zero(sd as nat);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(sd, sd, 1, 0);
@@ -581,12 +519,7 @@ pub proof fn lemma_gcd_one()
     }
 }
 
-/// The snapped numerator is within one of the exact scaled value. This is the
-/// form that `lemma_snap_in_budget` consumes.
-///
-/// `|sn·rd - rn·2^s| <= rd` (one grid step) and `|rn|·2^s == q·rd + r` with
-/// `0 <= r < rd` give `|sn|·rd <= q·rd + r + rd < (q + 2)·rd`. Therefore
-/// `|sn| <= q + 1`.
+/// `|sn| <= q + 1`, from the one-grid-step bound and `|rn|·2^s == q·rd + r`.
 pub proof fn lemma_snap_magnitude(rn: int, rd: int, s: nat, dir: Dir)
     requires
         rd > 0,
@@ -702,12 +635,7 @@ pub proof fn lemma_grid_reduce_preserves_order(rn: int, rd: int, s: nat, dir: Di
     ;
 }
 
-/// The reduced snapped pair sits on the same side of `rn/rd` as the snapped
-/// pair does.
-///
-/// `Down` gives `sn·rd <= rn·2^s` and `Up` gives `sn·rd >= rn·2^s`. Division
-/// of both members by `g2 == gcd(sn, 2^s)` multiplies each side of the
-/// inequality by the same positive factor. The inequality thus survives.
+/// Reducing the snapped pair by `gcd(sn, 2^s)` preserves its side of `rn/rd`.
 pub proof fn lemma_order_after_reduce(rn: int, rd: int, s: nat, dir: Dir)
     requires
         rd > 0,
@@ -774,12 +702,8 @@ pub proof fn lemma_scale_frac_order(n: int, d: int, g: int, rn: int, rd: int, r:
 // R3 — the error bound
 // ---------------------------------------------------------------------------
 
-/// **R3.** `|result - exact| <= 2^-61 · max(1, |exact|)`, for every direction.
-///
-/// The proof is the shift analysis from the module header, carried out
-/// division-free. The three cases are `k = 0` (`|x| < 1`, `s = 61`),
-/// `1 <= k <= 61` (`s = 62 - k`), and `k >= 62` (`s = 0`). In each case the
-/// grid step `2^-s` is below `2^-61 · max(1, |x|)`.
+/// R3: `|result - exact| <= 2^-61 · max(1, |exact|)` in every direction, by
+/// cases `k = 0` (`s = 61`), `1 <= k <= 61` (`s = 62 - k`), `k >= 62` (`s = 0`).
 pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
     requires
         d > 0,
@@ -792,7 +716,9 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
         let r = round_frac(n, d, dir);
         assert(r.n() * d - n * r.d() == 0);
         assert(abs_int(0) == 0);
+        assert(abs_int(r.n() * d - n * r.d()) == 0);
         lemma_pow2_pos(precision_b());
+        assert(0 * pow2(precision_b()) == 0);
         assert(r.d() * max_int(d, abs_int(n)) >= 0) by (nonlinear_arith)
             requires
                 r.d() > 0,
@@ -828,15 +754,8 @@ pub proof fn lemma_r3_error(n: int, d: int, dir: Dir)
     }
 }
 
-/// **R3, at `Dir::Nearest`'s tighter bound.** `|result - exact| <= 2^-62 ·
-/// max(1, |exact|)`. This bound is one bit better than the uniform R3
-/// statement, and specific to `Dir::Nearest`. The directed modes do not achieve
-/// it. See the module header.
-///
-/// The shape matches [`lemma_r3_error`]. The half-step bound
-/// ([`lemma_grid_error_step_nearest_half`]) replaces the whole-step bound
-/// ([`lemma_grid_error_step`]), and every downstream lemma runs at
-/// `precision_b_nearest()` instead of `precision_b()`.
+/// R3 at `Nearest`'s bound, `2^-62 · max(1, |exact|)`: [`lemma_r3_error`] with
+/// the half-step lemma in place of the whole-step one.
 pub proof fn lemma_r3_error_nearest(n: int, d: int)
     requires
         d > 0,
@@ -897,14 +816,8 @@ pub proof fn lemma_r3_error_nearest(n: int, d: int)
     }
 }
 
-/// **R2 and R3 together**, at one call and under one guard.
-///
-/// The two lemmas share one precondition exactly: `d > 0` and
-/// `!saturated(n, d)`. Every caller that needs a *value* contract, rather than
-/// well-formedness alone, needs both. The ingestion constructors each state R2
-/// and R3 side by side. Without this bundle each one repeats the same pair of
-/// calls after the same guard. The bundle also puts a change to how the two
-/// compose in one place instead of at every entry point.
+/// R2 and R3 together under their shared guard, for the constructors that
+/// state both.
 pub proof fn lemma_r2_r3_directed(n: int, d: int, dir: Dir)
     requires
         d > 0,
@@ -959,18 +872,9 @@ pub proof fn lemma_grid_error_step(rn: int, rd: int, s: nat, dir: Dir)
     }
 }
 
-/// The `Dir::Nearest` half step: the snapped numerator is within *half* a
-/// grid step of the true scaled value. Equivalently,
-/// `2·|sn·rd - rn·2^s| <= rd`.
-///
-/// This bound is tighter than [`lemma_grid_error_step`] by exactly the factor
-/// that a round-to-nearest (ties to even) pick gains over a directed one.
-/// `grid_num` picks `q` when the fractional remainder `r` is at most half of
-/// `rd`, and `q + 1` when `r` is at least half. The chosen integer is thus
-/// always within `rd/2`, written division-free as `2·r <= rd` or
-/// `2·(rd - r) <= rd`. The tie case (`2·r == rd`) hits equality on whichever
-/// side the even rule picks. That boundary carries this crate's `B = 62`
-/// claim.
+/// The `Nearest` half step: `2·|sn·rd - rn·2^s| <= rd`. `grid_num` picks `q`
+/// when the remainder is at most `rd/2` and `q + 1` when at least; a tie hits
+/// equality either way. This is the `B = 62` claim.
 pub proof fn lemma_grid_error_step_nearest_half(rn: int, rd: int, s: nat)
     requires
         rd > 0,
@@ -1032,12 +936,8 @@ pub proof fn lemma_grid_error_step_nearest_half(rn: int, rd: int, s: nat)
     }
 }
 
-/// The shift is large enough for R3: `rd · 2^61 <= 2^s · max(rd, |rn|)`.
-///
-/// This lemma is the core of the bound. `k = bitlen(|rn|/rd)` gives
-/// `|rn| >= 2^(k-1) · rd` whenever `k >= 1`, and `s = 62 - k`. Therefore
-/// `2^s · |rn| >= 2^(62-k) · 2^(k-1) · rd = 2^61 · rd`. For `k = 0` the shift
-/// caps at `61`, and `max(rd, |rn|) >= rd` suffices.
+/// `rd · 2^61 <= 2^s · max(rd, |rn|)`: for `k >= 1`, `|rn| >= 2^(k-1) · rd`
+/// and `s = 62 - k`; for `k = 0` the cap at 61 suffices.
 pub proof fn lemma_shift_covers_bound(rn: int, rd: int)
     requires
         rd > 0,
@@ -1206,12 +1106,8 @@ pub proof fn lemma_error_scales_nearest(n: int, d: int, g: int, rn: int, rd: int
 // R4 — monotonicity (stated per grid, as the specification permits)
 // ---------------------------------------------------------------------------
 
-/// **R4.** On a fixed grid `2^-s`, the snap is monotone. If `n1/d1 <= n2/d2`
-/// then the snapped numerators are ordered the same way, in every direction.
-///
-/// The statement is per-grid. The *composed* operation ("return exactly if it
-/// fits, otherwise snap") is **not** globally monotone. See the counterexample
-/// in `README.md`. This crate does not claim global monotonicity.
+/// R4: on a fixed grid the snap is monotone in every direction. Per grid only;
+/// the composed operation is not globally monotone (`README.md`).
 pub proof fn lemma_r4_monotone_grid(n1: int, d1: int, n2: int, d2: int, s: nat, dir: Dir)
     requires
         d1 > 0,
@@ -1369,16 +1265,8 @@ pub proof fn lemma_floor_div_monotone(a1: int, d1: int, a2: int, d2: int)
 // Executable helpers
 // ---------------------------------------------------------------------------
 
-/// Whether `|n| / d` leaves the budget, without dividing when it need not.
-///
-/// The test is `m > MAX_MAG · d`, and answering it by division costs two `i128`
-/// divisions on every operation. A numerator at or below `MAX_MAG` answers it
-/// without dividing, because `d >= 1`. That covers every pair whose exact
-/// result is inside the budget, which is the whole exact path.
-///
-/// The two arms return the same predicate, so the caller sees one fact and no
-/// case split. The caller is the largest proof in the crate, and an inline
-/// branch here puts it over its resource limit.
+/// Whether `m / d` exceeds `MAX_MAG`, without dividing when `m <= MAX_MAG`.
+/// Both arms return the same predicate so the caller sees no case split.
 pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
     requires
         d > 0,
@@ -1407,16 +1295,8 @@ pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
     }
 }
 
-/// `gcd(|m|, 2^s)`, without a gcd.
-///
-/// The second reduction of the snap path always takes its gcd against `2^s`,
-/// and the answer to that is `2^min(v2(m), s)`: strip the twos that `m` and
-/// `2^s` share and stop at whichever runs out first. This loop does that in at
-/// most `s` halvings of an `i128`, where each halving is a shift. The general
-/// gcd it replaces runs Euclid's narrowing step and then the binary loop.
-///
-/// `crate::gcd::lemma_gcd_odd_pow2` closes the exit case: when `m` has no more
-/// twos, what remains is odd, and an odd number is coprime to a power of two.
+/// `gcd(|m|, 2^s) == 2^min(v2(m), s)`, by at most `s` halvings;
+/// `crate::gcd::lemma_gcd_odd_pow2` closes the exit case.
 pub fn gcd_pow2_i128(m: i128, s: u32) -> (r: i128)
     requires
         s <= 61,
@@ -1626,13 +1506,8 @@ pub proof fn lemma_bitlen_unique(x: int, k: nat)
     }
 }
 
-/// `floor(n · 2^s / d)` and its remainder, computed **without ever forming
-/// `n · 2^s`**. That product overflows `i128` for the denominators this crate
-/// handles.
-///
-/// The loop carries `q`, bounded by `2^62` through the precondition, and
-/// `rem`, bounded by `d`. The widest live value is therefore
-/// `2 · rem < 2 · 2^124 = 2^125`.
+/// `floor(n · 2^s / d)` and its remainder without forming `n · 2^s`: `s`
+/// doubling steps carrying `q < 2^62` and `rem < d`, so nothing exceeds `2^125`.
 pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
     requires
         0 <= n,
@@ -1802,24 +1677,10 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     round_frac_exec_with_gcd(n, d, g, dir)
 }
 
-/// [`round_frac_exec`], with the gcd supplied by the caller.
-///
-/// The gcd is the dominant cost of an arithmetic operation, and at `i128` width
-/// it is the most expensive form of it. A caller that already knows the gcd of
-/// its own pair can skip that work. `Rat::mul_dir` and `Rat::div_dir` know it:
-/// by `lemma_gcd_cross`, the gcd of a product of two canonical fractions is the
-/// product of two gcds taken across the operands, and those operands are
-/// bounded by `MAX_MAG`, thus each of those two gcds is a `u64` gcd.
-///
-/// The precondition pins `g` to the same value the general entry point would
-/// compute, thus the postcondition is identical and no caller can pass a
-/// number that changes the result.
-// This function carries the whole rounding contract, and it sits at the edge of
-// the default resource budget. Each fast path added to it -- the division-free
-// saturation test, the coprime shortcut -- adds a branch the solver has to
-// carry through the rest of the body. Both are written to converge on a single
-// fact for exactly that reason, and the budget is raised once here rather than
-// paying for a proof restructure that buys nothing.
+/// [`round_frac_exec`] with the gcd supplied. The precondition pins `g` to the
+/// value the general entry point computes, so the postcondition is identical.
+// Carries the whole rounding contract and sits at the edge of the default
+// resource budget; the two fast paths each add a branch the solver carries.
 #[verifier::rlimit(30)]
 pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
     requires
@@ -1844,7 +1705,7 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
         lemma_round_frac_wf(n as int, d as int, dir);
     }
     if n == 0 {
-        return Rat { num: 0, den: 1 };
+        return Rat::from_raw_parts(0, 1);
     }
     let m0: i128 = if n < 0 {
         0 - n
@@ -1876,9 +1737,9 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
     };
     if saturates {
         if n > 0 {
-            return Rat { num: MAX_MAG, den: 1 };
+            return Rat::from_raw_parts(MAX_MAG, 1);
         } else {
-            return Rat { num: -MAX_MAG, den: 1 };
+            return Rat::from_raw_parts(-MAX_MAG, 1);
         }
     }
     proof {
@@ -1931,7 +1792,7 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
         rn
     };
     if arn <= mm && rd <= mm {
-        return Rat { num: rn as i64, den: rd as i64 };
+        return Rat::from_raw_parts(rn as i64, rd as i64);
     }
     // --- dyadic snap -------------------------------------------------------
     proof {
@@ -2027,7 +1888,7 @@ pub fn round_frac_exec_with_gcd(n: i128, d: i128, g: i128, dir: Dir) -> (r: Rat)
         assert(((on as i64) as int) == on as int);
         assert(((od as i64) as int) == od as int);
     }
-    Rat { num: on as i64, den: od as i64 }
+    Rat::from_raw_parts(on as i64, od as i64)
 }
 
 /// `|n| <= MAX_MAG · d` is exactly `ip < MAX_MAG || (ip == MAX_MAG && fr == 0)`
@@ -2063,12 +1924,8 @@ pub proof fn lemma_magnitude_test(m: int, d: int, ip: int, fr: int)
     assert(d * ip == ip * d) by (nonlinear_arith);
 }
 
-/// Reducing a fraction by a common divisor leaves its integer part alone:
-/// `(g·rm) / (g·rd) == rm / rd`.
-///
-/// The overflow test in [`round_frac_exec`] runs on the *unreduced* pair. The
-/// shift comes from the *reduced* pair. This lemma lets the first bound travel
-/// to the second.
+/// `(g·rm) / (g·rd) == rm / rd`, carrying the overflow test from the unreduced
+/// pair to the reduced one.
 pub proof fn lemma_reduce_quotient(m: int, d: int, g: int, rm: int, rd: int)
     requires
         g > 0,
@@ -2308,15 +2165,8 @@ pub proof fn lemma_grid_num_matches(rn: int, rd: int, s: nat, dir: Dir, qf: int,
     }
 }
 
-/// The carry case: the snapped numerator lands exactly on `2^62`, one past the
-/// budget.
-///
-/// The carry is the price of a shift that spends the whole budget on the
-/// scaled numerator instead of reserving a bit of headroom. This lemma handles
-/// the case rather than avoiding it by construction. The case costs nothing,
-/// because the pair is `±2^62 / 2^s` with `s >= 1`. `2^s` divides `2^62`, thus
-/// the reduction is `±2^(62-s) / 1`. `62 - s <= 61` puts that comfortably
-/// inside I2.
+/// The carry: a snapped numerator of exactly `2^62` over `2^s`, `s >= 1`,
+/// reduces to `2^(62-s) / 1`, inside the budget.
 pub proof fn lemma_carry_reduces(sn: int, s: nat)
     requires
         abs_int(sn) == pow2(62),
@@ -2367,24 +2217,10 @@ pub proof fn lemma_carry_reduces(sn: int, s: nat)
     }
 }
 
-/// The snapped denominator fits the budget, and the numerator does too except
-/// in the single carry case handled by [`lemma_carry_reduces`].
-///
-/// Denominator: `2^s <= 2^61 <= MAX_MAG`.
-///
-/// Numerator, for `k == 0` (`|x| < 1`, shift capped at `61`): the snapped
-/// quotient is below `2^61`, and one more than it still fits.
-///
-/// Numerator, for `1 <= k <= 61`: `s = 62 - k` and `|rn| < 2^k·rd`, thus the
-/// quotient is below `2^62`. Rounding up can therefore land on `2^62` exactly,
-/// one past the budget. That case is the carry.
-///
-/// Numerator, for `k >= 62` (shift clamped to `0`): the result is `ceil(|x|)`,
-/// thus `floor(|x|) < MAX_MAG` suffices. Equality gives `|rn| == MAX_MAG·rd`
-/// exactly, thus `rd` divides `|rn|`. Coprimality then forces `rd == 1`, and
-/// `|rn| == MAX_MAG` means the pair fits the budget. That contradicts the
-/// hypothesis that it does not. Coprimality is therefore a precondition here:
-/// without it the bound is false.
+/// The snapped pair fits the budget, except the carry case of
+/// [`lemma_carry_reduces`]. For `k >= 62` (shift 0) the result is `ceil(|x|)`
+/// and `floor(|x|) < MAX_MAG` is needed strictly; coprimality rules out
+/// equality, and without it the bound is false.
 pub proof fn lemma_snap_in_budget(rn: int, rd: int, s: nat, sn: int, k: nat)
     requires
         rd > 0,
@@ -2525,40 +2361,27 @@ pub open spec fn finest_grid_den() -> int {
     pow2(61)
 }
 
-/// Where a nonzero value strictly inside the first grid cell lands.
-///
-/// `Nearest` collapses the value to zero. The directed modes must stay on
-/// their own side of it, thus they return the neighbouring grid point.
-///
-/// The denominator goes through [`finest_grid_den`] rather than a repeated
-/// literal. This ties the definition to `pow2(61)` instead of to a digit
-/// string that needs a manual check against the one in `convert::tiny`.
+/// Where a nonzero value inside the first grid cell lands: zero for `Nearest`,
+/// the neighbouring grid point for the directed modes.
 pub open spec fn subgrid_endpoint(positive: bool, dir: Dir) -> Rat {
     match dir {
-        Dir::Nearest => Rat { num: 0, den: 1 },
+        Dir::Nearest => Rat::from_raw_spec(0, 1),
         Dir::Down => if positive {
-            Rat { num: 0, den: 1 }
+            Rat::from_raw_spec(0, 1)
         } else {
-            Rat { num: (-1int) as i64, den: finest_grid_den() as i64 }
+            Rat::from_raw_spec((-1int) as i64, finest_grid_den() as i64)
         },
         Dir::Up => if positive {
-            Rat { num: 1, den: finest_grid_den() as i64 }
+            Rat::from_raw_spec(1, finest_grid_den() as i64)
         } else {
-            Rat { num: 0, den: 1 }
+            Rat::from_raw_spec(0, 1)
         },
     }
 }
 
-/// **Rounding below the finest grid.** A nonzero value whose magnitude is
-/// under `2^-62` lies strictly inside half the first dyadic cell. It rounds to
-/// that cell's endpoint on the correct side.
-///
-/// `convert::tiny` computes this endpoint directly. It is the one input path
-/// whose denominator (`2^s` for `s > 124`) exceeds what `round_frac_exec`
-/// accepts. The executable code therefore cannot call the rounder and inherit
-/// its contract. A proof that the shortcut *equals* `round_frac` lets
-/// `from_parts_dir` state one uniform postcondition over all its branches,
-/// instead of an exception that nobody then reasons about.
+/// A nonzero value below `2^-62` rounds to the first cell's endpoint on its
+/// side. `convert::tiny` computes this directly (its `2^s` exceeds what the
+/// rounder accepts); this proves the shortcut equals `round_frac`.
 #[verifier::rlimit(40)]
 pub proof fn lemma_round_frac_subgrid(n: int, d: int, dir: Dir)
     requires
@@ -2578,6 +2401,9 @@ pub proof fn lemma_round_frac_subgrid(n: int, d: int, dir: Dir)
     lemma_pow2_61();
     lemma_pow2_62();
     lemma_max_mag_pow2();
+    Rat::lemma_from_raw_spec_components(0, 1);
+    Rat::lemma_from_raw_spec_components(1, finest_grid_den() as i64);
+    Rat::lemma_from_raw_spec_components((-1int) as i64, finest_grid_den() as i64);
 
     let g = gcd_int(n, d);
     let rn = red_num(n, d);

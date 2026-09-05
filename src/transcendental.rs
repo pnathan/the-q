@@ -1,66 +1,18 @@
-//! Transcendental and root functions on the extended [`Q`].
+//! Roots and transcendental functions on [`Q`].
 //!
-//! # These functions are not rational-closed
+//! None of these is rational-closed, so each returns a nearby representable
+//! rational. Every series and iteration runs a fixed number of steps chosen so
+//! the truncation tail is below the `2^-61` grid; the term counts are derived
+//! beside each constant. Termination is therefore structural, and Verus proves
+//! totality and well-formedness of every result. Accuracy is measured, not
+//! proven: `README.md` has the table, from two independent oracles.
 //!
-//! `sqrt(2)`, `exp(1)` and `sin(1)` are irrational. No rational type can return
-//! them. This module returns the nearest representable rational to the true
-//! value, with a stated error bound. This is the same contract that the
-//! arithmetic makes, applied to functions that have no exact answer.
-//!
-//! # Termination is structural
-//!
-//! Each iteration runs a fixed number of steps. No iteration loops until a
-//! convergence test passes. A fixed count terminates trivially, which lets
-//! Verus discharge these functions. A fixed count also makes the cost of each
-//! call constant and predictable. The counts are large enough for the iteration
-//! to converge to within the representable grid.
-//!
-//! # Sources of error
-//!
-//! There are two independent sources:
-//!
-//! * Truncation. The series or the iteration stops after a fixed number of
-//!   terms. The term count keeps the tail below the grid resolution.
-//! * Rounding. Each intermediate `Q` operation rounds and adds at most
-//!   `2^-61 · max(1, |value|)`. Over `k` operations these errors accumulate
-//!   additively, as the V8 bound in `nary` states.
-//!
-//! Rounding is the larger source. Thus these functions are accurate to
-//! approximately `2^-55`, and not to the `2^-61` of a single operation. This
-//! accuracy is better than the `2^-53` of `f64`.
-//!
-//! # Precision decreases for results far below 1
-//!
-//! The R3 error bound is `2^-61 · max(1, |exact|)`. Below 1 this bound is
-//! absolute, not relative. A value near `1` thus carries approximately 61
-//! significant bits, but a value near `2^-43` carries approximately 18. The
-//! grid spacing is constant, so a small value has fewer grid points relative to
-//! its own magnitude.
-//!
-//! The effect is largest when the output of a function is small. `exp(-30)` is
-//! approximately `2^-43`, thus its relative accuracy is approximately `2^-18`.
-//! `ln(exp(-30))` differs from `-30` by approximately `5e-6`. The test
-//! `ln_inverts_exp_to_the_precision_the_grid_allows` measures this difference
-//! at `2^-20`. The cause is the intermediate value, which cannot carry the
-//! information.
-//!
-//! If small values are important, scale the problem so that the values are not
-//! small. The budget is larger near `1` than near `0`.
-//!
-//! # Failure is a value, not a panic
-//!
-//! Each function is total. `sqrt` of a negative number is `Nan`. `ln(0)` is
-//! `NegInf`. An argument whose result is not representable gives a saturated
-//! result. The special-value results come from the §2 denotations in issue #26,
-//! as the arithmetic tables do. A result is sound only if its denotation
-//! contains the true image of the denotation of the operand.
-//!
-//! One result of that rule is important: `sqrt` of a saturated value is `Nan`,
-//! and not `PosSat`. `PosSat` denotes `(MAX_MAG, ∞)`. The image of that
-//! interval under `sqrt` is `(2^31, ∞)`, which extends far below `MAX_MAG` and
-//! thus contains representable values. A `PosSat` result would claim a
-//! magnitude that the value can fail to have. The same rule makes `ln(PosSat)`
-//! and `atan(PosSat)` `Nan`.
+//! The dominant error is rounding of intermediates, and it is absolute below
+//! 1 (R3), so relative accuracy falls off for small results. Special values
+//! follow the denotations in issue #26: a result is sound only if its
+//! denotation contains the true image of the operand's. That is why
+//! `sqrt(PosSat)`, `ln(PosSat)` and `atan(PosSat)` are `Nan` — the image of
+//! `(MAX_MAG, ∞)` under each reaches back inside the budget.
 
 use verus_builtin_macros::verus;
 
@@ -69,34 +21,15 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-use crate::ext::Q;
+use crate::ext::{Q, Sign};
 use crate::types::Rat;
 
 verus! {
 
-/// Integer square root: the largest `r >= 0` with `r*r <= n`.
-///
-/// The function uses Newton's method on integers. Each step decreases the
-/// estimate until the estimate settles. The `decreases` clause uses that
-/// property. The classic formulation loops `while y < x`, and that guard is the
-/// same "still decreasing" test.
-///
-/// For `n < 0` the function returns `0` and does not panic. No caller in this
-/// crate passes a negative argument, and a total function is easier to reason
-/// about than a guarded one.
-///
-/// The postcondition is the defining property of an integer square root, and
-/// not a bound on it: `r*r <= n < (r+1)*(r+1)` pins `r` to one value. A weaker
-/// postcondition such as `r >= 0 && r <= n` also holds for wrong answers, for
-/// example `isqrt(2) == 2`, and thus verifies against a defective
-/// implementation.
-///
-/// The implementation runs Newton's method for speed, then a bounded
-/// correction. Newton's method alone reaches the answer, but a proof of that
-/// property needs AM-GM reasoning over integer division. The correction loops
-/// establish the postcondition directly from their own exit conditions. In
-/// practice each loop runs at most one time and costs two `i128`
-/// multiplications.
+/// Integer square root, `r*r <= n < (r+1)*(r+1)`; `0` for `n < 0`. Newton on
+/// integers, then a bounded correction whose exit conditions establish the
+/// postcondition directly (Newton alone would need AM-GM over integer
+/// division).
 pub fn isqrt_i64(n: i64) -> (r: i64)
     requires
         // Every caller passes a `Rat` component, which the type invariant
@@ -232,13 +165,7 @@ pub fn isqrt_i64(n: i64) -> (r: i64)
     r
 }
 
-/// **`isqrt`'s contract pins its answer**: any two non-negative integers
-/// satisfying `r·r <= n < (r+1)·(r+1)` for the same `n` are equal.
-///
-/// This is the categoricity proof for the `isqrt` specification. A weaker
-/// contract such as `0 <= r <= n` holds for more than one value. This theorem
-/// states that the specification in use holds for exactly one value, which is
-/// the true floor of the square root.
+/// The `isqrt` contract admits exactly one value.
 pub proof fn theorem_isqrt_unique(n: int, r1: int, r2: int)
     requires
         0 <= r1,
@@ -268,14 +195,7 @@ pub proof fn theorem_isqrt_unique(n: int, r1: int, r2: int)
     }
 }
 
-/// **`isqrt` is monotone**: a larger radicand cannot have a smaller integer
-/// square root.
-///
-/// The theorem speaks about the contract and not about the code: results that
-/// satisfy the specification for `n1 <= n2` are ordered. It thus applies at
-/// each call site. It also permits componentwise reasoning about the quality of
-/// `sqrt_seed`: a larger numerator gives a seed numerator that is not smaller,
-/// independently of the later Newton refinement.
+/// `isqrt` is monotone, stated on the contract.
 pub proof fn theorem_isqrt_monotone(n1: int, n2: int, r1: int, r2: int)
     requires
         n1 <= n2,
@@ -298,13 +218,7 @@ pub proof fn theorem_isqrt_monotone(n1: int, n2: int, r1: int, r2: int)
     }
 }
 
-/// **`isqrt` inverts squaring exactly**: on a perfect square `k·k` the
-/// contract forces the answer `k`.
-///
-/// Perfect squares are the one input family where the floor and the true square
-/// root are equal, thus the nearest grid point is the exact value. The proof is
-/// not an unfolding of the contract. It uses the nonlinear fact
-/// `k·k < (k+1)·(k+1)` together with categoricity to fix the result at `k`.
+/// On a perfect square `k·k` the contract forces `k`.
 pub proof fn theorem_isqrt_of_square(k: int, r: int)
     requires
         0 <= k,
@@ -351,22 +265,9 @@ fn sqrt_seed(x: Rat) -> (r: Q)
 }
 
 impl Q {
-    /// The non-negative square root.
-    ///
-    /// | operand | result | why |
-    /// |---|---|---|
-    /// | `Number(x)`, `x > 0` | nearest representable root | Newton |
-    /// | `Number(0)` | `Number(0)` | exact |
-    /// | `Number(x)`, `x < 0` | `Nan` | no real root |
-    /// | `PosSat` | `Nan` | image `(2^31, ∞)` reaches below `MAX_MAG` |
-    /// | `NegSat` | `Nan` | negative |
-    /// | `PosInf` | `PosInf` | exact |
-    /// | `NegInf` | `Nan` | negative |
-    /// | `Nan` | `Nan` | |
-    ///
-    /// The Newton iteration `y <- (y + x/y)/2` converges quadratically. From
-    /// the integer-root seed, seven steps are more than sufficient: a further
-    /// step cannot change the rounded answer.
+    /// The square root. Negative → `Nan`; `PosSat` → `Nan` (its image reaches
+    /// below `MAX_MAG`); `PosInf` → `PosInf`. Seven Newton steps from the
+    /// integer-root seed.
     pub fn sqrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -436,24 +337,12 @@ impl Q {
 const SERIES_TERMS: u32 = 20;
 
 
-/// Terms of the `sin` and `cos` series, whose argument is reduced to
-/// `|z| <= π/4`.
-///
-/// The tail at `k` is `(π/4)^(2k+1)/(2k+1)!`; `k = 9` gives `8.4e-20`, under
-/// the grid, while `k = 8` gives `4.6e-17`, well over it. The loop covers `k`
-/// up to `TRIG_TERMS - 1 = 10`.
-///
-/// A dedicated count is most valuable here. The factorial denominators make
-/// this series converge much faster than the `atan` series. The `atan` length
-/// thus doubles the cost of each `sin` and `cos` call and adds no accuracy.
+/// Terms of the `sin`/`cos` series on `|z| <= π/4`: the tail at `k = 9` is
+/// `8.4e-20`, under the grid; at `k = 8`, `4.6e-17`.
 const TRIG_TERMS: u32 = 11;
 
-/// Newton iterations in [`Q::sqrt`].
-///
-/// The integer-root seed is within a factor of two, so the initial relative
-/// error is at most about `1/2`. Newton squares it each step:
-/// `0.5 → 0.125 → 7.8e-3 → 3.1e-5 → 4.6e-10 → 1.1e-19`. The sixth step is thus
-/// below the grid. Seven steps give a margin. An eighth step adds no accuracy.
+/// Newton iterations in [`Q::sqrt`]: the seed is within a factor of two and
+/// the error squares each step, so six reach the grid; seven is margin.
 const SQRT_ITERS: u32 = 7;
 
 
@@ -462,13 +351,401 @@ const SQRT_ITERS: u32 = 7;
 /// anything.
 const EXP_ARG_LIMIT: i64 = 44;
 
+/// Beyond `|x| > 22`, `e^-|x| < 2^-62 · e^|x|`, so the hyperbolic functions
+/// are a single exponential to within the rounding contract.
+const HYP_ARG_LIMIT: i64 = 22;
 
-/// A `Rat` on the fixed-point grid: `round(num · 2^63 / den)`.
-///
-/// The receiver's magnitude is at most `EXP_ARG_LIMIT`, thus the result is at
-/// most `44 · 2^63`, which is what [`crate::fx::fx_exp_reduced`] accepts. The
-/// scaled numerator is at most `2^62 · 2^63 = 2^125` and fits `i128`.
-// `rem` is consumed by the proof block, which plain rustc erases.
+/// Canonical bounded-rational approximation of π used throughout this module.
+pub const PI_NUM: i64 = 1_811_004_864_519_280_709;
+pub const PI_DEN: i64 = 576_460_752_303_423_488;
+
+/// Quotient/remainder decomposition used by [`fx_to_grid`].
+pub proof fn lemma_fx_to_grid_decomposition(m: int, d: int, q: int, rem: int)
+    requires
+        0 <= m,
+        0 < d,
+        q == (m * crate::fx::FX_ONE as int) / d,
+        rem == (m * crate::fx::FX_ONE as int) % d,
+    ensures
+        m * crate::fx::FX_ONE as int == q * d + rem,
+        0 <= rem < d,
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+        m * crate::fx::FX_ONE as int,
+        d,
+    );
+    vstd::arithmetic::div_mod::lemma_mod_bound(m * crate::fx::FX_ONE as int, d);
+}
+
+/// The selected grid point is within half a grid cell of the exact scaled
+/// value.
+pub proof fn lemma_fx_to_grid_nearest(
+    m: int,
+    d: int,
+    q: int,
+    rem: int,
+    rounded: int,
+)
+    requires
+        0 <= m,
+        0 < d,
+        m * crate::fx::FX_ONE as int == q * d + rem,
+        0 <= rem < d,
+        rounded == if 2 * rem > d || (2 * rem == d && q % 2 == 1) {
+            q + 1
+        } else {
+            q
+        },
+    ensures
+        2 * crate::model::abs_int(rounded * d - m * crate::fx::FX_ONE as int) <= d,
+{
+    let scaled = m * crate::fx::FX_ONE as int;
+    assert(scaled == q * d + rem);
+    if 2 * rem > d || (2 * rem == d && q % 2 == 1) {
+        assert(rounded == q + 1);
+        assert(2 * rem >= d);
+        assert(rounded * d == (q + 1) * d) by (nonlinear_arith)
+            requires
+                rounded == q + 1,
+        ;
+        assert((q + 1) * d == q * d + d) by (nonlinear_arith);
+        assert(rounded * d - scaled == d - rem);
+        assert(0 <= d - rem);
+        assert(crate::model::abs_int(d - rem) == d - rem);
+        assert(2 * (d - rem) <= d);
+    } else {
+        assert(rounded == q);
+        assert(2 * rem <= d);
+        assert(rounded * d == q * d);
+        assert(rounded * d - scaled == -rem);
+        assert(crate::model::abs_int(-rem) == rem);
+    }
+}
+
+/// An exact half-cell case selects an even grid integer.
+pub proof fn lemma_fx_to_grid_ties_even(
+    m: int,
+    d: int,
+    q: int,
+    rem: int,
+    rounded: int,
+)
+    requires
+        0 <= m,
+        0 < d,
+        m * crate::fx::FX_ONE as int == q * d + rem,
+        0 <= rem < d,
+        rounded == if 2 * rem > d || (2 * rem == d && q % 2 == 1) {
+            q + 1
+        } else {
+            q
+        },
+    ensures
+        2 * crate::model::abs_int(rounded * d - m * crate::fx::FX_ONE as int) == d
+            ==> rounded % 2 == 0,
+{
+    let scaled = m * crate::fx::FX_ONE as int;
+    assert(scaled == q * d + rem);
+    vstd::arithmetic::div_mod::lemma_mod_bound(q, 2);
+    if 2 * rem > d || (2 * rem == d && q % 2 == 1) {
+        assert(rounded == q + 1);
+        assert(2 * rem >= d);
+        assert(rounded * d == (q + 1) * d) by (nonlinear_arith)
+            requires
+                rounded == q + 1,
+        ;
+        assert((q + 1) * d == q * d + d) by (nonlinear_arith);
+        assert(rounded * d - scaled == d - rem);
+        assert(crate::model::abs_int(d - rem) == d - rem);
+        if 2 * crate::model::abs_int(rounded * d - m * crate::fx::FX_ONE as int) == d {
+            assert(2 * rem == d);
+            assert(q % 2 == 1);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(q, 2);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                q + 1,
+                2,
+                q / 2 + 1,
+                0,
+            );
+        }
+    } else {
+        assert(rounded == q);
+        assert(2 * rem <= d);
+        assert(rounded * d == q * d);
+        assert(rounded * d - scaled == -rem);
+        assert(crate::model::abs_int(-rem) == rem);
+        if 2 * crate::model::abs_int(rounded * d - m * crate::fx::FX_ONE as int) == d {
+            assert(2 * rem == d);
+            assert(q % 2 != 1);
+            assert(q % 2 == 0);
+        }
+    }
+}
+
+/// Rounding the supported input range cannot exceed the fixed-point engine's
+/// input budget.
+pub proof fn lemma_fx_to_grid_bound(
+    m: int,
+    d: int,
+    q: int,
+    rem: int,
+    rounded: int,
+    neg: bool,
+)
+    requires
+        0 <= m,
+        0 < d,
+        m * crate::fx::FX_ONE as int == q * d + rem,
+        0 <= rem < d,
+        rounded == if 2 * rem > d || (2 * rem == d && q % 2 == 1) {
+            q + 1
+        } else {
+            q
+        },
+        m * crate::fx::FX_ONE as int <= 405828369621610135552int * d,
+    ensures
+        crate::model::abs_int(if neg { -rounded } else { rounded })
+            <= 406000000000000000000int,
+{
+    let scaled = m * crate::fx::FX_ONE as int;
+    vstd::arithmetic::mul::lemma_mul_nonnegative(m, crate::fx::FX_ONE as int);
+    assert(scaled >= 0);
+    assert(scaled == q * d + rem);
+    if q < 0 {
+        assert(q <= -1);
+        assert(q * d <= -d) by (nonlinear_arith)
+            requires
+                q <= -1,
+                d > 0,
+        ;
+        assert(scaled < 0);
+        assert(false);
+    }
+    assert(q * d <= scaled);
+    assert(q * d <= 405828369621610135552int * d);
+    if q > 405828369621610135552int {
+        assert(q >= 405828369621610135553int);
+        assert(q * d >= 405828369621610135553int * d) by (nonlinear_arith)
+            requires
+                q >= 405828369621610135553int,
+                d > 0,
+        ;
+        assert(q * d > 405828369621610135552int * d) by (nonlinear_arith)
+            requires
+                d > 0,
+                q * d >= 405828369621610135553int * d,
+        ;
+        assert(false);
+    }
+    assert(q <= rounded <= q + 1);
+    assert(rounded <= 405828369621610135553int);
+    assert(405828369621610135553int <= 406000000000000000000int) by (compute);
+    if neg {
+        assert(crate::model::abs_int(-rounded) == rounded);
+    } else {
+        assert(crate::model::abs_int(rounded) == rounded);
+    }
+}
+
+/// Exact rounded target for the four cases where both `atan2` coordinates are
+/// infinite. Other inputs map to zero so the model remains total.
+pub open spec fn atan2_inf_target(y: Q, x: Q) -> Rat {
+    match (y, x) {
+        (Q::PosInf, Q::PosInf) => crate::round::round_frac(
+            PI_NUM as int,
+            4 * PI_DEN as int,
+            crate::types::Dir::Nearest,
+        ),
+        (Q::PosInf, Q::NegInf) => crate::round::round_frac(
+            3 * PI_NUM as int,
+            4 * PI_DEN as int,
+            crate::types::Dir::Nearest,
+        ),
+        (Q::NegInf, Q::PosInf) => crate::round::round_frac(
+            -(PI_NUM as int),
+            4 * PI_DEN as int,
+            crate::types::Dir::Nearest,
+        ),
+        (Q::NegInf, Q::NegInf) => crate::round::round_frac(
+            -(3 * PI_NUM as int),
+            4 * PI_DEN as int,
+            crate::types::Dir::Nearest,
+        ),
+        _ => crate::round::round_frac(0, 1, crate::types::Dir::Nearest),
+    }
+}
+
+/// Executable counterpart of [`atan2_inf_target`].
+fn atan2_inf_target_exec(y: Q, x: Q) -> (r: Rat)
+    requires
+        y.wf(),
+        x.wf(),
+    ensures
+        r == atan2_inf_target(y, x),
+        r.wf(),
+{
+    proof {
+        crate::model::lemma_pow2_126();
+        crate::model::lemma_pow2_124();
+    }
+    match (y, x) {
+        (Q::PosInf, Q::PosInf) => {
+            crate::round::round_frac_exec(
+                PI_NUM as i128,
+                4 * PI_DEN as i128,
+                crate::types::Dir::Nearest,
+            )
+        },
+        (Q::PosInf, Q::NegInf) => {
+            crate::round::round_frac_exec(
+                3 * PI_NUM as i128,
+                4 * PI_DEN as i128,
+                crate::types::Dir::Nearest,
+            )
+        },
+        (Q::NegInf, Q::PosInf) => {
+            crate::round::round_frac_exec(
+                -(PI_NUM as i128),
+                4 * PI_DEN as i128,
+                crate::types::Dir::Nearest,
+            )
+        },
+        (Q::NegInf, Q::NegInf) => {
+            crate::round::round_frac_exec(
+                -(3 * PI_NUM as i128),
+                4 * PI_DEN as i128,
+                crate::types::Dir::Nearest,
+            )
+        },
+        _ => crate::round::round_frac_exec(0, 1, crate::types::Dir::Nearest),
+    }
+}
+
+/// Every infinity-pair target satisfies the bounded-rational invariant.
+pub proof fn lemma_atan2_inf_target_wf(y: Q, x: Q)
+    ensures
+        atan2_inf_target(y, x).wf(),
+{
+    match (y, x) {
+        (Q::PosInf, Q::PosInf) => {
+            crate::round::lemma_round_frac_wf(
+                PI_NUM as int,
+                4 * PI_DEN as int,
+                crate::types::Dir::Nearest,
+            );
+        },
+        (Q::PosInf, Q::NegInf) => {
+            crate::round::lemma_round_frac_wf(
+                3 * PI_NUM as int,
+                4 * PI_DEN as int,
+                crate::types::Dir::Nearest,
+            );
+        },
+        (Q::NegInf, Q::PosInf) => {
+            crate::round::lemma_round_frac_wf(
+                -(PI_NUM as int),
+                4 * PI_DEN as int,
+                crate::types::Dir::Nearest,
+            );
+        },
+        (Q::NegInf, Q::NegInf) => {
+            crate::round::lemma_round_frac_wf(
+                -(3 * PI_NUM as int),
+                4 * PI_DEN as int,
+                crate::types::Dir::Nearest,
+            );
+        },
+        _ => {
+            crate::round::lemma_round_frac_wf(0, 1, crate::types::Dir::Nearest);
+        },
+    }
+}
+
+/// The infinite-coordinate \`atan2\` targets have the sign of the vertical coordinate.
+pub proof fn lemma_atan2_inf_target_sign(y: Q, x: Q)
+    requires
+        y.spec_is_infinite(),
+        x.spec_is_infinite(),
+    ensures
+        y == Q::PosInf ==> atan2_inf_target(y, x).n() > 0,
+        y == Q::NegInf ==> atan2_inf_target(y, x).n() < 0,
+{
+    match (y, x) {
+        (Q::PosInf, Q::PosInf) => {
+            Rat::lemma_from_raw_spec_components(1_811_004_864_519_280_709, 2_305_843_009_213_693_952);
+            assert(crate::round::round_frac(PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(1_811_004_864_519_280_709, 2_305_843_009_213_693_952)) by (compute);
+            assert(crate::round::round_frac(PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest).n() > 0) by (compute);
+        },
+        (Q::PosInf, Q::NegInf) => {
+            Rat::lemma_from_raw_spec_components(339_563_412_097_365_133, 144_115_188_075_855_872);
+            assert(crate::round::round_frac(3 * PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(339_563_412_097_365_133, 144_115_188_075_855_872)) by (compute);
+            assert(crate::round::round_frac(3 * PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest).n() > 0) by (compute);
+        },
+        (Q::NegInf, Q::PosInf) => {
+            Rat::lemma_from_raw_spec_components(-1_811_004_864_519_280_709i64, 2_305_843_009_213_693_952);
+            assert(crate::round::round_frac(-(PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(-1_811_004_864_519_280_709i64, 2_305_843_009_213_693_952)) by (compute);
+            assert(crate::round::round_frac(-(PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest).n() < 0) by (compute);
+        },
+        (Q::NegInf, Q::NegInf) => {
+            Rat::lemma_from_raw_spec_components(-339_563_412_097_365_133i64, 144_115_188_075_855_872);
+            assert(crate::round::round_frac(-(3 * PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(-339_563_412_097_365_133i64, 144_115_188_075_855_872)) by (compute);
+            assert(crate::round::round_frac(-(3 * PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest).n() < 0) by (compute);
+        },
+        _ => assert(false),
+    }
+}
+
+/// The infinite-coordinate \`atan2\` targets lie in their mathematical quadrants.
+pub proof fn lemma_atan2_inf_target_quadrant(y: Q, x: Q)
+    requires
+        y.spec_is_infinite(),
+        x.spec_is_infinite(),
+    ensures
+        y == Q::PosInf && x == Q::PosInf ==> crate::model::q_lt_frac(atan2_inf_target(y, x), PI_NUM as int, 2 * PI_DEN as int),
+        y == Q::PosInf && x == Q::NegInf ==> crate::model::q_lt_frac(atan2_inf_target(y, x), PI_NUM as int, PI_DEN as int)
+            && crate::model::q_ge_frac(atan2_inf_target(y, x), PI_NUM as int, 2 * PI_DEN as int),
+        y == Q::NegInf && x == Q::PosInf ==> crate::model::q_ge_frac(atan2_inf_target(y, x), -(PI_NUM as int), 2 * PI_DEN as int),
+        y == Q::NegInf && x == Q::NegInf ==> crate::model::q_lt_frac(atan2_inf_target(y, x), -(PI_NUM as int), 2 * PI_DEN as int)
+            && crate::model::q_ge_frac(atan2_inf_target(y, x), -(PI_NUM as int), PI_DEN as int),
+{
+    match (y, x) {
+        (Q::PosInf, Q::PosInf) => {
+            Rat::lemma_from_raw_spec_components(1_811_004_864_519_280_709, 2_305_843_009_213_693_952);
+            assert(crate::round::round_frac(PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(1_811_004_864_519_280_709, 2_305_843_009_213_693_952)) by (compute);
+            assert(crate::model::q_lt_frac(
+                crate::round::round_frac(PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest), PI_NUM as int, 2 * PI_DEN as int)) by (compute);
+        },
+        (Q::PosInf, Q::NegInf) => {
+            Rat::lemma_from_raw_spec_components(339_563_412_097_365_133, 144_115_188_075_855_872);
+            assert(crate::round::round_frac(3 * PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(339_563_412_097_365_133, 144_115_188_075_855_872)) by (compute);
+            assert(crate::model::q_lt_frac(crate::round::round_frac(3 * PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest), PI_NUM as int, PI_DEN as int)) by (compute);
+            assert(crate::model::q_ge_frac(crate::round::round_frac(3 * PI_NUM as int, 4 * PI_DEN as int, crate::types::Dir::Nearest), PI_NUM as int, 2 * PI_DEN as int)) by (compute);
+        },
+        (Q::NegInf, Q::PosInf) => {
+            Rat::lemma_from_raw_spec_components(-1_811_004_864_519_280_709i64, 2_305_843_009_213_693_952);
+            assert(crate::round::round_frac(-(PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(-1_811_004_864_519_280_709i64, 2_305_843_009_213_693_952)) by (compute);
+            assert(crate::model::q_ge_frac(
+                crate::round::round_frac(-(PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest), -(PI_NUM as int), 2 * PI_DEN as int)) by (compute);
+        },
+        (Q::NegInf, Q::NegInf) => {
+            Rat::lemma_from_raw_spec_components(-339_563_412_097_365_133i64, 144_115_188_075_855_872);
+            assert(crate::round::round_frac(-(3 * PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest)
+                == Rat::from_raw_spec(-339_563_412_097_365_133i64, 144_115_188_075_855_872)) by (compute);
+            assert(crate::model::q_lt_frac(crate::round::round_frac(-(3 * PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest), -(PI_NUM as int), 2 * PI_DEN as int)) by (compute);
+            assert(crate::model::q_ge_frac(crate::round::round_frac(-(3 * PI_NUM as int), 4 * PI_DEN as int, crate::types::Dir::Nearest), -(PI_NUM as int), PI_DEN as int)) by (compute);
+        },
+        _ => assert(false),
+    }
+}
+
+/// `round(num · 2^63 / den)`, for `|x| <= EXP_ARG_LIMIT`; fits `i128`.
 #[allow(unused_variables)]
 fn fx_to_grid(x: Rat) -> (r: i128)
     requires
@@ -481,7 +758,7 @@ fn fx_to_grid(x: Rat) -> (r: i128)
         crate::model::lemma_max_mag_pow2();
         crate::model::lemma_pow2_125();
         crate::model::lemma_pow2_63();
-        assert(crate::model::abs_int((x.n()) * (crate::fx::FX_ONE as int)) <= 406000000000000000000
+        assert(crate::model::abs_int((x.n()) * (crate::fx::FX_ONE as int)) <= 405828369621610135552
             * (x.d())) by (nonlinear_arith)
             requires
                 crate::model::abs_int(x.n()) <= (EXP_ARG_LIMIT as int) * x.d(),
@@ -490,36 +767,61 @@ fn fx_to_grid(x: Rat) -> (r: i128)
                 (EXP_ARG_LIMIT as int) == 44,
         ;
     }
-    let scaled: i128 = (x.num as i128) * crate::fx::FX_ONE;
-    let d: i128 = x.den as i128;
-    let neg: bool = scaled < 0;
+    let raw: i128 = x.numerator() as i128;
+    let d: i128 = x.denominator() as i128;
+    let neg: bool = raw < 0;
     let m: i128 = if neg {
-        0 - scaled
+        0 - raw
     } else {
-        scaled
+        raw
     };
-    let q: i128 = m / d;
-    let rem: i128 = m % d;
+    let scaled: i128 = m * crate::fx::FX_ONE;
+    let q: i128 = scaled / d;
+    let rem: i128 = scaled % d;
     proof {
-        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, d as int);
-        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(m as int, d as int);
-        vstd::arithmetic::div_mod::lemma_mod_bound(m as int, d as int);
-        assert((m as int) == (q as int) * (d as int) + (rem as int)) by (nonlinear_arith)
+        assert(m as int >= 0);
+        lemma_fx_to_grid_decomposition(m as int, d as int, q as int, rem as int);
+        assert((q as int) <= 405828369621610135552) by (nonlinear_arith)
             requires
-                (m as int) == (d as int) * (q as int) + (rem as int),
-        ;
-        assert((q as int) <= 406000000000000000000) by (nonlinear_arith)
-            requires
-                (m as int) == (q as int) * (d as int) + (rem as int),
+                (m as int) * (crate::fx::FX_ONE as int)
+                    == (q as int) * (d as int) + (rem as int),
                 (rem as int) >= 0,
                 (d as int) >= 1,
-                (m as int) <= 406000000000000000000 * (d as int),
+                (m as int) * (crate::fx::FX_ONE as int)
+                    <= 405828369621610135552 * (d as int),
+        ;
+        assert((rem as int) * 2 < 9223372036854775808) by (nonlinear_arith)
+            requires
+                (rem as int) < (d as int),
+                (d as int) <= crate::model::max_mag(),
+                crate::model::max_mag() < 4611686018427387904,
         ;
     }
+    let twice_rem: i128 = rem * 2;
+    let round_up: bool = twice_rem > d || (twice_rem == d && q % 2 == 1);
+    let rounded: i128 = if round_up { q + 1 } else { q };
+    proof {
+        assert((rounded as int) == if 2 * (rem as int) > (d as int)
+            || (2 * (rem as int) == (d as int) && (q as int) % 2 == 1) {
+            (q as int) + 1
+        } else {
+            q as int
+        });
+        lemma_fx_to_grid_nearest(m as int, d as int, q as int, rem as int, rounded as int);
+        lemma_fx_to_grid_ties_even(m as int, d as int, q as int, rem as int, rounded as int);
+        lemma_fx_to_grid_bound(
+            m as int,
+            d as int,
+            q as int,
+            rem as int,
+            rounded as int,
+            neg,
+        );
+    }
     if neg {
-        0 - q
+        0 - rounded
     } else {
-        q
+        rounded
     }
 }
 
@@ -625,35 +927,11 @@ fn fx_small_to_q(v: i128) -> (r: Q)
 }
 
 impl Q {
-    /// `e^self`.
-    ///
-    /// | operand | result | why |
-    /// |---|---|---|
-    /// | `Number(x)`, `x > 44` | `PosSat` | `exp(44) > MAX_MAG` |
-    /// | `Number(x)`, `x < -44` | `Number(0)` | underflow, and §11 places that inside R3 |
-    /// | `Number(x)` otherwise | series | |
-    /// | `PosSat` | `PosSat` | image `(exp(MAX_MAG), ∞) ⊆ (MAX_MAG, ∞)` |
-    /// | `NegSat` | `Nan` | see below |
-    /// | `PosInf` | `PosInf` | |
-    /// | `NegInf` | `Number(0)` | exact limit |
-    /// | `Nan` | `Nan` | |
-    ///
-    /// `exp(NegSat)` is `Nan` and not zero. The difference from
-    /// `exp(Number(-50))` is intentional. The image of `(-∞, -MAX_MAG)` is
-    /// `(0, exp(-MAX_MAG))`, and that interval does not contain zero. A
-    /// `Number(0)` result is thus unsound, because it asserts an exact value
-    /// that the true result does not have. For a `Number` argument the rounding
-    /// contract applies instead, and underflow to zero is inside that contract
-    /// (#26 §11). Section 11 makes the same decision for `recip(Sat)`: option
-    /// (A) does not continue a computation past an overflow.
-    ///
-    /// # Method
-    ///
-    /// The method is `exp(x) = exp(x / 2^k)^(2^k)`. The function selects the
-    /// smallest `k` that brings `|x|` to at most `1/2`, then sums twenty
-    /// Maclaurin terms, then applies `k` squarings. `k` is adaptive and not
-    /// constant, because each squaring doubles the relative error. A constant
-    /// `k = 8` costs each small argument a factor of 256 in accuracy.
+    /// `e^self`. `PosSat` above `43.67` (where `e^x > MAX_MAG`), `0` below
+    /// `-44`; `exp(NegSat)` is `Nan` because the image `(0, e^-MAX_MAG)` does
+    /// not contain zero, whereas underflow of a `Number` is inside R3.
+    /// Evaluated by [`crate::fx::fx_exp_reduced`] and reassembled here; the
+    /// `m >= 62` branch keeps results between `2^61` and `MAX_MAG` numeric.
     pub fn exp(self) -> (r: Q)
         requires
             self.wf(),
@@ -679,14 +957,14 @@ impl Q {
                             x.d() <= 4611686018427387903,
                     ;
                 }
-                let lim: i128 = (EXP_ARG_LIMIT as i128) * (x.den as i128);
-                let axn: i128 = if x.num < 0 {
-                    0 - (x.num as i128)
+                let lim: i128 = (EXP_ARG_LIMIT as i128) * (x.denominator() as i128);
+                let axn: i128 = if x.numerator() < 0 {
+                    0 - (x.numerator() as i128)
                 } else {
-                    x.num as i128
+                    x.numerator() as i128
                 };
                 if axn > lim {
-                    return if x.num > 0 {
+                    return if x.numerator() > 0 {
                         Q::PosSat
                     } else {
                         Q::zero()
@@ -696,11 +974,58 @@ impl Q {
                 // `x.den >= 1`, thus the scaled numerator is inside `i128`.
                 let xg: i128 = fx_to_grid(x);
                 let (t, m) = crate::fx::fx_exp_reduced(xg);
-                // `t · 2^(m-63)`, assembled as a `Rat` times a power of two.
-                // `t` is at most `1.6 · 2^63`, so a shift of two brings it
-                // inside the budget with the denominator at `2^61`.
-                let mant = Q::new(fx_quarter(t), 1i64 << 61);
-                Q::mul(pow2_q(m), mant)
+                // The value is `t · 2^(m-63)` with `|t| <= 1.6 · 2^63`.
+                if m >= 62 {
+                    // `2^m` alone is outside the budget, but the value may
+                    // not be: assemble it as an integer and let the budget
+                    // decide. `m <= 66`, so the multiplier is at most 8.
+                    let v: i128 = if m == 62 {
+                        (t + 1) / 2
+                    } else {
+                        let pow: i128 = if m == 63 {
+                            1
+                        } else if m == 64 {
+                            2
+                        } else if m == 65 {
+                            4
+                        } else {
+                            8
+                        };
+                        proof {
+                            assert(crate::model::abs_int((t as int) * (pow as int))
+                                <= 8 * (crate::fx::FX_T_MAX as int)) by (nonlinear_arith)
+                                requires
+                                    crate::model::abs_int(t as int) <= crate::fx::FX_T_MAX as int,
+                                    1 <= pow as int <= 8,
+                            ;
+                        }
+                        t * pow
+                    };
+                    let mm: i128 = crate::types::MAX_MAG as i128;
+                    if v > mm {
+                        Q::PosSat
+                    } else if v < 0 - mm {
+                        Q::NegSat
+                    } else {
+                        Q::new(v as i64, 1)
+                    }
+                } else if m <= -62 {
+                    // Below `2^-62` everything rounds to zero. At `m == -62`
+                    // the value is `fx_quarter(t) · 2^-123`, which rounds to
+                    // `2^-61` exactly when `fx_quarter(t) > 2^61` (a tie at
+                    // `2^61` goes to the even neighbour, zero).
+                    let q4: i64 = fx_quarter(t);
+                    if m == -62 && q4 > (1i64 << 61) {
+                        Q::new(1, 1i64 << 61)
+                    } else {
+                        Q::zero()
+                    }
+                } else {
+                    // A shift of two brings `t` inside the budget with the
+                    // denominator at `2^61`.
+                    let mant = Q::new(fx_quarter(t), 1i64 << 61);
+                    Q::mul(pow2_q(m), mant)
+                }
             },
         }
     }
@@ -713,13 +1038,8 @@ impl Q {
 /// Sixty-four is carried for margin and makes the loops trivially terminating.
 const MAX_BINARY_SHIFTS: u32 = 64;
 
-/// `atanh(z) = z + z³/3 + z⁵/5 + …`, for `|z| <= 1/3`.
-///
-/// Each caller reduces its argument into that interval first. At `|z| = 1/3`
-/// the twentieth odd term is `3^-39 / 39`, which is approximately `3e-21` and
-/// thus below the `2^-61` grid. The truncation error is therefore not visible,
-/// and the rounding error is the larger source. Each other series here has the
-/// same balance.
+/// `atanh(z)` for `|z| <= 1/3`; the twentieth term at `1/3` is `3e-21`, below
+/// the grid.
 fn atanh_series(z: Q) -> (r: Q)
     requires
         z.wf(),
@@ -745,12 +1065,7 @@ fn atanh_series(z: Q) -> (r: Q)
     sum
 }
 
-/// `e`, by the series `Σ 1/n!`.
-///
-/// This function is the derivation of [`e`]. It sums the series directly and
-/// does not call `exp(1)`. The constant and the `exp` function are thus
-/// independent, and a defect in the range reduction of `exp` cannot hide in
-/// the value of `e`.
+/// `e` by `Σ 1/n!`, independently of `exp`; the derivation of [`e`].
 pub fn e_series() -> (r: Q)
     ensures
         r.wf(),
@@ -796,13 +1111,8 @@ pub fn ln2_series() -> (r: Q)
     Q::mul(Q::new(2, 1), atanh_series(Q::new(1, 3)))
 }
 
-/// `ln(2)`.
-///
-/// The literal is the value that [`ln2_series`] computes. The test
-/// `ln2_is_the_series_value` asserts that the two are bit-identical, thus the
-/// constant is derived and checked. The test suite re-derives the value, and
-/// the test fails if the series, the width budget or the rounding contract
-/// changes.
+/// `ln 2` as a literal; `ln2_is_the_series_value` checks it against
+/// [`ln2_series`] bit for bit.
 pub fn ln2() -> (r: Q)
     ensures
         r.wf(),
@@ -811,30 +1121,9 @@ pub fn ln2() -> (r: Q)
 }
 
 impl Q {
-    /// The natural logarithm.
-    ///
-    /// | operand | result | why |
-    /// |---|---|---|
-    /// | `Number(x)`, `x > 0` | series | |
-    /// | `Number(0)` | `NegInf` | the exact limit |
-    /// | `Number(x)`, `x < 0` | `Nan` | no real logarithm |
-    /// | `PosSat` | `Nan` | image `(ln MAX_MAG, ∞) ≈ (43, ∞)` reaches below `MAX_MAG` |
-    /// | `NegSat` | `Nan` | negative |
-    /// | `PosInf` | `PosInf` | |
-    /// | `NegInf` | `Nan` | negative |
-    /// | `Nan` | `Nan` | |
-    ///
-    /// # Method
-    ///
-    /// The method has three steps. First, binary range reduction to
-    /// `m ∈ [1/2, 2]`. Second, `ln(m) = 2·atanh((m-1)/(m+1))`, whose argument
-    /// has a magnitude of at most `1/3`, which is the interval where the series
-    /// is accurate. Third, `ln(x) = ln(m) + k·ln(2)`.
-    ///
-    /// The method uses the `atanh` form and not the direct `ln(1+u)` series.
-    /// The terms of the `atanh` form are odd powers of a much smaller argument.
-    /// For `m` at the end of the reduced range, `u` is `1`, and the direct
-    /// series does not converge.
+    /// The natural logarithm. `ln(0)` is `NegInf`; negative and `PosSat` are
+    /// `Nan`. Binary reduction to `m ∈ [1/2, 2]`, then
+    /// `ln(m) = 2·atanh((m-1)/(m+1))` with `|argument| <= 1/3`, plus `k·ln 2`.
     pub fn ln(self) -> (r: Q)
         requires
             self.wf(),
@@ -885,12 +1174,8 @@ impl Q {
                 }
                 // z = (m - 1) / (m + 1), in [-1/3, 1/3] for m in [1/2, 2].
                 //
-                // The numerator and denominator go to the fixed-point kernel as
-                // integers, not as a mantissa already on the grid. For a value
-                // near one the difference cancels the leading bits, and a
-                // quantised mantissa has nothing left underneath them. Taking
-                // the difference on these integers first is what keeps
-                // `ln(1 + 2^-40)` meaningful.
+                // Integers, not a quantised mantissa: near one the difference cancels the
+                // leading bits, and a quantised mantissa has nothing under them.
                 let (mn, md): (i64, i64) = match m {
                     Q::Number(r) => (r.numerator(), r.denominator()),
                     // Unreachable: halving and doubling a positive number
@@ -906,27 +1191,9 @@ impl Q {
                 }
                 // The near-one branch.
                 //
-                // The fixed-point kernel quantises to a *dyadic* grid, thus its
-                // error is `2^-63` in absolute terms. That is well inside R3,
-                // which is absolute below one, and it is fine for a result of
-                // ordinary size. For a result near zero it is not: at
-                // `x = 1 + 2^-32` the answer is about `2^-32`, and `2^-63` of
-                // absolute error is `2^-31` of relative error.
-                //
-                // The exact path does not have this problem, because it never
-                // quantises: it works in rationals whose denominators need not
-                // be powers of two, and a `Rat` can hold a very good non-dyadic
-                // approximation to a small value. Measured on `1 + 2^-k`, it
-                // keeps `2^-68` to `2^-104` where the grid keeps `2^-34` to
-                // `2^-52`.
-                //
-                // So the two paths split on the only thing that separates
-                // them. Away from one, the grid is thirty times faster and
-                // loses nothing. Within `2^-8` of one, the exact path is the
-                // only one that keeps a small answer meaningful, and inputs
-                // that close to one are the ones where a caller is asking
-                // about a ratio, which is exactly when the low bits are the
-                // answer.
+                // The kernel's error is `2^-63` absolute, which is a large relative error
+                // for a result near zero; within `2^-8` of one the exact rational path keeps
+                // the low bits (see README for measured accuracy).
                 let diff: i128 = (mn as i128) - (md as i128);
                 let adiff: i128 = if diff < 0 {
                     0 - diff
@@ -956,12 +1223,8 @@ impl Q {
         }
     }
 
-    /// `self` raised to the power `e`, for a negative exponent as well as a
-    /// positive one.
-    ///
-    /// `pow_i32(a, -n)` is `recip(pow_u32(a, n))`, so it inherits both the
-    /// exactness of reciprocation on nonzero rationals and the division
-    /// conventions: `pow_i32(0, -1)` is `PosInf`, not a panic.
+    /// `self^e`; `pow_i32(a, -n)` is `recip(pow_u32(a, n))`, so `pow_i32(0, -1)`
+    /// is `PosInf`.
     pub fn pow_i32(self, e: i32) -> (r: Q)
         requires
             self.wf(),
@@ -978,27 +1241,13 @@ impl Q {
     }
 }
 
-/// Terms of the `atan` series, whose argument is reduced to `|z| <= 1/2`.
-///
-/// The tail at `k` is `2^-(2k+1)/(2k+1)`. At `k = 28` the tail is `1.2e-19`,
-/// which is below the grid. At `k = 27` the tail is `5.1e-19`, which is above
-/// the grid. This is the longest series in this module. The coefficients of
-/// `atan` are `1/(2k+1)`, thus the series converges geometrically. The `sin`
-/// and `exp` series converge factorially.
+/// Terms of the `atan` series on `|z| <= 1/2`: the tail at `k = 28` is
+/// `1.2e-19`, below the grid; the series converges only geometrically.
 const ATAN_TERMS: u32 = 30;
 
-/// The largest argument `sin`, `cos` and `tan` will accept.
-///
-/// Above this limit the result has no meaning, and the functions return `Nan`.
-/// Argument reduction needs `x mod (π/2)`. This module knows `π` to a relative
-/// error of `2^-61`, thus the reduced argument has an absolute error of
-/// approximately `|x| · 2^-61`. At `|x| = 2^20` that error is `2^-41`, and the
-/// result is still usable. At `|x| = 2^61` the error is larger than `π`, and
-/// each digit of the answer is noise.
-///
-/// `f64` returns a plausible value in that range. This module returns `Nan`,
-/// which is the convention of the crate: an explicit non-answer instead of a
-/// silent wrong answer.
+/// Largest `|x|` that `sin`, `cos`, `tan` accept; beyond it they return `Nan`.
+/// The reduction `x mod π/2` uses one word of `π`, so the reduced argument has
+/// absolute error about `|x| · 2^-60`: `2^-40` at the limit, measured.
 const TRIG_ARG_LIMIT: i64 = 1 << 20;
 
 /// `atan(z) = z − z³/3 + z⁵/5 − …`, for `|z| <= 1/2`.
@@ -1035,16 +1284,7 @@ fn atan_series(z: Q) -> (r: Q)
     sum
 }
 
-/// `π`, by Machin's formula `π = 16·atan(1/5) − 4·atan(1/239)`.
-///
-/// Machin's formula keeps both arguments well inside the range of the series.
-/// The simpler form `π/4 = atan(1)` puts the argument at the point where the
-/// series converges slowest.
-///
-/// This function is the derivation of [`pi`], which returns the same value as a
-/// literal. This function evaluates two full series, which is approximately
-/// sixty-four terms. That cost dominates `sin`, `cos` and `atan`, which each
-/// need `π` on every call.
+/// `π` by Machin, `16·atan(1/5) − 4·atan(1/239)`; the derivation of [`pi`].
 pub fn pi_series() -> (r: Q)
     ensures
         r.wf(),
@@ -1063,7 +1303,7 @@ pub fn pi() -> (r: Q)
     ensures
         r.wf(),
 {
-    Q::new(1811004864519280709, 576460752303423488)
+    Q::new(PI_NUM, PI_DEN)
 }
 
 /// `π/2`.
@@ -1176,19 +1416,9 @@ fn cos_series(z: Q) -> (r: Q)
 }
 
 impl Q {
-    /// The arctangent, in `(-π/2, π/2)`.
-    ///
-    /// `atan(±∞)` is exactly `±π/2`. The limit exists and is representable,
-    /// thus the infinite cases carry information. `atan(PosSat)` is `Nan`. The
-    /// image of `(MAX_MAG, ∞)` is a narrow interval below `π/2` that contains
-    /// representable values, thus no saturation state is sound.
-    ///
-    /// # Method
-    ///
-    /// Two reductions before the series. `|x| > 1` becomes
-    /// `sign(x)·π/2 − atan(1/x)`, and `|x| > 1/2` becomes
-    /// `±π/4 + atan((x∓1)/(x±1))`. Together they bring the argument to at most
-    /// `1/2`, where thirty-two terms are enough.
+    /// The arctangent in `(-π/2, π/2)`; `atan(±∞) = ±π/2`, `atan(PosSat)` is
+    /// `Nan`. Reduced by `|x| > 1 → π/2 − atan(1/x)` and
+    /// `|x| > 1/2 → π/4 + atan((x−1)/(x+1))` to `|x| <= 1/2` before the series.
     pub fn atan(self) -> (r: Q)
         requires
             self.wf(),
@@ -1241,16 +1471,8 @@ impl Q {
         }
     }
 
-    /// The sine.
-    ///
-    /// The result is `Nan` for `|self| > 2^20` and for each special value. The
-    /// reduction limit is `2^20`. Both infinities give `Nan`, because `sin` has
-    /// no limit at infinity.
-    ///
-    /// # Method
-    ///
-    /// `n = round(x / (π/2))`, `r = x − n·(π/2)` with `|r| <= π/4`, then the
-    /// Maclaurin series for `sin` or `cos` selected by `n mod 4`.
+    /// The sine. `Nan` for `|x| > 2^20` and for every special. Reduction
+    /// `r = x − round(x / (π/2)) · π/2`, then the series selected by `n mod 4`.
     pub fn sin(self) -> (r: Q)
         requires
             self.wf(),
@@ -1342,12 +1564,7 @@ pub fn ln10_series() -> (r: Q)
     Q::new(10, 1).ln()
 }
 
-/// `ln(10)`.
-///
-/// The value is a literal, as for [`ln2`], and `ln10_is_the_series_value`
-/// checks it against the derivation. The test is necessary: a literal that
-/// comes from a decimal expansion can be wrong in an early significant
-/// figure.
+/// `ln 10` as a literal, checked against [`ln10_series`] by test.
 pub fn ln10() -> (r: Q)
     ensures
         r.wf(),
@@ -1400,38 +1617,36 @@ impl Q {
         Q::mul(self, ln2()).exp()
     }
 
-    /// `self^exponent` for a real exponent, as `exp(exponent · ln(self))`.
-    ///
-    /// The function is defined only for a positive base. `ln` of a negative
-    /// value is `Nan`, and that state propagates. `(-8)^(1/3)` has a real
-    /// answer and `(-8)^(1/2)` does not, and this function does not separate
-    /// the two cases. Use [`Q::pow_i32`] for integer exponents. That function
-    /// is exact and accepts negative bases.
-    ///
-    /// `0^0` is `1`, matching [`Q::pow_u32`] and IEEE.
+    /// `self^exponent` as `exp(exponent · ln(self))`: `Nan` for a negative base
+    /// (use [`Q::pow_i32`] for integer exponents); `0^0` is `1`.
     pub fn powf(self, exponent: Q) -> (r: Q)
         requires
             self.wf(),
             exponent.wf(),
         ensures
             r.wf(),
+            exponent.spec_is_zero() ==> r.spec_is_value(1, 1),
+            self.spec_is_zero() && exponent.spec_signum() == Some(Sign::Positive)
+                ==> r.spec_is_value(0, 1),
+            self.spec_is_zero() && exponent.spec_signum() == Some(Sign::Negative)
+                ==> r == Q::PosInf,
+            self.spec_is_zero() && exponent.spec_is_nan() ==> r == Q::Nan,
     {
         if exponent.is_zero() {
             return Q::one();
         }
         if self.is_zero() {
-            return Q::zero();
+            return match exponent.signum() {
+                Some(Sign::Positive) => Q::zero(),
+                Some(Sign::Negative) => Q::PosInf,
+                Some(Sign::Zero) => Q::one(),
+                None => Q::Nan,
+            };
         }
         Q::mul(exponent, self.ln()).exp()
     }
 
-    /// The cube root, defined for negative arguments as well as positive.
-    ///
-    /// `cbrt(-x) == -cbrt(x)`, thus the domain is the whole real line, unlike
-    /// the domain of [`Q::sqrt`]. The function computes `exp(ln|x| / 3)` and
-    /// then applies the sign. Its accuracy is thus the accuracy of `exp` and
-    /// `ln`, which is approximately `2^-53`. The accuracy of `sqrt` is
-    /// approximately `2^-60`.
+    /// The cube root on the whole real line, as `±exp(ln|x| / 3)`.
     pub fn cbrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -1463,12 +1678,8 @@ impl Q {
         }
     }
 
-    /// `sqrt(self² + other²)`, without the intermediate overflowing where the
-    /// naive form would.
-    ///
-    /// The function computes `|a|·sqrt(1 + (b/a)²)`, where `a` is the operand
-    /// with the larger magnitude. The squared term is thus at most `1` and
-    /// stays representable when `a² + b²` does not.
+    /// `sqrt(self² + other²)` as `|a|·sqrt(1 + (b/a)²)` with `a` the larger, so
+    /// the square stays representable when `a² + b²` does not.
     pub fn hypot(self, other: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1490,37 +1701,79 @@ impl Q {
         Q::mul(big, Q::add(Q::one(), Q::mul(ratio, ratio)).sqrt())
     }
 
-    /// The hyperbolic sine, `(e^x - e^-x) / 2`.
+    /// `(e^x − e^-x) / 2`; beyond `|x| > 22` it is `±e^(|x| − ln 2)` to within the
+    /// grid, which saturates cleanly instead of dividing a `PosSat` by two.
     pub fn sinh(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
     {
-        Q::div(Q::sub(self.exp(), self.neg().exp()), Q::new(2, 1))
+        match self {
+            Q::Nan => Q::Nan,
+            Q::PosInf => Q::PosInf,
+            Q::NegInf => Q::NegInf,
+            Q::PosSat => Q::PosSat,
+            Q::NegSat => Q::NegSat,
+            Q::Number(_) => {
+                let lim = Q::new(HYP_ARG_LIMIT, 1);
+                if Q::gt(self, lim) {
+                    Q::sub(self, ln2()).exp()
+                } else if Q::lt(self, lim.neg()) {
+                    Q::sub(self.neg(), ln2()).exp().neg()
+                } else {
+                    Q::div(Q::sub(self.exp(), self.neg().exp()), Q::new(2, 1))
+                }
+            },
+        }
     }
 
-    /// The hyperbolic cosine, `(e^x + e^-x) / 2`.
+    /// The hyperbolic cosine, `(e^x + e^-x) / 2`, with the same large-argument
+    /// path as [`Q::sinh`].
     pub fn cosh(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
     {
-        Q::div(Q::add(self.exp(), self.neg().exp()), Q::new(2, 1))
+        match self {
+            Q::Nan => Q::Nan,
+            Q::PosInf | Q::NegInf => Q::PosInf,
+            Q::PosSat | Q::NegSat => Q::PosSat,
+            Q::Number(_) => {
+                let lim = Q::new(HYP_ARG_LIMIT, 1);
+                if Q::gt(self.abs(), lim) {
+                    Q::sub(self.abs(), ln2()).exp()
+                } else {
+                    Q::div(Q::add(self.exp(), self.neg().exp()), Q::new(2, 1))
+                }
+            },
+        }
     }
 
-    /// The hyperbolic tangent, `sinh / cosh`.
-    ///
-    /// `cosh` is never zero, thus this function has no poles, unlike
-    /// [`Q::tan`]. Large arguments give results near `±1`.
+    /// `sinh / cosh`; `±1` beyond `|x| >= 22` (where `1 − |tanh x| < 2^-62`) and
+    /// for the infinite and saturated states.
     pub fn tanh(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
     {
-        Q::div(self.sinh(), self.cosh())
+        match self {
+            Q::Nan => Q::Nan,
+            Q::PosInf | Q::PosSat => Q::one(),
+            Q::NegInf | Q::NegSat => Q::one().neg(),
+            Q::Number(_) => {
+                let lim = Q::new(HYP_ARG_LIMIT, 1);
+                if Q::ge(self, lim) {
+                    Q::one()
+                } else if Q::le(self, lim.neg()) {
+                    Q::one().neg()
+                } else {
+                    Q::div(self.sinh(), self.cosh())
+                }
+            },
+        }
     }
 
     /// The arcsine, in `[-π/2, π/2]`.
@@ -1568,18 +1821,15 @@ impl Q {
         Q::sub(Q::div(pi(), Q::new(2, 1)), self.asin())
     }
 
-    /// The two-argument arctangent: the angle of `(x, y)` from the positive
-    /// x-axis, in `(-π, π]`.
-    ///
-    /// The quadrant corrections distinguish this function from `atan(y/x)`,
-    /// which gives the same result for `(-1, -1)` and `(1, 1)`. `atan2(0, 0)`
-    /// is `Nan`, because the origin has no angle.
+    /// The angle of `(x, y)` in `(-π, π]`; `atan2(0, 0)` is `Nan`.
     pub fn atan2(self, x: Q) -> (r: Q)
         requires
             self.wf(),
             x.wf(),
         ensures
             r.wf(),
+            self.spec_is_infinite() && x.spec_is_infinite()
+                ==> r == Q::Number(atan2_inf_target(self, x)),
     {
         let y = self;
         let zero = Q::zero();
@@ -1587,6 +1837,9 @@ impl Q {
         let hp = Q::div(p, Q::new(2, 1));
         if y.is_nan() || x.is_nan() {
             return Q::Nan;
+        }
+        if y.is_infinite() && x.is_infinite() {
+            return Q::Number(atan2_inf_target_exec(y, x));
         }
         if x.is_zero() && y.is_zero() {
             return Q::Nan;
@@ -1610,3 +1863,28 @@ impl Q {
 }
 
 } // verus!
+
+#[cfg(test)]
+mod tests {
+    use super::fx_to_grid;
+    use crate::Rat;
+
+    #[test]
+    fn fx_to_grid_rounds_nearest_ties_even() {
+        assert_eq!(fx_to_grid(Rat::zero()), 0);
+        assert_eq!(fx_to_grid(Rat::one()), 9_223_372_036_854_775_808);
+        assert_eq!(fx_to_grid(Rat::neg_one()), -9_223_372_036_854_775_808);
+        assert_eq!(
+            fx_to_grid(Rat::new(1, 2).unwrap()),
+            4_611_686_018_427_387_904
+        );
+        assert_eq!(
+            fx_to_grid(Rat::new(1, 3).unwrap()),
+            3_074_457_345_618_258_603
+        );
+        assert_eq!(
+            fx_to_grid(Rat::new(-1, 3).unwrap()),
+            -3_074_457_345_618_258_603
+        );
+    }
+}

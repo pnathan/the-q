@@ -584,6 +584,7 @@ fn from_str_rejects_values_outside_the_budget() {
 // ===========================================================================
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_round_trips_all_six_states() {
     for q in representatives() {
         let json = serde_json::to_string(&q).unwrap();
@@ -594,6 +595,7 @@ fn serde_round_trips_all_six_states() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_round_trips_random_numbers() {
     let mut rng = Rng::new(0x5EED_1234_ABCD_0007);
     for _ in 0..20_000 {
@@ -604,6 +606,7 @@ fn serde_round_trips_random_numbers() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_uses_the_same_spellings_as_display() {
     // Issue #26 §8 gives both one shared spelling. Two spellings can diverge.
     for q in SPECIALS {
@@ -617,12 +620,14 @@ fn serde_uses_the_same_spellings_as_display() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_encodes_a_number_as_the_pair() {
     let q = Q::Number(Rat::new(51, 200).unwrap());
     assert_eq!(serde_json::to_string(&q).unwrap(), "[51,200]");
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_leaves_the_rat_wire_format_untouched() {
     // The extension does not change the encoding of a bare `Rat`. This break
     // does not include consumers of `Rat`.
@@ -637,6 +642,7 @@ fn serde_leaves_the_rat_wire_format_untouched() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_recanonicalises_a_non_reduced_pair() {
     assert_eq!(
         serde_json::from_str::<Q>("[2,4]").unwrap(),
@@ -645,6 +651,7 @@ fn serde_recanonicalises_a_non_reduced_pair() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_rejects_malformed_payloads() {
     // A hostile or defective producer can emit these shapes. Each one must give
     // an error, and not a silently wrong value.
@@ -677,6 +684,7 @@ fn serde_rejects_malformed_payloads() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_accepts_a_negative_denominator_and_normalises_the_sign() {
     // `[1,-2]` is *accepted*. `Rat::new` normalises the sign onto the
     // numerator, and `-1/2` is representable. This test pins the acceptance
@@ -693,6 +701,7 @@ fn serde_accepts_a_negative_denominator_and_normalises_the_sign() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn serde_is_confined_to_self_describing_formats() {
     // This test makes the documented caveat executable. `deserialize_any`
     // limits the untagged encoding to formats that report the kind of the next

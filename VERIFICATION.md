@@ -1,491 +1,185 @@
 # Verification status
 
-## Read this first
-
-**`cargo verus verify` discharges every proof obligation in this crate.**
-
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results::  871 verified, 0 errors     <- the-q
+verification results:: 1068 verified, 0 errors     <- the-q
 ```
 
-That second line is the number to quote. Do not count `error:` lines in the log:
-Verus prints callee context lines that also start with `error`, thus a grep
-inflates the total by approximately half. The authoritative figure is the
-`verification results` line.
+The second line is the figure to quote; take it from the `verification
+results` line, not from a count of `error:` lines, which Verus also prints for
+callee context. `verus verify` is a required CI check. No `assume(...)` or
+`admit()` appears in `src/`. Three functions are `external_body`, all in
+`TRUSTED.md`: `from_f64_dir` and `to_f64` at the `f64` edge, and
+`q::require_condition`, a runtime guard trusted for its panic message only.
 
-The `verus verify` job is a **required** CI check.
+## Independent of the proofs
 
-The trajectory, one row per CI round:
-
-| head | verified | errors |
-|---|---|---|
-| `67661e1` | 255 | 36 |
-| `ab17e4d` | 288 | 53 |
-| `8b689af` | 305 | 46 |
-| `864e499` | 317 | 45 |
-| `686bcc9` | 329 | 42 |
-| `ddaac00` | 355 | 22 |
-| `6a82bb1` | 357 | 24 |
-| `048899e` | 373 | 20 |
-| `fcc13c5` | 389 | 13 |
-| `6a5890f` | 404 | 9 |
-| `a0da72b` | 423 | 7 |
-| `c87f563` | 431 | 3 |
-| `e267cd5` | 440 | 1 |
-| `c1e3e54` | 442 | 0 |
-| `6c73847` (`main`) | 443 | 0 |
-| `5edea2e` (five merged lines of work) | 665 | 0 |
-| `b27d913` (ingestion contracts, #9) | 691 | 0 |
-| `#27` branch, pre-merge (extended `Q`, #26 stages 1–5) | 819 | 0 |
-| `a19f07e` (`main`, after that merge) | **871** | **0** |
-
-Verified conditions rose monotonically. The error count did not, and both
-directions had honest causes: it rose when a fixed well-formedness failure
-unblocked checking of proofs that were previously never reached, when new
-obligations were added (restating V7/V8 added ~25 `requires`/`ensures`), and
-when a strengthened precondition handed its callers a new obligation
-(`6a82bb1`, where `magnitude_fits_exec` acquired the input bound its `0 - n`
-actually needed); it fell when proofs landed.
-
-The jump at `ddaac00` is the one worth understanding. `lemma_pow2_124`,
-`lemma_pow2_125` and `lemma_pow2_126` were stated by `reveal_with_fuel`, and
-past roughly `2^64` that stops working — the unfolding is linear in the exponent
-and Z3 exhausts its resource limit before reaching the literal. Every `i128`
-overflow check in the crate is discharged from one of those literals, so three
-unproven lemmas were starving the whole rounding path. Deriving them by squaring
-`2^62` closed twenty errors at once. **A failing lemma still hands its `ensures`
-to its callers**, which is why the damage was invisible in the call graph for
-several rounds.
-
-## How this crate came to be written without a verifier
-
-The Verus verifier is a binary distributed through GitHub releases, and the
-environment this crate was authored in returns `403` for `github.com`. The
-libraries (`vstd`, `verus_builtin`, `verus_builtin_macros`) are on crates.io and
-do compile, which is why `cargo build` works and the crate is usable. CI, which
-does have egress, installs the verifier and runs it.
-
-The practical consequence, and the thing to keep in mind reading the proof
-bodies: **`cargo build` passing means the executable code is well-typed and says
-nothing whatsoever about the specifications.** Ghost code is erased by rustc, so
-type errors in specs, missing triggers, and datatype-opaqueness violations are
-all invisible locally and only surface in CI. Every proof change here costs a
-~12-minute round trip.
-
-## What is established independently of the proofs
-
-* 57 tests green in debug and release, on every commit.
-* Differential tests against `malachite-q` — arbitrary precision, fully
-  independent: 20,000 random cases per operation per rounding direction against
-  R1, R2 and R3, plus exhaustive coverage of every `p/q` with `|p| <= 12,
-  q <= 12` (90,000 pairs x 4 operations x 3 directions).
-* Overflow checks on in both profiles, so the V2 no-overflow claim has been
-  executed against roughly ten million operations without a panic.
-* Determinism checked byte-for-byte across eight concurrent threads.
-
-This is strong evidence, and it is not what §6 and §8 ask for — those want the
-proofs machine-checked. Both now hold: §8's acceptance criterion is "M1–M5
-verified and green", and the crate is green *and* verified.
-
-## What to know before touching the proofs
-
-Most of the work went into `round.rs` — the dyadic-snap rounding contract, which
-§3 calls "the heart of the design". Six classes of problem accounted for nearly
-all of it, and each is worth knowing:
-
-1. **Bounds stated with `pow2(n)` prove nothing about an `i128`.** `pow2` is an
-   opaque recursive spec function. Every arithmetic operation in `q.rs` was
-   failing its overflow check until `lemma_op_widths` was restated with literal
-   bounds alongside the `pow2` ones.
-2. **`by (nonlinear_arith)` blocks are context-isolated.** They see only what
-   their own `requires` lists — *not* the surrounding proof context. Steps that
-   combine earlier facts must be plain `assert`s.
-3. **Partially-factored ring identities exhaust the resource limit,** because
-   the solver has to rediscover the factorisation. Splitting distribution from
-   rearrangement leaves goals that are pure associativity/commutativity
-   shuffles, which Z3 normalises for free. This alone took `interval.rs` to
-   zero.
-4. **Outside a `nonlinear_arith` block, multiplication is uninterpreted.** So
-   `qf * rd` and `rd * qf` are simply different terms, and a plain `assert` that
-   needs them identified will fail without any hint that commutativity was the
-   problem. `lemma_fundamental_div_mod_converse` wants the divisor first, which
-   is the far end of the crate's own reduction equations; three call sites
-   needed an explicit `assert(a * b == b * a) by (nonlinear_arith)` to bridge.
-   This goes further than it sounds: even `0 * g` is uninterpreted, so deriving
-   `n == 0` from `n == 0 * g` is a nonlinear step.
-5. **A recursive spec function's default fuel is 1.** `pow2(1)` unfolds once, to
-   `2 · pow2(0)`, and stops — so `assert(pow2(1) == 2)` fails. Conversely
-   `reveal_with_fuel(pow2, 125)` is not a proof either; it is an rlimit
-   exhaustion waiting to happen. Both ends of the range need pinned lemmas.
-6. **A failing lemma still hands its `ensures` to its callers.** This makes a
-   broken foundation invisible in the call graph: `lemma_op_widths` verified
-   cleanly for rounds while the `pow2` literals it rests on did not. Read the
-   whole error list, not just the errors in the module you are working on.
-
-A practical corollary of (6): when a conjunctive postcondition like `wf()` fails,
-the solver names only the conjunction. Asserting each clause separately turns one
-opaque failure into a pointer at the clause that is actually missing — that is
-how the last four errors in `round.rs` were found, and the asserts were worth
-keeping.
-
-## One thing verification found that testing could not
-
-`lemma_snap_in_budget` was stated with a hypothesis missing, and the stated
-bound was **false without it**. At the clamped shift (`k >= 62`, `s == 0`) the
-snap returns `ceil(|x|)`, so the budget bound needs `floor(|x|) < MAX_MAG`
-strictly; nothing ruled out equality. If it were equal then
-`|rn| == MAX_MAG * rd` exactly, so `rd` divides `|rn|`. Coprimality of the
-reduced pair rules that out — it forces `rd == 1`, whence `|rn| == MAX_MAG`,
-which means the pair *did* fit the budget, contradicting the hypothesis that it
-did not.
-
-The differential suite could never have caught this: it only ever exercises
-reduced pairs, so the missing hypothesis always happened to hold. That is the
-case for doing this at all.
-
-## The CI check
-
-`verus verify` is a required job. It was `continue-on-error: true` while the
-proofs were being discharged — an advisory red is more honest than a hidden
-failure — and was flipped once the count reached zero. A regression in any proof
-now fails the build.
-
-No `assume(...)` and no `admit()` appear anywhere in `src/`. Two functions are
-`external_body`, both at the `f64` edge, both enumerated in `TRUSTED.md`.
-
----
+* 207 default-feature and 217 all-feature tests, debug and release, plus six
+  doctests, four of them `compile_fail` checks that `Rat` and `QI` cannot be
+  built or mutated from outside the crate.
+* Differential tests against `malachite-q`: 20,000 random cases per operation
+  per direction against R1–R3, plus every `p/q` with `|p|, q ≤ 12`.
+* Overflow checks on in both profiles; byte-identical results across eight
+  threads.
+* Transcendental accuracy measured against two independent oracles (see
+  `README.md`); it is not proven.
 
 ## Obligation map
 
-| # | Obligation | Tier | Where |
-|---|---|---|---|
-| V1 | I1 ∧ I2 preserved by every public operation | MUST | `Rat::wf` in `model.rs`; every public function `requires` it of inputs and `ensures` it of outputs |
-| V2 | No panic, no overflow; every `i128` intermediate in range | MUST | `q::lemma_op_widths`, `round::lemma_quotient_bound`, `round::shift_div`, `model::lemma_mul_in_i128` |
-| V3 | Value correctness against the ghost model, division-free | MUST | `model::q_is` / `q_eq` / `q_le`; `round::lemma_r1_identity` |
-| V4 | Rounding contract R1–R4 | MUST | `round::lemma_r1_identity`, `lemma_r2_directed`, `lemma_r3_error`, `lemma_r4_monotone_grid` |
-| V5 | GCD correctness and termination | MUST | `gcd.rs`, whole module |
-| V6 | Algebraic laws | MUST | `laws.rs`, whole module |
-| V7 | Error-propagation (Lipschitz) lemmas | SHOULD | `lipschitz.rs` |
-| V8 | N-ary accumulation bound `k · 2^-B` | SHOULD | `nary::theorem_sum_error_accumulation`, `nary::theorem_product_error_accumulation`, `nary::theorem_wm_num_error_accumulation`, `nary::theorem_wm_denom_error_accumulation` |
-| V9 | Extended `Q`: totality, classification, order laws | MUST | `ext.rs`, whole module |
-| V10 | Roots and transcendentals: totality, termination | MUST | `transcendental.rs`, whole module |
+| # | Obligation | Where |
+|---|---|---|
+| V1 | invariant preserved by every public operation | `Rat::wf` in `model.rs`; `requires`/`ensures` on every public function |
+| V2 | no panic, no overflow | `q::lemma_op_widths`, `round::lemma_quotient_bound`, `round::shift_div`, `model::lemma_mul_in_i128` |
+| V3 | value correctness against the ghost model, division-free | `model::q_is`/`q_eq`/`q_le`; `round::lemma_r1_identity` |
+| V4 | rounding contract R1–R4 | `round::lemma_r1_identity`, `lemma_r2_directed`, `lemma_r3_error`, `lemma_r3_error_nearest`, `lemma_r4_monotone_grid` |
+| V5 | GCD correctness and termination | `gcd.rs` |
+| V6 | algebraic laws | `laws.rs` |
+| V7 | Lipschitz bounds | `lipschitz.rs` |
+| V8 | accumulation bounds | `nary::theorem_sum_error_accumulation`, `theorem_product_error_accumulation`, `theorem_wm_num_error_accumulation`, `theorem_wm_denom_error_accumulation`, `theorem_weighted_mean_return_error` |
+| V9 | `Q`: totality, classification, order | `ext.rs` |
+| V10 | transcendentals: totality, termination | `transcendental.rs` |
 
-### V1 — the type invariant
+### V1 — the invariant
 
-`Rat::wf(self)` in `model.rs` is the conjunction of I1 and I2:
-
-```
-den > 0  ∧  gcd(|num|, den) == 1  ∧  (num == 0 ⟹ den == 1)
-         ∧  |num| ≤ 2^62 − 1      ∧  den ≤ 2^62 − 1
-```
-
-Every constructor `ensures` it, every operation `requires` it of its inputs and
-`ensures` it of its result. The `Rat` fields are public — Verus cannot state a
-public invariant about a datatype whose fields it cannot see — so a caller *can*
-write `Rat { num: 3, den: 0 }`; what it cannot do is pass it to anything, since
-every operation requires the invariant and a malformed value cannot discharge
-it. `serde` deserialisation goes through `Rat::new` and returns an error rather
-than a malformed value.
-
-Runtime cross-check: `common::assert_wf` re-derives canonicality with its own
-independent gcd and is called on every value produced in
-`props::every_operation_preserves_the_invariant` (30,000 iterations × ~15
-operations) and throughout the oracle and adversarial suites.
+`Rat::wf`: `den > 0 ∧ gcd(|num|, den) == 1 ∧ (num == 0 ⟹ den == 1) ∧ |num| ≤
+2^62 − 1 ∧ den ≤ 2^62 − 1`. Every constructor ensures it; every operation
+requires it of inputs and ensures it of outputs. The fields are private; public
+contracts use the closed accessors `n()` and `d()`. Serde deserialisation goes
+through `Rat::new` and errors rather than producing a malformed value. At
+runtime, `common::assert_wf` re-derives canonicality with an independent gcd on
+every value the property and oracle suites produce.
 
 ### V2 — no panic, no overflow
 
-The width table is in `README.md` and in the `q.rs` module header. The
-non-obvious case is the rounding step, which needs `floor(n · 2^s / d)` where
-`n · 2^s` would reach `2^185`: `round::shift_div` never forms that product,
-walking `s ≤ 61` doubling steps instead, carrying a quotient below `2^62` and a
-remainder below `d ≤ 2^124`. The widest live value in the entire crate is
-`2 · rem < 2^125`.
+Every `i128` intermediate is bounded: products of two in-budget values are
+below `2^124`, sums of two such products below `2^125`. The rounding step needs
+`floor(n · 2^s / d)` where `n · 2^s` would reach `2^185`; `round::shift_div`
+never forms it, walking `s ≤ 61` doubling steps with a quotient below `2^62`
+and a remainder below `d`. No `wrapping_*`, `saturating_*` or `unchecked_*`
+appears anywhere; `overflow-checks = true` in release.
 
-There is no `wrapping_*`, `saturating_*` or `unchecked_*` call anywhere.
-`[profile.release] overflow-checks = true` keeps the checks on in optimised
-builds, and CI runs the full suite in both profiles.
+Division by zero is a precondition on `Rat::div`, `Rat::div_dir` and
+`Rat::recip`. Verified callers discharge it statically; for unverified callers
+`q::require_condition` turns it into a panic with a message naming the
+operation. `QI::new` guards `lo ≤ hi` the same way.
 
-Division by zero is a **precondition** on `Rat::div`, `Rat::div_dir` and `Rat::recip`,
-discharged statically by the caller. There is no runtime zero-check to fail.
+### V3 — division-free specification
 
-### V3 — value correctness, division-free
-
-Specifications never divide. "`r` is the value `n/d`" is
-`q_is(r, n, d) := r.num * d == n * r.den`, and the order relations are
-cross-multiplied likewise. The R3 bound is stated the same way: the real claim
-`|r − n/d| ≤ 2^-61 · max(1, |n/d|)` is written
-
-```
-|r.num·d − n·r.den| · 2^61  ≤  r.den · max(d, |n|)
-```
-
-after multiplying through by `r.den · d · 2^61`, all of which are positive.
-Division appears only inside *definitional* spec functions — `gcd_nat`,
-`bitlen`, `grid_num` — where the recursion, not the solver, carries the meaning.
+"`r` is `n/d`" is `r.num · d == n · r.den`; order and error bounds are
+cross-multiplied likewise. R3, `|r − n/d| ≤ 2^-61 · max(1, |n/d|)`, is stated
+as `|r.num·d − n·r.den| · 2^61 ≤ r.den · max(d, |n|)`. Division appears only
+inside definitional spec functions (`gcd_nat`, `bitlen`, `grid_num`).
 
 ### V4 — the rounding contract
 
-`round_frac` in `round.rs` is a total spec function mirroring the executable
-`round_frac_exec`, and every arithmetic operation `ensures` its result is
-*equal to* `round_frac` applied to the exact numerator and denominator. Pinning
-the result down as a function, rather than only by its properties, is what makes
-commutativity and cross-run determinism provable at all.
+`round_frac` is a total spec function mirroring `round_frac_exec`, and every
+operation ensures its result *equals* `round_frac` of the exact pair. Pinning
+the function, not just its properties, is what makes commutativity and
+determinism provable.
 
-* **R1** (`lemma_r1_identity`) — if the exact reduced result satisfies I2 it is
-  returned exactly.
-* **R2** (`lemma_r2_directed`) — `Down ≤ exact ≤ Up`.
-* **R3** (`lemma_r3_error`) — the bound above, with `B = 61`. The proof splits
-  on `k = bitlen(floor(|x|))`: `k = 0` (shift capped at 61), `1 ≤ k ≤ 61`
-  (shift `62−k`), and `k ≥ 62` (shift 0). `lemma_shift_covers_bound` is the
-  arithmetic core.
-  **`Dir::Nearest` additionally achieves `B = 62`** (`lemma_r3_error_nearest`,
-  `within_error_bound_nearest`): a round-to-nearest pick is never more than
-  half a grid step away, proved by the half-step form of the grid-error lemma
-  (`lemma_grid_error_step_nearest_half`, division-free
-  `2·|sn·rd − rn·2^s| ≤ rd`) composed the same way R3 itself is. This is
-  additional to the uniform `B = 61` statement, not a replacement for it — the
-  directed modes stay at `61` — and `Rat::add`/`sub`/`mul`/`div` (the only
-  operations that fix `dir = Nearest`) `ensures` both.
-* **R4** (`lemma_r4_monotone_grid`) — **stated per grid**, as §3 of the
-  specification permits. The composed operation is not globally monotone; see
-  the counterexample in `README.md`, which is also a test.
+* R1 `lemma_r1_identity`; R2 `lemma_r2_directed`.
+* R3 `lemma_r3_error`, `B = 61`, split on `k = bitlen(floor(|x|))`: `k = 0`
+  (shift capped at 61), `1 ≤ k ≤ 61`, `k ≥ 62` (shift 0). `Dir::Nearest`
+  additionally achieves `B = 62` (`lemma_r3_error_nearest`), and
+  `add`/`sub`/`mul`/`div` ensure both.
+* R4 `lemma_r4_monotone_grid`, per grid. The composed operation is not
+  globally monotone; `README.md` has the counterexample, which is also a test.
+* R3 is scoped by `!saturated(n, d)`; above the ceiling results saturate and the
+  four `checked_*` operations return `None` exactly there.
 
-**Documented departure.** R3 is stated under `!saturated(n, d)`. This scopes the
-contract below the magnitude ceiling by *choice*: it is tempting to say the
-bound is unachievable above it, but that is false — `MAX_MAG + 1/2` sits within
-`2^-61` of `MAX_MAG/1`. Keeping the contract on one clean side of the boundary
-is the reason. Those results saturate,
-and `checked_add`/`checked_sub`/`checked_mul` return `None` exactly in that
-case (`ensures r.is_none() <==> saturated(...)`).
+`lemma_snap_in_budget` is the one place verification found a false statement
+that tests could not have: at the clamped shift the snap returns `ceil(|x|)`,
+and the budget bound needs `floor(|x|) < MAX_MAG` *strictly*. Equality is ruled
+out by coprimality of the reduced pair. The differential suite only ever sees
+reduced pairs, so the missing hypothesis always happened to hold.
 
 ### V5 — GCD
 
-`gcd.rs` proves, about the ghost `gcd_nat` and the executable `gcd_u128`:
+`lemma_gcd_divides`, `lemma_gcd_greatest`, `lemma_gcd_pos`/`le`/`zero`,
+`lemma_gcd_scale`, and `lemma_gcd_reduce_coprime`, which is what canonicalisation
+stands on. Termination by `decreases y`. The workhorse is `gcd_u128` (Stein's
+binary algorithm narrowed to `u64`), because canonicalisation reduces `i128`
+intermediates.
 
-* `lemma_gcd_divides` — it divides both arguments (induction on the second).
-* `lemma_gcd_greatest` — every common divisor divides it.
-* `lemma_gcd_pos`, `lemma_gcd_le`, `lemma_gcd_zero` — positivity and bounds.
-* `lemma_gcd_scale` — `gcd(k·a, k·b) == k · gcd(a, b)`.
-* `lemma_gcd_reduce_coprime` — dividing through by the gcd leaves the results
-  coprime. **This is the lemma canonicalisation stands on**: it is why
-  `Rat::new` produces something satisfying I1.
+### V6 — laws
 
-Termination is the `decreases y` measure on the loop, justified by
-`x % y < y` for `y > 0`.
-
-`gcd_u128` is the workhorse rather than `gcd_u64`, because canonicalisation
-reduces `i128` intermediates, not `i64` ones. `gcd_u64` is a thin wrapper kept
-for the narrow case.
-
-### V6 — algebraic laws
-
-| law | status | where |
+| law | scope | where |
 |---|---|---|
 | `add`, `mul` commutative | unconditional | `theorem_add_commutative`, `theorem_mul_commutative` |
-| `add`, `mul` associative | exact path only | `theorem_add_associative_exact`, `theorem_mul_associative_exact` |
-| distributivity | exact path only | `theorem_distributive_exact` |
-| `Ord` total, agreeing with the ghost order | unconditional | `theorem_order_total` |
-| canonical ⟺ structural equality | unconditional | `lemma_canonical_eq` (via `lemma_euclid`) |
-| `−(−a) == a`, `abs∘abs == abs` | unconditional | `theorem_neg_abs_involution` |
-| `1/(1/a) == a` | unconditional | `theorem_recip_involution` |
-| exactness theorem (R1 lifted) | — | `theorem_exact_path_is_exact`, `nary::theorem_exact_fold_is_exact` |
+| associativity, distributivity | exact path | `theorem_add_associative_exact`, `theorem_mul_associative_exact`, `theorem_distributive_exact` |
+| associativity defect bounded | `4·2^-61·m` (add); `6·2^-61` on `[0,1]` (mul) | `theorem_add_associativity_bound`, `theorem_mul_associativity_bound_unit_interval` |
+| `Ord` total, agreeing with the value order | unconditional | `theorem_order_total` |
+| canonical ⟺ structural equality | unconditional | `lemma_canonical_eq` |
+| `−(−a) == a`, `abs ∘ abs == abs`, `1/(1/a) == a` | unconditional | `theorem_neg_abs_involution`, `theorem_recip_involution` |
+| a fold that never rounds is exact | — | `theorem_exact_path_is_exact`, `nary::theorem_exact_fold_is_exact` |
 
-`lemma_canonical_eq` is worth calling out: it derives Euclid's lemma from
-`lemma_gcd_scale` (no Bézout machinery needed) and uses it to show that two
-well-formed `Rat` are mathematically equal exactly when they are structurally
-equal. That is what licenses deriving `PartialEq`, `Eq` and `Hash`, and it is
-what makes "deterministic" a fact rather than a hope.
+`Ord` is not derived: the lexicographic order on `(num, den)` is not the order
+on rationals.
 
-`Ord` is **not** derived — the derived lexicographic order on `(num, den)` is
-not the order on rationals.
+### V7 — Lipschitz
 
-### V9 — the extended `Q`
+Stated division-free through `frac_diff_le(n1, d1, n2, d2, en, ed)`, meaning
+`|n1/d1 − n2/d2| ≤ en/ed`. `lemma_add_lipschitz` (errors add);
+`lemma_mul_lipschitz_bound`, `|a·b − a'·b'| ≤ ca·e₂ + cb·e₁` given `|a| ≤ ca`,
+`|b'| ≤ cb`; `lemma_recip_lipschitz_bound`, `|1/b − 1/b'| ≤ e₂·md²/(ed·mn²)`
+for `b, b' ≥ mn/md > 0`; `lemma_div_lipschitz_bound`, the composition.
 
-`ext.rs` layers explicit non-representable states over the kernel (issue #26).
-`Rat` is untouched, so **V1–V8 keep their exact statements** — the 691
-obligations that existed before this layer still discharge unchanged, and the
-new total is 742.
+### V8 — accumulation
 
-| property | status | where |
-|---|---|---|
-| every operation is total — no panic, no malformed output | unconditional | `wf` on every `ensures`; Verus's own no-panic obligation |
-| the four classification predicates partition the type | unconditional | `theorem_classification_partitions` |
-| the order is total | unconditional | `theorem_order_total` |
-| the order is antisymmetric **against structural equality** | unconditional | `theorem_order_antisymmetric` |
-| the order is transitive | unconditional | `theorem_order_transitive` |
-| `spec_eq` ⟺ derived `PartialEq` | unconditional | `theorem_spec_eq_is_structural_eq` |
-| saturation separates strictly from every `Number` | unconditional | `theorem_sat_separates_numbers` |
-| an infinity in a quotient implies a zero divisor or an infinite numerator | unconditional | `Q::div`'s `ensures` |
-| `Nan` is absorbing in `add`/`sub`/`mul`/`div` | unconditional | each operation's `ensures` |
+`theorem_sum_error_accumulation`: after `k` folded elements the result is within
+`k · m · 2^-61` of the exact fold, `m` bounding the intermediates. The bound is
+absolute, not relative: relative error does not accumulate by induction because
+the magnitude in the bound moves at every step. `theorem_product_error_accumulation`
+is the same shape under `all_unit` (every factor's magnitude at most 1),
+without which a factor above 1 amplifies carried error geometrically.
+`weighted_mean` has bounds on both accumulators (`2k·m·2^-61` on the numerator,
+`k·m·2^-61` on the weights) and `theorem_weighted_mean_return_error` composes
+them through the division: with weights and values in `[0, 1]` and the exact
+weight sum at least `δ = delta_num/delta_den`, the returned value is within
+`8k · delta_den / (delta_num · 2^61)` of the exact mean.
+`oracle::long_fold_chain_tracks_oracle` checks the sum bound over 10⁴ operations.
 
-**What is deliberately not proven here.** The cell-by-cell propagation tables of
-#26 §5 are *not* restated as ghost functions. A specification shaped exactly
-like the table it specifies is the circular kind that verifies happily with a
-mistake duplicated into both, so it would buy confidence it has not earned. The
-tables are instead pinned by **exhaustive enumeration** — the state space is
-6×6, so `tests/extended_q.rs` enumerates every cell against expected values
-derived independently from the §2 denotations, rather than sampling.
+### V9 — `Q`
 
-**The order is on representations, not on denoted values.** Inside `Number` the
-two coincide. Outside it they cannot: `PosSat == PosSat` compares `Equal` while
-the two true values may differ, because `PosSat` denotes an interval rather than
-a point. This is sound for `Ord`, `Eq` and `Hash` — the relation really is an
-equivalence on representations — but it means `Q::compare` answers "are these
-the same state?", not "are these the same number?", and only the former is
-decidable from a saturated value.
+Every operation is total; `theorem_classification_partitions`,
+`theorem_order_total`, `theorem_order_antisymmetric` (against structural
+equality), `theorem_order_transitive`, `theorem_spec_eq_is_structural_eq`,
+`theorem_sat_separates_numbers`; `Nan` absorbs in `add`/`sub`/`mul`/`div`. The
+propagation tables are deliberately *not* restated as ghost functions (a spec
+shaped like the table it specifies verifies with a shared mistake); they are
+pinned by exhaustive enumeration of the 6×6 state space in
+`tests/extended_q.rs`. The order is on representations: `PosSat == PosSat` even
+though the two true values may differ.
 
-**Two deliberate departures from IEEE 754**, both about `Nan`, both required to
-keep `Q` usable in ordinary Rust containers. First, `Nan == Nan` is true, which
-keeps `Eq` lawful and `Hash` consistent with it. Second, `Nan` is *ordered*
-rather than incomparable: IEEE makes every ordered comparison involving NaN
-false, which is exactly what forbids a total order, and `f64` sidesteps that by
-having no `Ord` at all and quarantining the total order in `total_cmp`. These
-are independent decisions — reflexive equality alone would still leave `Nan`
-incomparable — and issue #26 §4, which currently claims there is only one
-departure, is amended accordingly.
+### V10 — transcendentals
 
-### V10 — roots and transcendentals
+Every function returns a well-formed `Q` for every input; every loop has a
+fixed constant bound and `decreases`; `isqrt_i64` satisfies
+`r² ≤ n < (r+1)²`. Accuracy is not proven. Each series length is derived from
+its tail bound against the `2^-61` grid and recorded beside the constant.
 
-`transcendental.rs` adds `sqrt`, `cbrt`, `exp`, `exp2`, `ln`, `log2`, `log10`,
-`log`, `powf`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
-`sinh`, `cosh` and `tanh`. None of these is rational-closed, so what is proven
-is different in kind from V1–V9:
+## Verus notes
 
-| property | status | how |
-|---|---|---|
-| every function is total — returns a well-formed `Q` for every input | unconditional | `wf` on every `ensures` |
-| no panics, no overflow | unconditional | Verus's own obligation over the whole module |
-| every loop terminates | unconditional | `decreases` on all of them; all bounds are **fixed constants**, never a convergence test |
-| `isqrt_i64` is the integer square root | unconditional | `r*r <= n < (r+1)*(r+1)` — the *defining* property, not a bound |
+1. Bounds stated with `pow2(n)` discharge nothing about an `i128`; state the
+   literal alongside (`lemma_pow2_124/125/126`, derived by squaring, since
+   `reveal_with_fuel` exhausts the resource limit past `2^64`).
+2. `by (nonlinear_arith)` sees only its own `requires`, not the surrounding
+   context.
+3. Split distribution from rearrangement; partially factored ring identities
+   exhaust the solver.
+4. Outside a nonlinear block multiplication is uninterpreted, so `a * b` and
+   `b * a` are different terms; even `0 * g` needs a nonlinear step.
+5. A recursive spec function's default fuel is 1.
+6. A failing lemma still hands its `ensures` to its callers. Read the whole
+   error list.
 
-**Accuracy is measured, not proven.** Proving an error bound on a rounded
-series in Verus would mean formalising the truncation tail and the accumulated
-rounding together, which is a substantially larger project than the functions
-themselves. Instead each function is checked against an exact-rational oracle
-carried to `2^-90` that shares no structure with the implementation, and the
-worst observed relative error is recorded in `README.md`. That is weaker than a
-proof and is labelled as such.
-
-**Term counts are derived, not chosen.** Each series length is computed from its
-own tail bound against the `2^-61` grid, and the derivation sits next to the
-constant. Shortening them from a uniform twenty changed **no** measured
-accuracy figure, which is the evidence the derivations are right.
-
-**The pinned constants are checked.** `pi`, `e`, `ln2` and `ln10` return
-literals for speed; each keeps its series as a public `*_series` function and a
-test asserts the literal is bit-identical to it. This is not ceremony — the
-`ln10` literal was wrong in the seventh significant figure when first written,
-and the test caught it.
-
-### V7 — Lipschitz lemmas (SHOULD)
-
-`lipschitz.rs`. Perturbation statements are written division-free through
-`frac_diff_le(n1, d1, n2, d2, en, ed)`, meaning `|n1/d1 − n2/d2| ≤ en/ed`.
-
-* `lemma_add_lipschitz` / `lemma_triangle` — addition is 1-Lipschitz in each
-  argument, so errors add.
-* `lemma_mul_lipschitz` — the algebraic identity
-  `a·b − a'·b' == a·(b − b') + b'·(a − a')`.
-* `lemma_div_lipschitz` — the same split for division.
-
-Those two are *identities*, not bounds, and an identity will not compose two
-`frac_diff_le` hypotheses through a product or a quotient. The bounds that will
-are stated alongside them, with the identities left untouched for the callers
-that use them directly:
-
-* `lemma_mul_lipschitz_bound` — `|a·b − a'·b'| ≤ (ca·e₂ + cb·e₁)/ed` given
-  `|a| ≤ ca` and `|b'| ≤ cb`. `lemma_mul_lipschitz_unit` is the `ca = cb = 1`
-  corollary: on `[0, 1]`, where every opinion component lives, the errors
-  simply add.
-* `lemma_recip_lipschitz_bound` — `|1/b − 1/b'| ≤ (e₂·md²)/(ed·mn²)` for
-  `b, b' ≥ mn/md > 0`. The lower bound is supplied division-free as
-  `mn·bd ≤ md·bn`; a caller with `b ≥ 1/2` passes `mn = 1, md = 2`. The `md²`
-  is the genuine quadratic cost of perturbing a divisor.
-* `lemma_div_lipschitz_bound` — the quotient bound, proved as the reciprocal
-  bound fed into the product bound rather than by attacking the four-way
-  cross-multiplied difference directly. That composition is both shorter and
-  far cheaper for the solver.
-
-Supporting these: `lemma_abs_triangle`, `lemma_abs_prod` (`|u·v| == |u|·|v|`
-with *both* signs unknown, which `model::lemma_abs_mul_pos` does not cover),
-`lemma_frac_diff_scale`, and scalar and pairwise product monotonicity.
-
-These are what an interval or affine-arithmetic layer would be built on.
-`interval::QI` already uses the R2 half.
-
-### V8 — n-ary accumulation (SHOULD)
-
-`nary::theorem_sum_error_accumulation` states that after `k` folded elements the
-result is within `k · m · 2^-61` of the exact fold, where `m` bounds the
-intermediates. The induction is: each `add` contributes one fresh unit (R3), and
-the carried error passes through addition with Lipschitz constant `1` (V7); both
-halves are `lipschitz::lemma_abs_error_step`.
-
-**This is stated as an absolute bound, not a relative one, and that is a
-correction rather than a weakening.** The specification's phrasing suggests
-`k · 2^-61 · max(1, |exact|)`, but relative error does not accumulate by
-induction: the magnitude in the bound is the magnitude of the *running* sum,
-which moves at every step, so the induction hypothesis and the goal are about
-different quantities. Carrying an explicit magnitude bound `m` on the
-intermediates is what makes the statement provable and, for the consuming
-engine — where every value lies in `[0, 1]` and `m == 1` — it says the same
-thing.
-
-The empirical claim is checked independently:
-`oracle::long_fold_chain_tracks_oracle` runs 10⁴ mixed operations and asserts
-the accumulated error against the oracle stays inside `k · 2^-61`.
-
-**`product` and `weighted_mean` carry the same shape of bound, each under its
-own hypothesis, not `sum`'s hypothesis reused.**
-
-* `nary::theorem_product_error_accumulation` is `sum`'s theorem's
-  multiplicative twin: `k · m · 2^-61`, but only under `nary::all_unit(s)` —
-  every factor's magnitude at most `1`. This is necessary, not a proof
-  artifact: multiplication is 1-Lipschitz only when weighted by the other
-  operand's magnitude (`lipschitz::lemma_mul_lipschitz`), so a factor `> 1`
-  would amplify the carried error geometrically rather than additively, and
-  no bound of this shape would hold uniformly in `k`. The hypothesis is
-  trivial in the consuming engine's domain (`[0, 1]`).
-* `weighted_mean` gets two bounds on its two internal accumulators —
-  `nary::theorem_wm_num_error_accumulation` (`2k · m · 2^-61` against the true
-  `Σ w_i·x_i`, twice `sum`'s rate because each pair costs two roundings) and
-  `nary::theorem_wm_denom_error_accumulation` (`k · m · 2^-61` against the
-  true `Σ w_i`, a direct restatement of `theorem_sum_error_accumulation` for
-  the weight half of each pair) — but **not** a single bound on the value
-  `weighted_mean` returns. Composing the two through the final division would
-  need the exact weight sum bounded away from zero as a further explicit
-  hypothesis. The other thing it needed — a usable division error bound — now
-  exists (`lipschitz::lemma_div_lipschitz_bound`); when this text was first
-  written only the algebraic identity did. So the composition is unblocked but
-  still unproven, and the two theorems above remain the actual n-ary-helper
-  internals V8 asks be bounded.
-
----
-
-## Milestone status
-
-| milestone | scope | status |
-|---|---|---|
-| M1 | `Rat`, ghost model, canonical constructor, verified GCD | verified and tested |
-| M2 | add/sub/mul/div/neg/abs/cmp with exact-path specs | verified and tested |
-| M3 | rounding: budget detection, dyadic snap, R1–R4, exactness theorem | verified and tested against the oracle |
-| M4 | `from_f64_dir`, `to_f64`, `from_decimal`, serde, `Display`, `TRUSTED.md` | complete and tested |
-| M5 | malachite oracle harness, property tests, CI | complete and green |
-| M6 | V7 Lipschitz lemmas, interval type `QI` | delivered (stretch), verified |
-
-Acceptance per the specification is "M1–M5 verified and green". **Both hold.**
-The consuming engine rewrite can start against the M2 API surface.
-
-## Reproducing the verification
+## Reproducing
 
 ```sh
-# Install Verus (needs github.com reachable)
-TAG=$(curl -sSfL https://api.github.com/repos/verus-lang/verus/releases/latest \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
-# ...download the x86-linux asset for $TAG, unzip, put it on PATH...
-
-cargo verus verify --features serde
+VERUS_VERSION=0.2026.07.27.31579f0
+curl -sSfL "https://github.com/verus-lang/verus/releases/download/release/${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip" -o /tmp/verus.zip
+# unzip; put the cargo-verus directory on PATH
+cargo verus verify --locked --all-features -- --multiple-errors 8
 ```
 
-The same steps are automated in `.github/workflows/ci.yml`.
+`.github/workflows/ci.yml` runs the same command.

@@ -1123,6 +1123,13 @@ fn exp2_and_powf_agree_with_integer_powers() {
     // These are the conventions for powf at zero.
     assert_eq!(Q::zero().powf(Q::zero()), Q::one(), "0^0 is 1");
     assert_eq!(Q::zero().powf(Q::one()), Q::zero());
+    assert_eq!(Q::zero().powf(Q::neg_one()), Q::PosInf);
+    assert_eq!(Q::zero().powf(Q::PosInf), Q::zero());
+    assert_eq!(Q::zero().powf(Q::NegInf), Q::PosInf);
+    assert_eq!(Q::zero().powf(Q::PosSat), Q::zero());
+    assert_eq!(Q::zero().powf(Q::NegSat), Q::PosInf);
+    assert_eq!(Q::zero().powf(Q::Nan), Q::Nan);
+    assert_eq!(Q::zero().powf(Q::neg_one()), Q::zero().pow_i32(-1));
 }
 
 #[test]
@@ -1304,6 +1311,29 @@ fn atan2_gets_the_quadrant_right() {
         match y.atan2(x) {
             Q::Number(r) => assert!(
                 mag(&(rat(r) - want.clone())) <= eps(30),
+                "atan2({y}, {x}) = {r}, want {want}"
+            ),
+            other => panic!("atan2({y}, {x}) = {other}"),
+        }
+    }
+    let infinite_cases = [
+        (Q::PosInf, Q::PosInf, p.clone() / Rational::from(4u32)),
+        (
+            Q::PosInf,
+            Q::NegInf,
+            Rational::from(3u32) * p.clone() / Rational::from(4u32),
+        ),
+        (Q::NegInf, Q::PosInf, -p.clone() / Rational::from(4u32)),
+        (
+            Q::NegInf,
+            Q::NegInf,
+            -Rational::from(3u32) * p.clone() / Rational::from(4u32),
+        ),
+    ];
+    for (y, x, want) in infinite_cases {
+        match y.atan2(x) {
+            Q::Number(r) => assert!(
+                mag(&(rat(r) - want.clone())) <= eps(56),
                 "atan2({y}, {x}) = {r}, want {want}"
             ),
             other => panic!("atan2({y}, {x}) = {other}"),
