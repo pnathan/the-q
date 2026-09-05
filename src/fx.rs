@@ -1,46 +1,16 @@
-//! Fixed-point kernel for the transcendental functions.
+//! Fixed-point kernel for `exp` and `ln`.
 //!
-//! # Why a second numeric representation
+//! Values are `i128` on a `2^-63` grid (`V` denotes `V · 2^-63`), two guard
+//! bits finer than the crate's `2^-61` grid, so a series can accumulate
+//! rounding error here and be regridded once at the end. A multiply is one
+//! `i128` product and one shift-and-round, with no gcd or canonical form; that
+//! is why `exp` and `ln` cost under two microseconds where the `Q`-series
+//! functions cost tens.
 //!
-//! [`crate::transcendental`] evaluates its series through `Q`, thus every term
-//! costs a full canonicalisation and a full rounding: a gcd, two divisions and
-//! the R3 machinery, for values that are about to be multiplied by the next
-//! term anyway. `exp` runs approximately eighty such operations. That is the
-//! whole reason a transcendental costs tens of microseconds while an
-//! arithmetic operation costs tens of nanoseconds.
-//!
-//! This module carries the same values as plain integers on a fixed dyadic
-//! grid. A value `v` is held as `V: i128` and denotes `V · 2^-63`. A
-//! multiplication is then one `i128` multiply and one shift-and-round, and
-//! nothing else: no gcd, no canonical form, no `Rat`.
-//!
-//! # The scale, and why 63
-//!
-//! The grid is `2^-63`, two bits finer than the `2^-61` grid that the crate
-//! rounds to. The two extra bits are the guard digits: the series accumulates
-//! its rounding errors on this grid and the result is regridded to `2^-61`
-//! once, at the end, so the accumulated error stays below the final grid step.
-//!
-//! # The invariant
-//!
-//! Every function here states the range it needs on its inputs, and those
-//! ranges are what discharge the `i128` overflow checks. The widest term is the
-//! product inside [`fx_mul`], which is bounded by its precondition rather than
-//! by the type: `|a · b| < 2^126` leaves a full bit of headroom under
-//! `i128::MAX`, and the callers hold values far below that.
-//!
-//! # What is proven here, and what is not
-//!
-//! Proven: every operation's rounding error against the exact product or
-//! quotient, division-free, in the same cross-multiplied style the rest of the
-//! crate uses; and the absence of overflow, which is what makes the functions
-//! total.
-//!
-//! Not proven, and not provable here: that a truncated series approximates the
-//! function it is a series for. That is a statement about `exp` and `ln`, and
-//! this crate has no term for either. The series bounds are documented at their
-//! definitions and checked against a high-precision oracle in
-//! `tests/transcendental.rs`.
+//! Proven: each operation's rounding error against the exact product or
+//! quotient, and the absence of overflow (every function states the input
+//! range that discharges it; [`fx_mul`] needs `|a · b| < 2^126`). Not proven:
+//! that a truncated series approximates its function.
 
 use verus_builtin_macros::verus;
 
@@ -73,17 +43,9 @@ pub proof fn lemma_fx_one()
     crate::model::lemma_pow2_63();
 }
 
-/// The product of two fixed-point values, rounded to the grid.
-///
-/// The result `r` satisfies `|r · 2^63 − a · b| <= 2^62`, which is half a grid
-/// step: the rounding is to nearest, with ties away from zero. Ties away rather
-/// than ties to even because the sign is handled by splitting off the magnitude,
-/// which makes the rule symmetric under negation and therefore keeps
-/// `fx_mul(-a, b) == -fx_mul(a, b)`.
-///
-/// The precondition on the product is what discharges the overflow check. It is
-/// stated on the mathematical product, thus a caller proves it from its own
-/// value bounds and never from the type.
+/// The product on the grid: `|r · 2^63 − a · b| <= 2^62`, nearest with ties
+/// away from zero (symmetric under negation). The precondition on the product
+/// discharges the overflow check.
 pub fn fx_mul(a: i128, b: i128) -> (r: i128)
     requires
         abs_int((a as int) * (b as int)) < pow2(126),
@@ -145,16 +107,7 @@ pub fn fx_mul(a: i128, b: i128) -> (r: i128)
     }
 }
 
-/// A fixed-point value divided by a small positive integer, rounded to the
-/// grid.
-///
-/// The result satisfies `|r · k − v| <= k / 2`, again half a step of the
-/// quotient's own grid, with ties away from zero for the same symmetry reason
-/// as [`fx_mul`].
-///
-/// The series evaluators divide by the term index, which is why the divisor is
-/// an ordinary integer rather than a second fixed-point value: a fixed-point
-/// division would need a wide intermediate and there is no need for one.
+/// `v / k` on the grid for a small integer `k`: `|r · k − v| <= k / 2`.
 pub fn fx_div_int(v: i128, k: u32) -> (r: i128)
     requires
         k > 0,
@@ -245,37 +198,17 @@ pub fn fx_div_int(v: i128, k: u32) -> (r: i128)
 /// `3.1966e18` on this grid. The literal above it is the bound the proofs use.
 pub const FX_R_MAX: i128 = 3200000000000000000i128;
 
-/// The largest value the Horner accumulator can reach: `1.6 · 2^63`.
-///
-/// From `|T| <= 1.6 · 2^63` and `|R| <= FX_R_MAX`, the product inside
-/// [`fx_mul`] is at most `4.8e37`, which is well under the `2^126` that its
-/// precondition asks for. The accumulator itself returns to `1 + |R|·|T|`,
-/// which is under this bound. The loop therefore closes.
+/// Bound on the Horner accumulator, `1.6 · 2^63`; keeps [`fx_mul`]'s product
+/// under `2^126`.
 pub const FX_T_MAX: i128 = 14757395258967641292i128;
 
-/// Terms in the fixed-point exponential series.
-///
-/// The tail after `N` terms at `|z| <= 0.3536` is
-/// `z^(N+1)/(N+1)! · 1/(1 − z/(N+2))`. At `N = 15` that is `2^-68.7`, and at
-/// `N = 16` it is `2^-73.8`. The target is one term below the `2^-63` grid, and
-/// sixteen leaves a term of margin. Twelve would give `2^-52.4`, which is not
-/// enough.
+/// Terms in the exponential series: the tail at `|z| <= 0.3536` is `2^-73.8`
+/// after 16 terms, a term of margin below the grid.
 pub const FX_EXP_TERMS: u32 = 16;
 
-/// `e^z` for a reduced `z`, by Horner over the Maclaurin series.
-///
-/// The recurrence is `T := 1 + (z/k)·T` for `k` from `FX_EXP_TERMS` down to
-/// `1`, which is the Maclaurin series in the form that needs one multiplication
-/// and one small division per term and no powers.
-///
-/// What the postcondition states is the accumulator bound, which is what makes
-/// the function total: it is the fact that discharges every overflow check
-/// here and in [`fx_mul`]. The distance from the result to `e^z` is not stated,
-/// because `e^z` has no term in this crate. Each step's rounding error is
-/// bounded by [`fx_mul`] and [`fx_div_int`] at half a grid step, the series
-/// damps earlier errors by `|z| <= 0.354` per step, and the truncation bound is
-/// the one on [`FX_EXP_TERMS`]. `tests/transcendental.rs` checks the composed
-/// result against a series carried to `2^-90`.
+/// `e^z` for a reduced `z`, by Horner: `T := 1 + (z/k)·T` for `k` from
+/// [`FX_EXP_TERMS`] down to 1. The postcondition is the accumulator bound that
+/// discharges the overflow checks; distance to `e^z` is measured, not stated.
 pub fn fx_exp_series(z: i128) -> (t: i128)
     requires
         abs_int(z as int) <= FX_R_MAX as int,
@@ -335,32 +268,13 @@ pub fn fx_exp_series(z: i128) -> (t: i128)
 /// `tests/transcendental.rs`, the same way [`crate::transcendental::ln2`] is.
 pub const FX_LN2_HI: i128 = 6393154322601327830i128;
 
-/// The residual of `ln 2` at the next scale down:
-/// `round((ln2 · 2^63 − FX_LN2_HI) · 2^63)`.
-///
-/// Two words rather than one. The reduction subtracts `m · ln2` for an `m` as
-/// large as 64, so a one-word constant leaves `64 · 2^-64 ≈ 2^-58` of error and
-/// caps the whole function there. With the residual the same term is
-/// `64 · 2^-128`, which is nothing. The pair represents `ln 2` to `2^-128.4`.
+/// Second word of `ln 2`, `round((ln2 · 2^63 − FX_LN2_HI) · 2^63)`; the pair
+/// holds `ln 2` to `2^-128.4`, so `m · ln2` with `m <= 64` is exact enough.
 pub const FX_LN2_LO: i128 = -974768846722515540i128;
 
-/// The exponential, reduced and evaluated on the grid.
-///
-/// Returns `(t, m)` denoting `t · 2^(m − 63)`. The caller turns that into a
-/// `Rat`, which is where the value meets the `2^-61` grid and the budget.
-///
-/// # Method
-///
-/// Cody-Waite reduction: `m = nearest(x / ln2)` and `r = x − m·ln2`, with
-/// `ln 2` carried in two words so that the subtraction is exact to `2^-128`.
-/// The series then runs on `|r| <= ln2/2`, and the reconstruction is
-/// `e^x = 2^m · e^r`, which on this representation is an exponent adjustment
-/// and not a computation.
-///
-/// That is the whole reason for the reduction shape. Halving the argument and
-/// squaring the result, which is what the `Q` implementation does, doubles the
-/// relative error at every squaring: seven halvings cost seven bits. Here the
-/// reconstruction costs nothing.
+/// `e^x` on the grid as `(t, m)` denoting `t · 2^(m − 63)`. Cody-Waite:
+/// `m = nearest(x / ln2)`, `r = x − m·ln2` with `ln 2` in two words (exact to
+/// `2^-128`), series on `|r| <= ln2/2`, and `2^m` is an exponent adjustment.
 pub fn fx_exp_reduced(x: i128) -> (r: (i128, i32))
     requires
         abs_int(x as int) <= 406000000000000000000i128 as int,
@@ -416,13 +330,8 @@ pub fn fx_exp_reduced(x: i128) -> (r: (i128, i32))
     // overflow the product.
     let lo: i128 = fx_mul(m, FX_LN2_LO);
     let r: i128 = hi - lo;
-    // The reduction is correct by construction, but its *bound* is what the
-    // series needs, and that bound depends on the quality of the division
-    // above rather than on anything provable from the constants alone. A
-    // clamp makes the precondition unconditional. It never triggers: `|r|`
-    // is at most `ln2/2 + 2^-62` by the rounding rule for `m`.
-    // `i128::clamp` is not available in verified code, and the branches carry
-    // the bound the series needs.
+    // The clamp never triggers (`|r| <= ln2/2 + 2^-62`) and makes the series'
+    // precondition unconditional; `i128::clamp` is unavailable in verified code.
     #[allow(clippy::manual_clamp)]
     let rc: i128 = if r > FX_R_MAX {
         FX_R_MAX
@@ -455,12 +364,8 @@ pub const FX_ATANH_TERMS: u32 = 18;
 /// Every caller reduces to `|z| <= 1/3`, which is `3.07e18` on this grid.
 pub const FX_Z_MAX: i128 = 3150000000000000000i128;
 
-/// `atanh(z)` for `|z| <= 1/3`, as `z + z³/3 + z⁵/5 + ...`.
-///
-/// The postcondition is a loose bound on the accumulator, not the value. The
-/// value is at most `atanh(1/3) = ln2/2 ≈ 0.347`; the bound stated is what the
-/// proof carries from eighteen terms each bounded by `FX_Z_MAX / 3`, and its
-/// only job is to discharge the `i128` range checks.
+/// `atanh(z)` for `|z| <= 1/3`. The postcondition bounds the accumulator only,
+/// to discharge the range checks.
 pub fn fx_atanh_series(z: i128) -> (t: i128)
     requires
         abs_int(z as int) <= FX_Z_MAX as int,
@@ -541,22 +446,10 @@ pub fn fx_atanh_series(z: i128) -> (t: i128)
 }
 
 
-/// `z = (N − D) / (N + D)` on the grid, for a ratio `N/D` in `[1/2, 2]`.
-///
-/// This is the shape `ln` needs, and the reason it takes `N` and `D` as
-/// integers rather than a mantissa already on the grid. Quantising the mantissa
-/// first costs `2^-64` of *absolute* error, which is harmless for a result near
-/// `1` and ruinous for one near `0`: at `x = 1 + 2^-40` the answer is `2^-40`
-/// and the quantisation leaves `2^-24` of relative error, because `N − D`
-/// cancels away forty bits that were never recorded. Taking the difference on
-/// the caller's own integers, before any rounding, is what keeps a small result
-/// meaningful. It is the same reason a C library has `log1p`.
-///
-/// The precondition bounds both inputs by `2^62`, which keeps `(N − D) · 2^63`
-/// inside `i128`.
-/// The ratio bound is clamped rather than required. A caller that has reduced
-/// its mantissa into `[1/2, 2]` never reaches the clamp, but proving that it
-/// has means unfolding the order on `Q`, and the clamp costs one comparison.
+/// `z = (N − D) / (N + D)` on the grid for `N/D` in `[1/2, 2]`, taken on the
+/// caller's integers so that `N − D` is exact (the `log1p` reason: quantising
+/// first loses the cancelled bits). Inputs below `2^62`; the ratio is clamped
+/// rather than required.
 // `rem` is consumed by the proof block, which plain rustc erases.
 #[allow(unused_variables)]
 pub fn fx_ratio_z(bign: i128, bigd: i128) -> (z: i128)

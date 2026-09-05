@@ -336,23 +336,23 @@ fn intervals_bracket_the_exact_result() {
         let s = QI::add(ia, ib);
         let exact = rat(a) + rat(b);
         assert!(
-            rat(s.lo) <= exact && exact <= rat(s.hi),
+            rat(s.lower()) <= exact && exact <= rat(s.upper()),
             "sum interval misses {exact}"
         );
         let d = QI::sub(ia, ib);
         let exact = rat(a) - rat(b);
         assert!(
-            rat(d.lo) <= exact && exact <= rat(d.hi),
+            rat(d.lower()) <= exact && exact <= rat(d.upper()),
             "diff interval misses {exact}"
         );
         let m = QI::mul(ia, ib);
         let exact = rat(a) * rat(b);
         assert!(
-            rat(m.lo) <= exact && exact <= rat(m.hi),
+            rat(m.lower()) <= exact && exact <= rat(m.upper()),
             "product interval misses {exact}"
         );
         // On the exact path, the interval collapses to a point.
-        if rat(s.lo) == rat(s.hi) {
+        if rat(s.lower()) == rat(s.upper()) {
             assert!(QI::add(ia, ib).width().is_zero());
         }
     }
@@ -365,7 +365,37 @@ fn interval_width_is_zero_on_the_exact_path() {
     let b = QI::exact(Rat::from_decimal(15, 2).unwrap());
     assert!(QI::add(a, b).width().is_zero());
     assert!(QI::mul(a, b).width().is_zero());
-    assert_eq!(QI::add(a, b).lo, Rat::one());
+    assert_eq!(QI::add(a, b).lower(), Rat::one());
+}
+
+#[test]
+fn interval_construction_and_width_report_runtime_failures() {
+    use the_q::{MAX_MAG, Q, QI};
+
+    let zero = Rat::zero();
+    let one = Rat::one();
+    assert_eq!(
+        QI::checked_new(zero, one).map(|i| (i.lower(), i.upper())),
+        Some((zero, one))
+    );
+    assert_eq!(QI::checked_new(one, zero), None);
+    assert_eq!(QI::exact(one).width(), Q::zero());
+    assert_eq!(QI::new(zero, one).width(), Q::one());
+
+    let low = Rat::new(-MAX_MAG, 1).unwrap();
+    let high = Rat::new(MAX_MAG, 1).unwrap();
+    let wide = QI::new(low, high);
+    assert_eq!(wide.checked_width(), None);
+    assert_eq!(wide.width(), Q::PosSat);
+}
+
+#[test]
+#[should_panic(
+    expected = "the-q: QI::new requires lo <= hi. Use QI::checked_new for untrusted input."
+)]
+fn interval_new_rejects_reversed_runtime_inputs() {
+    use the_q::QI;
+    let _ = QI::new(Rat::one(), Rat::zero());
 }
 
 /// Non-degenerate, arbitrary-sign intervals bracket the exact result of every
@@ -390,33 +420,42 @@ fn signed_intervals_bracket_arbitrary_interior_points() {
         let y = interior_point(&mut rng, b_lo, b_hi);
 
         let s = QI::add(ia, ib);
-        assert!(Rat::le(s.lo, s.hi), "sum interval not well-formed");
+        assert!(
+            Rat::le(s.lower(), s.upper()),
+            "sum interval not well-formed"
+        );
         let exact = rat(x) + rat(y);
         assert!(
-            rat(s.lo) <= exact && exact <= rat(s.hi),
+            rat(s.lower()) <= exact && exact <= rat(s.upper()),
             "sum interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
-            rat(s.lo),
-            rat(s.hi)
+            rat(s.lower()),
+            rat(s.upper())
         );
 
         let d = QI::sub(ia, ib);
-        assert!(Rat::le(d.lo, d.hi), "difference interval not well-formed");
+        assert!(
+            Rat::le(d.lower(), d.upper()),
+            "difference interval not well-formed"
+        );
         let exact = rat(x) - rat(y);
         assert!(
-            rat(d.lo) <= exact && exact <= rat(d.hi),
+            rat(d.lower()) <= exact && exact <= rat(d.upper()),
             "diff interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
-            rat(d.lo),
-            rat(d.hi)
+            rat(d.lower()),
+            rat(d.upper())
         );
 
         let m = QI::mul(ia, ib);
-        assert!(Rat::le(m.lo, m.hi), "product interval not well-formed");
+        assert!(
+            Rat::le(m.lower(), m.upper()),
+            "product interval not well-formed"
+        );
         let exact = rat(x) * rat(y);
         assert!(
-            rat(m.lo) <= exact && exact <= rat(m.hi),
+            rat(m.lower()) <= exact && exact <= rat(m.upper()),
             "product interval [{},{}] misses {exact} (x={x:?}, y={y:?})",
-            rat(m.lo),
-            rat(m.hi)
+            rat(m.lower()),
+            rat(m.upper())
         );
     }
 }
@@ -443,7 +482,7 @@ fn interval_ops_chain_without_reestablishing_wf() {
         let prod = QI::mul(sum, ic);
         let diff = QI::sub(prod, ia);
         assert!(
-            Rat::le(diff.lo, diff.hi),
+            Rat::le(diff.lower(), diff.upper()),
             "chained interval lost well-formedness"
         );
 
@@ -452,10 +491,10 @@ fn interval_ops_chain_without_reestablishing_wf() {
         let z = interior_point(&mut rng, c_lo, c_hi);
         let exact = (rat(x) + rat(y)) * rat(z) - rat(x);
         assert!(
-            rat(diff.lo) <= exact && exact <= rat(diff.hi),
+            rat(diff.lower()) <= exact && exact <= rat(diff.upper()),
             "chained interval [{},{}] misses {exact}",
-            rat(diff.lo),
-            rat(diff.hi)
+            rat(diff.lower()),
+            rat(diff.upper())
         );
     }
 }

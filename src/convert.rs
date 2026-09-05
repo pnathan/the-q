@@ -1,27 +1,11 @@
-//! The crate's edges: `f64` in, `f64` out, `Display`, `serde`.
+//! The crate's edges: `f64` in and out, `Display`, `FromStr`, `serde`.
 //!
-//! # The trusted boundary
-//!
-//! Exactly two functions in this crate touch a float, and both are at the edge:
-//!
-//! * [`f64_decompose`] pulls the IEEE-754 binary64 fields out of a `f64`. It is
-//!   `external_body`, because Verus has no model of `f64::to_bits`. Everything
-//!   downstream of it is ordinary verified integer arithmetic: the conversion of
-//!   `(sign, mantissa, exponent)` into a rational, and the rounding of that
-//!   rational. The *only* assumption is that the triple denotes the float.
-//! * [`to_f64`] serves display and DTO use only. It is `external_body`. Its
-//!   output must not return into `Rat` arithmetic. Such a round trip silently
-//!   reintroduces every `f64` problem this crate removes.
-//!
-//! `TRUSTED.md` enumerates both, with their assumed specifications and the
-//! differential tests that back them.
-//!
-//! # Why the input path is exact
-//!
-//! An `f64` *is* a rational: `±m · 2^e` with a 53-bit `m`. `from_f64_dir`
-//! therefore does no floating-point reasoning. It builds `m / 2^-e` (or
-//! `m · 2^e` over `1`) as integers. It then hands the pair to the same verified
-//! rounding function that every arithmetic operation uses.
+//! Two functions touch a float and both are `external_body` (`TRUSTED.md`):
+//! [`f64_decompose`] extracts the IEEE-754 fields, and [`to_f64`] is for
+//! display only. Everything between is verified integer arithmetic: an `f64`
+//! is `±m · 2^e`, so [`from_parts_dir`] builds the exact integer pair and hands
+//! it to the same rounder every operation uses, and its contract pins the
+//! result to `round_frac` of that pair.
 
 use verus_builtin_macros::verus;
 
@@ -38,15 +22,8 @@ use crate::types::{Dir, Rat};
 
 verus! {
 
-/// The IEEE-754 binary64 decomposition of a finite float: `(negative,
-/// mantissa, exponent)` denoting `(-1)^negative · mantissa · 2^exponent`.
-///
-/// `None` for NaN and the infinities.
-///
-/// **TRUSTED** (`external_body`). Verus has no model of `f64::to_bits`. The
-/// correspondence between the returned triple and the float's real value is
-/// therefore an assumption. `TRUSTED.md` lists it, and differential tests check
-/// it against `malachite-q`'s exact `Rational::try_from(f64)`.
+/// The IEEE-754 fields of a finite float, `(negative, mantissa, exponent)`;
+/// `None` for NaN and infinities. TRUSTED: Verus has no model of `to_bits`.
 #[verifier::external_body]
 pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
     ensures
@@ -73,23 +50,12 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
     }
 }
 
-/// Convert an `f64` to a `Rat`, rounding in direction `dir`.
+/// Convert an `f64` to a `Rat`, rounding in direction `dir`. `None` on NaN,
+/// infinity, or `|v| > 2^61`. Below `2^-62` the result is the endpoint of the
+/// first grid cell on the rounding side.
 ///
-/// Returns `None` on NaN, on either infinity, and on `|v| > 2^61`. The
-/// specification explicitly permits a restriction of the magnitude.
-///
-/// Below `2^-62` in magnitude, the value is under the finest grid this crate
-/// uses. The result is then the appropriate endpoint of that first grid cell:
-/// `0` for `Nearest`, and the neighbouring `±2^-61` for the directed modes,
-/// which stay on their side of the value.
-///
-/// **The postcondition here is weak, because the trusted boundary shows
-/// through.** Verus has no model of `f64`, so no postcondition here mentions
-/// `v`'s value at all. R2 and R3 *against the float* are not statable, and thus
-/// not provable. Everything downstream of the decomposition is provable, and it
-/// lives on [`from_parts_dir`]. This function is a two-line composition of that
-/// one. The rounding contract is the contract of [`from_parts_dir`] plus
-/// [`f64_decompose`]'s assumption from `TRUSTED.md`.
+/// No postcondition can mention `v`: Verus has no model of `f64`. The contract
+/// lives on [`from_parts_dir`]; this is its composition with [`f64_decompose`].
 pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Rat>)
     ensures
         r.is_some() ==> r.unwrap().wf(),
@@ -124,40 +90,13 @@ pub open spec fn parts_den(e: i32) -> int {
     }
 }
 
-/// The verified core of [`from_f64_dir`]: an IEEE-754 decomposition to a `Rat`,
-/// rounded in direction `dir`.
+/// The verified core of [`from_f64_dir`]: `(neg, mant, e)` to a `Rat`.
 ///
-/// **The contract lives here.** `from_f64_dir` states no contract, because
-/// nothing in Verus relates an `f64` to a rational. That correspondence is the
-/// single assumption [`f64_decompose`] carries. Everything *downstream* of the
-/// triple is ordinary integer arithmetic, as the module header states. This
-/// separate function makes that claim checkable rather than a comment.
-///
-/// The postcondition is the strongest available. It pins the result to
-/// `round_frac` applied to the exact decomposed rational, which fixes the result
-/// completely. R2 and R3 against that rational follow from
-/// `round::lemma_r2_directed` and `round::lemma_r3_error`. (These two names
-/// carry no intra-doc links: items inside `verus!` are not resolvable targets
-/// from another module.) The postconditions below restate R2 and R3, so callers
-/// do not re-derive them.
-///
-/// One postcondition covers all three branches. It covers the sub-grid branch as
-/// well, whose denominator `2^s` with `s > 124` is past what `round_frac_exec`
-/// accepts. `round::lemma_round_frac_subgrid` closes that gap.
-///
-/// # The domain is checked at run time as well as proved
-///
-/// A *verified* caller discharges the `requires` below, and
-/// [`f64_decompose`]'s postcondition matches it exactly. `from_f64_dir`
-/// therefore gets it at no cost. The `requires` is ghost: `cargo build` erases
-/// it, so it binds no caller outside a `verus!` block, and this function is
-/// `pub`. An unverified caller that passes `mant` above `2^53` otherwise reaches
-/// `mant · 2^e` with `e` up to `64` and overflows `i128`. That overflow is
-/// silent in any dependent crate built with the default
-/// `overflow-checks = false`. The body therefore re-checks the same bounds first
-/// and returns `None`. The check costs one comparison on a path that already
-/// branches, and it makes the function total for every caller, not only for the
-/// callers Verus sees.
+/// The result is pinned to `round_frac` of the exact rational the triple
+/// denotes, with R2 and R3 restated; the sub-grid branch (`2^s`, `s > 124`)
+/// is covered by `round::lemma_round_frac_subgrid`. The `requires` is ghost and
+/// this function is `pub`, so the body re-checks the bounds and returns `None`
+/// outside them rather than overflow for an unverified caller.
 pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>)
     requires
         mant <= 9007199254740992u64,
@@ -208,8 +147,12 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>
                 lemma_pow2_pos((-e) as nat);
             }
             lemma_r2_r3_directed(parts_num(neg, mant, e), parts_den(e), dir);
+            assert(gcd_int(0, 1) == 1) by {
+                reveal_with_fuel(gcd_nat, 3);
+            }
+            Rat::lemma_from_raw_spec_wf(0, 1);
         }
-        return Some(Rat::zero());
+        return Some(Rat::from_raw_parts(0, 1));
     }
     proof {
         lemma_pow2_61();
@@ -388,19 +331,9 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>
     }
 }
 
-/// The result for a value whose magnitude is strictly below `2^-62`: the
-/// correct endpoint of the first dyadic cell.
-///
-/// The postcondition pins the result to `round::subgrid_endpoint`.
-/// `round::lemma_round_frac_subgrid` proves that this endpoint is the value
-/// `round_frac` produces. That equality lets `from_parts_dir` state one
-/// postcondition covering this branch as well as the two branches that go
-/// through the rounder.
-///
-/// This function builds the pair directly rather than through `Rat::new`.
-/// `Rat::new` returns an `Option` and needs a canonical-form uniqueness argument
-/// to recover the exact representation from `q_is`. `gcd(1, 2^61) == 1` is a
-/// one-line discharge of I1, and nothing remains to reduce.
+/// The endpoint of the first dyadic cell, for a magnitude below `2^-62`.
+/// Pinned to `round::subgrid_endpoint`, which `round::lemma_round_frac_subgrid`
+/// identifies with `round_frac`.
 pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
     ensures
         r.wf(),
@@ -414,39 +347,37 @@ pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
         // I1 for the two endpoints: `gcd(±1, 2^61)` is between 1 and 1.
         crate::gcd::lemma_gcd_pos(1nat, 2305843009213693952nat);
         crate::gcd::lemma_gcd_le(1nat, 2305843009213693952nat);
+        assert(gcd_int(0, 1) == 1) by {
+            reveal_with_fuel(gcd_nat, 3);
+        }
+        Rat::lemma_from_raw_spec_wf(0, 1);
+        Rat::lemma_from_raw_spec_wf((-1int) as i64, eps_den);
+        Rat::lemma_from_raw_spec_wf(1, eps_den);
     }
     match dir {
-        Dir::Nearest => Rat::zero(),
+        Dir::Nearest => Rat::from_raw_parts(0, 1),
         Dir::Down => {
             if neg {
-                Rat { num: -1, den: eps_den }
+                Rat::from_raw_parts(-1, eps_den)
             } else {
-                Rat::zero()
+                Rat::from_raw_parts(0, 1)
             }
         },
         Dir::Up => {
             if neg {
-                Rat::zero()
+                Rat::from_raw_parts(0, 1)
             } else {
-                Rat { num: 1, den: eps_den }
+                Rat::from_raw_parts(1, eps_den)
             }
         },
     }
 }
 
-/// Convert a `Rat` to the nearest `f64`.
-///
-/// **TRUSTED** (`external_body`), and **display/DTO only**. This function hands
-/// a number to a JSON encoder. A Verus proof of its float rounding therefore
-/// costs more effort than it returns. The result must not return into `Rat`
-/// arithmetic.
-///
-/// Accuracy: three roundings occur (numerator, denominator, quotient). The
-/// result is therefore within about `3·2^-53` relative of the true value. The
-/// differential test suite pins this at 4 ulp against `malachite-q`.
+/// A `Rat` as an `f64`, for display only. TRUSTED. Three roundings, so about
+/// `3·2^-53` relative; do not feed the result back into `Rat`.
 #[verifier::external_body]
 pub fn to_f64(q: Rat) -> f64 {
-    (q.num as f64) / (q.den as f64)
+    (q.numerator() as f64) / (q.denominator() as f64)
 }
 
 } // verus!
@@ -460,24 +391,20 @@ impl core::fmt::Display for Rat {
     /// `"num/den"`, always in canonical form. The string is thus a faithful and
     /// unambiguous rendering of the value.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}/{}", self.num, self.den)
+        write!(f, "{}/{}", self.numerator(), self.denominator())
     }
 }
 
-/// Serialise as the `(num, den)` integer pair.
-///
-/// This round-trips **exactly**, which no `f64` encoding does. The
-/// deserialiser re-canonicalises through [`Rat::new`]. A hand-written or
-/// corrupted payload therefore produces an error instead of a `Rat` that
-/// violates the type invariant.
+/// The `(num, den)` pair, exact; decoding re-canonicalises through [`Rat::new`]
+/// and rejects a malformed payload.
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl serde::Serialize for Rat {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
         let mut t = s.serialize_tuple(2)?;
-        t.serialize_element(&self.num)?;
-        t.serialize_element(&self.den)?;
+        t.serialize_element(&self.numerator())?;
+        t.serialize_element(&self.denominator())?;
         t.end()
     }
 }
@@ -543,14 +470,8 @@ pub enum ParseQError {
     Malformed,
     /// A numeral did not fit an `i64`.
     IntOverflow,
-    /// The denominator was zero.
-    ///
-    /// The parser rejects this input rather than maps it to a special.
-    /// `Q::new(1, 0)` is `PosInf`, because *a computation* divides by zero and
-    /// the result must be some value. In an input stream, `"1/0"` is instead a
-    /// malformed numeral, and silent acceptance hides the typo that produces
-    /// it. `Display` never emits a zero denominator, so the rejection costs no
-    /// round-trip.
+    /// The denominator was zero. `"1/0"` in input is a malformed numeral, not a
+    /// computation, so it is rejected rather than read as `PosInf`.
     ZeroDenominator,
     /// The pair does not reduce to a value inside the width budget.
     OutOfBudget,
@@ -574,17 +495,8 @@ impl std::error::Error for ParseQError {}
 impl core::str::FromStr for crate::ext::Q {
     type Err = ParseQError;
 
-    /// Parses every spelling [`Display`](core::fmt::Display) produces. The
-    /// round-trip is therefore total over all six states.
-    ///
-    /// The specials match **case-insensitively**, as `f64::from_str` does. IEEE
-    /// 754 is this type's reference model, and acceptance of `"NaN"` alongside
-    /// `"nan"` costs nothing. Surrounding whitespace is **rejected**, as
-    /// `i64::from_str` rejects it. A parser that silently trims also silently
-    /// accepts `"1 / 2"` in a data file.
-    ///
-    /// A bare integer (`"5"`) is accepted as well as a ratio (`"5/1"`). The
-    /// bare form is unambiguous, and it is the human spelling.
+    /// Parses what [`Display`](core::fmt::Display) produces, plus a bare integer.
+    /// Specials are case-insensitive; surrounding whitespace is rejected.
     fn from_str(s: &str) -> Result<Self, ParseQError> {
         use crate::ext::Q;
 
@@ -624,17 +536,8 @@ impl core::str::FromStr for crate::ext::Q {
     }
 }
 
-/// `i64::from_str`, with the overflow case distinguished from the malformed one.
-///
-/// The two cases stay separate. "The number is too big for this type" and "that
-/// is not a number" call for different fixes. One combined error discards the
-/// only information that distinguishes them.
-///
-/// The test is syntactic rather than a re-parse at a wider type. A re-parse as
-/// `i128` misreports any well-formed numeral above `i128::MAX` as malformed. A
-/// numeral is an optional sign followed by at least one ASCII digit. When the
-/// input is a numeral and `i64` still rejects it, the only possible reason is
-/// range.
+/// `i64::from_str`, distinguishing overflow from a malformed numeral by a
+/// syntactic check rather than a wider re-parse.
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 fn parse_i64(s: &str) -> Result<i64, ParseQError> {
     match s.parse::<i64>() {
@@ -650,19 +553,8 @@ fn parse_i64(s: &str) -> Result<i64, ParseQError> {
     }
 }
 
-/// Serialise a number as the `(num, den)` pair and a special as its string.
-///
-/// This is the untagged shape from issue #26 §8, and it carries that section's
-/// caveat: **it works only in self-describing formats.** The deserialiser asks
-/// the format what kind of value comes next. Thus `bincode` and other
-/// non-self-describing codecs fail at run time rather than at compile time.
-/// Issue #26 §12 leaves the question "is a wire break acceptable?" open. If
-/// non-self-describing formats must keep working, this shape becomes an
-/// externally tagged representation, which breaks the existing `Rat` wire
-/// format.
-///
-/// This shape leaves `Rat`'s own serde impl unchanged. A bare `Rat` still
-/// round-trips exactly.
+/// A number as the `(num, den)` pair, a special as its string. Untagged, so
+/// it decodes only in self-describing formats; `bincode` fails at run time.
 #[cfg(feature = "serde")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl serde::Serialize for crate::ext::Q {
@@ -723,12 +615,8 @@ impl<'de> serde::Deserialize<'de> for crate::ext::Q {
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
                     return Err(A::Error::custom("the-q: expected exactly two elements"));
                 }
-                // Re-canonicalises through `Rat::new`, exactly as `Rat`'s own
-                // deserialiser does, so `[2, 4]` is accepted as `1/2`. A
-                // payload that does not canonicalise is an error rather than a
-                // saturation. On the wire, an unrepresentable pair means the
-                // producer and this type disagree, and the error surfaces that
-                // disagreement.
+                // Through `Rat::new`, so `[2, 4]` decodes as `1/2` and an unrepresentable
+                // pair is an error, not a saturation.
                 crate::types::Rat::new(num, den)
                     .map(crate::ext::Q::Number)
                     .ok_or_else(|| {
@@ -746,33 +634,11 @@ impl<'de> serde::Deserialize<'de> for crate::ext::Q {
 // The f64 boundary for the extended type (issue #26 §8)
 // ---------------------------------------------------------------------------
 
-/// An `f64` as an extended `Q`, **total**.
-///
-/// This function claims the win §8 describes. [`from_f64_dir`] maps `NaN` and
-/// both infinities to `None`, because `Rat` has nowhere to put them. The enum
-/// does have a place for them, and the mapping is forced rather than chosen:
-/// `f64::NAN → Nan`, `±f64::INFINITY → ±Inf`. Every `f64` therefore has an
-/// image.
-///
-/// A finite `f64` outside the width budget saturates by sign. The only reason a
-/// result is not a `Number` is thus a genuine non-representability, never a
-/// missing case.
-///
-/// # Why there is no `to_f64` for this type
-///
-/// §8 omits it on purpose. `PosSat → f64::INFINITY` is wrong, because the value
-/// is finite. `PosSat → 4.6e18` is worse, because it claims an exact magnitude
-/// that the state explicitly does not have. `to_f64` stays defined only on
-/// [`Rat`], where every value has a real answer.
-///
-/// # Trusted surface
-///
-/// This function uses the `f64` classification predicates (`is_nan`,
-/// `is_infinite`, `is_sign_negative`), and Verus does not model them. The
-/// function therefore sits outside the verified region alongside
-/// [`f64_decompose`] and [`to_f64`]. It adds no new *numeric* assumption. The
-/// value path still goes through `from_f64_dir`. This function contributes only
-/// the three-way split on classes whose meaning IEEE-754 fixes unambiguously.
+/// An `f64` as a `Q`, total: NaN → `Nan`, `±inf` → `±Inf`, an over-budget
+/// finite value saturates by sign. There is deliberately no `Q → f64`: no
+/// float honestly denotes `PosSat`. Outside the verified region because it
+/// uses `is_nan`/`is_infinite`/`is_sign_negative`; the value path is
+/// [`from_f64_dir`].
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 pub fn q_from_f64(v: f64) -> crate::ext::Q {
     use crate::ext::Q;

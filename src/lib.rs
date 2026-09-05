@@ -1,129 +1,72 @@
 //! # `the-q` — verified bounded rational arithmetic
 //!
-//! `Rat` is an exact rational number `num / den` held in two `i64` fields, kept in
-//! canonical form (`den > 0`, `gcd(|num|, den) == 1`) and bounded by a fixed
-//! width budget (`|num| <= 2^62 - 1`, `den <= 2^62 - 1`).
-//!
-//! Arithmetic is *exact whenever the exact result fits the budget*. It is
-//! *verifiably rounded* when the result does not fit. Every intermediate uses
-//! `i128`. The 2^62 budget makes overflow of an `i128` intermediate impossible
-//! (see [`crate::round`] and `docs/SPEC.md` §1).
+//! [`Rat`] is `num / den` in two `i64` fields, canonical (`den > 0`,
+//! `gcd(|num|, den) == 1`) and bounded (`|num|, den <= 2^62 - 1`). Arithmetic
+//! is exact when the exact result fits and rounded to a proven contract when it
+//! does not; every intermediate is `i128` and cannot overflow.
 //!
 //! ```
 //! use the_q::{Dir, Rat};
 //!
-//! // Short decimals are exact, not approximate. They are the ingestion path.
 //! let reliability = Rat::from_decimal(85, 2).unwrap();   // 0.85 == 17/20
 //! let weight = Rat::from_decimal(3, 1).unwrap();         // 0.3  == 3/10
 //! let combined = Rat::mul(reliability, weight);
 //! assert_eq!(combined.to_string(), "51/200");
-//!
-//! // The order is a total order: no NaN, so no incomparable pairs.
 //! assert!(combined < reliability);
-//! assert!(combined.in_unit_interval());
 //!
-//! // Directed modes bracket the exact value. The interval layer uses this
-//! // property.
+//! // Directed modes bracket the exact value.
 //! let a = Rat::new(1, 3).unwrap();
 //! assert!(Rat::le(Rat::mul_dir(a, a, Dir::Down), Rat::mul_dir(a, a, Dir::Up)));
 //! ```
 //!
-//! ## `Rat` and `Q`
-//!
-//! [`Rat`] is the verified kernel. It is exact, canonical, bounded and
-//! *partial*. `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` and
-//! `Rat::zero().recip()` panic, and `Rat::add(MAX_MAG, MAX_MAG)` silently
-//! returns `MAX_MAG`. The type is `#[non_exhaustive]`, thus every `Rat` an
-//! unverified caller can obtain comes from a constructor and satisfies the
-//! invariant.
-//!
-//! [`Q`] extends that kernel. It makes "not a representable rational" an
-//! explicit, observable state. The caller therefore does not have to rule such
-//! a state out. Arithmetic on `Q` is **total**: every operation on every input
-//! returns a value in the type, and no operation panics.
+//! `Rat` is partial: `Rat::new(_, 0)` is `None`, `Rat::div(x, 0)` panics, and
+//! an over-budget result saturates. [`Q`] makes each of those a value and is
+//! total: every operation on every input returns a `Q` and nothing panics.
 //!
 //! ```
 //! use the_q::{Q, Rat};
 //!
-//! // Division by zero is a value, not a panic. IEEE 754 is the reference model.
 //! assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
 //! assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
 //! assert_eq!(Q::checked_div(Q::one(), Q::zero()), None);
 //!
-//! // Overflow is reported, not clamped. The two separate state families keep
-//! // it distinct from a division by zero.
+//! // Overflow is reported, and is distinct from division by zero.
 //! let m = Q::Number(Rat::new(the_q::MAX_MAG, 1).unwrap());
 //! let over = Q::add(m, m);
 //! assert!(over.is_saturated() && !over.is_infinite());
 //! assert_eq!(over.to_string(), ">max");
 //!
-//! // Saturation denotes finite reals only, so this is exact where `0 * inf`
-//! // would be indeterminate.
+//! // Saturation denotes finite reals, so this is exact where `0 * inf` is not.
 //! assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
 //! assert_eq!(Q::mul(Q::zero(), Q::PosInf), Q::Nan);
 //!
-//! // The order is total, so `Q` can be a map key or be sorted directly.
+//! // The order is total; `Nan` sorts last. Selection propagates `Nan`, so a
+//! // fold of `Q::min` is not `iter().min()`.
 //! let mut v = vec![Q::Nan, Q::PosInf, Q::zero(), Q::NegInf];
 //! v.sort();
 //! assert_eq!(v, vec![Q::NegInf, Q::zero(), Q::PosInf, Q::Nan]);
-//!
-//! // Selection propagates Nan. It therefore disagrees with `Ord`-based
-//! // selection. A fold of `Q::min` is not `slice.iter().min()`.
 //! assert_eq!(Q::min(Q::Nan, Q::one()), Q::Nan);
-//! assert_eq!([Q::Nan, Q::one()].into_iter().min().unwrap(), Q::one());
 //! ```
-//!
-//! ## Design
-//!
-//! Subjective-logic fusion is rational-closed. `f64` therefore discards
-//! exactness for no gain. Exact `ℚ` denominators, however, grow without bound
-//! under long fusion chains, and the Verus ecosystem has no *verified*
-//! arbitrary-precision bignum. This crate thus uses a bounded rational with a
-//! proven rounding contract. Computations that stay inside the budget are
-//! bit-exact and order-independent. Computations that leave the budget carry a
-//! machine-stated error bound of `2^-61 · max(1, |exact|)` per operation, in
-//! place of `f64` folklore.
 //!
 //! ## Limits
 //!
-//! * With rounding, [`Rat::add`] and [`Rat::mul`] are **commutative** but **not
-//!   associative in general**. Associativity and distributivity hold on the
-//!   *exact path*, that is, whenever no intermediate rounds. See `README.md`.
-//! * The composed operation ("exact if it fits, else snap to the dyadic grid")
-//!   is **not globally monotone**. The *rounding step itself* is monotone. R4
-//!   is stated per-grid, as the specification permits. `README.md` carries the
-//!   counterexample.
-//! * Magnitude overflow (an exact result with `|value| > 2^62 - 1`) sits
-//!   **outside** the R3 contract by choice, not by necessity. Some such values
-//!   do have a `Rat` within the bound. Those results **saturate**, and the
-//!   `checked_*` variants report them as `None`. No engine value comes near
-//!   this ceiling.
+//! * The rounding bound `2^-61 · max(1, |exact|)` is absolute below 1.
+//! * With rounding, `add` and `mul` are commutative but not associative;
+//!   associativity holds on the exact path and the defect is bounded.
+//! * Rounding is monotone on each grid, not across the representable/rounded
+//!   boundary. `README.md` has the counterexample.
 //!
-//! ## Verification
+//! ## Verification and API stability
 //!
-//! Specifications and proofs are written in [Verus](https://github.com/verus-lang/verus).
-//! `cargo build` uses plain rustc (ghost code erased); `verus verify` checks the
-//! same sources. See `VERIFICATION.md` for the obligation map (V1–V8) and
-//! `TRUSTED.md` for the enumerated trusted boundary.
+//! Proofs are in the source inside `verus!` blocks; `cargo verus verify`
+//! checks them, `cargo build` erases them. `VERIFICATION.md` maps the
+//! obligations, `TRUSTED.md` lists the three trusted functions.
 //!
-//! ## What semver covers
-//!
-//! [`Rat`], [`Q`], [`Dir`], [`interval::QI`], the arithmetic and comparison
-//! operations on them, the constructors, and [`nary`] are the API. That
-//! surface follows semver.
-//!
-//! Most other public items exist because a `verus!` proof needs the item it
-//! proves something about to be visible, not because they are meant to be
-//! called by an ordinary consumer: the ghost lemmas in [`gcd`], [`model`],
-//! [`round`] and [`lipschitz`]; the executable helpers those proofs are
-//! attached to, such as `round::round_frac_exec_with_gcd` or
-//! `gcd::strip_twos`; and the fixed-point kernel in [`fx`]. These are public
-//! because Verus's visibility rules require it, not because of an API
-//! decision, and they can change shape between patch releases as the proofs
-//! they support are restructured.
-//!
-//! If a downstream verified proof depends on one of these, say so in an issue
-//! before depending on it in a way that a patch release could break.
+//! [`Rat`], [`Q`], [`Dir`], [`interval::QI`], their operations and constructors,
+//! and [`nary`] follow semver. Other public items (`gcd`, `model`, `round`,
+//! `lipschitz`, `fx`, and executable helpers such as
+//! `round::round_frac_exec_with_gcd`) are public because Verus's visibility
+//! rules require it and may change shape in patch releases.
 
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::comparison_chain)]

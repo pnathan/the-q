@@ -224,6 +224,38 @@ fn magnitude_overflow_saturates_and_checked_reports_it() {
 }
 
 #[test]
+fn checked_directed_subtraction_preserves_enclosure() {
+    let big = Rat::from_int(MAX_MAG).unwrap();
+    for dir in [Dir::Down, Dir::Nearest, Dir::Up] {
+        assert_eq!(Rat::checked_sub_dir(big, big.neg(), dir), None);
+        assert_eq!(Rat::checked_sub_dir(big.neg(), big, dir), None);
+        assert_eq!(Rat::checked_sub_dir(big, big, dir), Some(Rat::zero()));
+    }
+
+    let larger = Rat::new(1, MAX_MAG - 1).unwrap();
+    let smaller = Rat::new(1, MAX_MAG).unwrap();
+    let step = Rat::new(1, 1_i64 << 61).unwrap();
+    assert_eq!(
+        Rat::checked_sub_dir(larger, smaller, Dir::Down),
+        Some(Rat::zero())
+    );
+    assert_eq!(
+        Rat::checked_sub_dir(larger, smaller, Dir::Nearest),
+        Some(Rat::zero())
+    );
+    assert_eq!(Rat::checked_sub_dir(larger, smaller, Dir::Up), Some(step));
+
+    let exact = rat(larger) - rat(smaller);
+    let down = Rat::checked_sub_dir(larger, smaller, Dir::Down).unwrap();
+    let up = Rat::checked_sub_dir(larger, smaller, Dir::Up).unwrap();
+    assert!(rat(down) <= exact && exact <= rat(up));
+    assert_eq!(
+        Rat::checked_sub(larger, smaller),
+        Rat::checked_sub_dir(larger, smaller, Dir::Nearest)
+    );
+}
+
+#[test]
 fn saturation_never_produces_an_invalid_value() {
     // Hammer the saturation path from every direction and sign.
     let mut rng = Rng::new(0x5A7);
@@ -947,9 +979,9 @@ fn recip_of_zero_panics() {
     let _ = Rat::recip(Rat::zero());
 }
 
-/// Every value an unverified caller can obtain is well-formed. The type is
-/// `#[non_exhaustive]`, thus a struct literal outside this crate does not
-/// compile, and the constructors are the only entry points.
+/// Every value an unverified caller can obtain is well-formed. Private fields
+/// mean a struct literal or field mutation outside this crate does not compile,
+/// and the constructors are the only entry points.
 #[test]
 fn every_constructor_output_is_well_formed() {
     let mut rng = Rng::new(0x5EED_1234);
