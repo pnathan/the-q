@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1068 verified, 0 errors     <- the-q
+verification results:: 1088 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
