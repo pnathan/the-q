@@ -840,6 +840,7 @@ impl Q {
             b.wf(),
         ensures
             r.wf(),
+            r == Q::spec_add(a, Q::spec_neg(b)),
             a.spec_is_nan() ==> r.spec_is_nan(),
             b.spec_is_nan() ==> r.spec_is_nan(),
     {
@@ -1045,12 +1046,28 @@ impl Q {
 // ---------------------------------------------------------------------------
 
 impl Q {
+    /// Ghost mirror of [`Q::neg`]'s match. See [`Q::spec_add`]. The `Number`
+    /// arm reconstructs the negated pair through `from_raw_spec` rather than
+    /// calling the exec-only [`Rat::neg`], which cannot appear in a spec
+    /// position.
+    pub open spec fn spec_neg(a: Q) -> Q {
+        match a {
+            Q::Number(x) => Q::Number(Rat::from_raw_spec((0 - x.n()) as i64, x.d() as i64)),
+            Q::PosSat => Q::NegSat,
+            Q::NegSat => Q::PosSat,
+            Q::PosInf => Q::NegInf,
+            Q::NegInf => Q::PosInf,
+            Q::Nan => Q::Nan,
+        }
+    }
+
     /// `-self`, exact and total; saturations and infinities negate onto each other.
     pub fn neg(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
+            r == Q::spec_neg(self),
             // Negation permutes the classes rather than collapsing any of them.
             r.spec_is_number() == self.spec_is_number(),
             r.spec_is_saturated() == self.spec_is_saturated(),
@@ -1059,7 +1076,16 @@ impl Q {
             r.spec_is_zero() == self.spec_is_zero(),
     {
         match self {
-            Q::Number(x) => Q::Number(x.neg()),
+            Q::Number(x) => {
+                let nx = x.neg();
+                proof {
+                    assert(((0 - x.n()) as i64) as int == 0 - x.n());
+                    assert((x.d() as i64) as int == x.d());
+                    Rat::lemma_from_raw_spec_components((0 - x.n()) as i64, x.d() as i64);
+                    Rat::lemma_extensional(nx, Rat::from_raw_spec((0 - x.n()) as i64, x.d() as i64));
+                }
+                Q::Number(nx)
+            },
             Q::PosSat => Q::NegSat,
             Q::NegSat => Q::PosSat,
             Q::PosInf => Q::NegInf,
