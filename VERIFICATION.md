@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1092 verified, 0 errors     <- the-q
+verification results:: 1093 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -12,9 +12,11 @@ callee context. `verus verify` is a required CI check. No `assume(...)` or
 `TRUSTED.md`: `from_f64_dir` and `to_f64` at the `f64` edge, and
 `q::require_condition`, a runtime guard trusted for its panic message only.
 
-`convert::pow10_i128` and `convert::from_decimal128_dir` (issue #33, the
-`mantissa · 10^-scale` boundary a `rust_decimal::Decimal` needs) account for
-the four added since the count above was last quoted.
+`convert::pow10_i128`, `convert::from_decimal128_dir`, and
+`convert::from_decimal128_exact` (issue #33, the `mantissa · 10^-scale`
+boundary a `rust_decimal::Decimal` needs, and the refuse-rather-than-round
+path into `Exact`) account for the five added since the count above was last
+quoted.
 
 ## Independent of the proofs
 
