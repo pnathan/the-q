@@ -110,6 +110,20 @@ pub use convert::{
     ParseQError, from_decimal128_dir, from_decimal128_exact, from_f64_dir, from_ratio128_dir,
     from_ratio128_exact, q_from_f64, to_f64,
 };
+#[cfg(feature = "num-rational")]
+pub use convert::{
+    exact_from_big_rational, exact_from_num_rational_i64, from_big_rational_dir,
+    from_big_rational_exact, from_num_rational_i64_dir, from_num_rational_i64_exact,
+    q_from_big_rational, q_from_num_rational_i64,
+};
+#[cfg(feature = "bigdecimal")]
+pub use convert::{
+    exact_from_bigdecimal, from_bigdecimal_dir, from_bigdecimal_exact, q_from_bigdecimal,
+};
+#[cfg(feature = "num-bigint")]
+pub use convert::{exact_from_bigint, from_bigint_dir, from_bigint_exact, q_from_bigint};
+#[cfg(feature = "fixed")]
+pub use convert::{exact_from_fixed, from_fixed_dir, from_fixed_exact, q_from_fixed};
 #[cfg(feature = "rust_decimal")]
 pub use convert::{exact_from_rust_decimal, from_rust_decimal_dir, q_from_rust_decimal};
 pub use exact::{Exact, ExactError};

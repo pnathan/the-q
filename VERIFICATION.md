@@ -18,6 +18,20 @@ boundary a `rust_decimal::Decimal` needs, and the refuse-rather-than-round
 path into `Exact`) account for the five added since the count above was last
 quoted.
 
+`convert::from_ratio128_dir`/`from_ratio128_exact` (issue #33 follow-up) are
+new verified functions beyond that: the shared `(n, d) -> Rat` core every
+other external-library adapter (`fixed`, `num-rational`, `num-bigint`,
+`bigdecimal`) is built on. Everything past that core (the per-library
+adapters themselves, and the `Q`/`Exact` fallbacks that use it) is outside
+`verus!` — `#[cfg_attr(verus_keep_ghost, verifier::external)]` — since it
+calls into foreign crate types Verus has no model of, the same way
+`q_from_f64`/`q_from_rust_decimal` already are. `from_decimal128_dir`/
+`from_decimal128_exact` were left as originally verified rather than
+retrofitted onto this shared core, since there was no local Verus binary
+available to re-confirm a refactor of already-merged, CI-verified code; a CI
+run of `cargo verus verify` after this change is the source of the refreshed
+count above.
+
 ## Independent of the proofs
 
 * 207 default-feature and 217 all-feature tests, debug and release, plus six

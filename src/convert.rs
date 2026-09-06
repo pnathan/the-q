@@ -533,11 +533,11 @@ pub fn from_decimal128_exact(mantissa: i128, scale: u32) -> (r: Option<Rat>)
 /// `abs(n) <= RATIO_N_LIMIT` implies the strict `abs(n) < num_input_bound()`
 /// (`2^126`) `round_frac_exec` requires, and so that negating `n` below —
 /// needed to fold a negative `d`'s sign onto it — never overflows.
-const RATIO_N_LIMIT: i128 = 85070591730234615865843651857942052863;
+pub const RATIO_N_LIMIT: i128 = 85070591730234615865843651857942052863;
 
 /// `2^124`, exactly `den_input_bound()`: the largest denominator magnitude
 /// the two functions below accept.
-const RATIO_D_LIMIT: i128 = 21267647932558653966460912964485513216;
+pub const RATIO_D_LIMIT: i128 = 21267647932558653966460912964485513216;
 
 /// Convert the exact ratio `n / d` to a `Rat`, rounding in direction `dir`
 /// once it no longer fits the width budget. `None` only when `d == 0`, or
@@ -1018,5 +1018,455 @@ impl TryFrom<rust_decimal::Decimal> for crate::exact::Exact {
     /// See [`exact_from_rust_decimal`].
     fn try_from(v: rust_decimal::Decimal) -> Result<Self, Self::Error> {
         exact_from_rust_decimal(v)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared tails for every external-library `Q`/`Exact` adapter below. Each
+// adapter reduces its own representation to an `(n, d)` pair (`d > 0`) and
+// calls one of these two, the same way each `Rat` adapter calls
+// `from_ratio128_dir`/`from_ratio128_exact`.
+// ---------------------------------------------------------------------------
+
+/// `n / d` (`d > 0`) as a `Q`, rounding to nearest and saturating by sign
+/// once the magnitude alone leaves the budget — mirroring [`q_from_f64`].
+#[cfg(any(
+    feature = "fixed",
+    feature = "num-rational",
+    feature = "num-bigint",
+    feature = "bigdecimal"
+))]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+fn q_from_ratio128(n: i128, d: i128) -> crate::ext::Q {
+    use crate::ext::Q;
+    if n > RATIO_N_LIMIT || n < -RATIO_N_LIMIT {
+        return if n < 0 { Q::NegSat } else { Q::PosSat };
+    }
+    if crate::q::magnitude_fits_exec(n, d) {
+        Q::Number(
+            from_ratio128_dir(n, d, crate::types::Dir::Nearest)
+                .expect("the-q: n and d were just bound-checked above"),
+        )
+    } else if n > 0 {
+        Q::PosSat
+    } else {
+        Q::NegSat
+    }
+}
+
+/// `n / d` as an [`Exact`](crate::exact::Exact), `Err(ExactError::Inexact)`
+/// unless the reduced pair already fits the width budget.
+#[cfg(any(
+    feature = "fixed",
+    feature = "num-rational",
+    feature = "num-bigint",
+    feature = "bigdecimal"
+))]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+fn exact_from_ratio128(n: i128, d: i128) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    match from_ratio128_exact(n, d) {
+        Some(x) => Ok(crate::exact::Exact::new(x)),
+        None => Err(crate::exact::ExactError::Inexact),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The `fixed` boundary: any 128-bit-backed fixed-point type as `Rat`/`Q`/
+// `Exact`. `fixed::types::I*F*` aliases whose bits total 128 (`I0F128` through
+// `I127F1`, e.g. `I64F64`) all share `Bits = i128`, so one generic function
+// covers the whole family: the value is `bits · 2^-FRAC_NBITS`, exactly the
+// dyadic sibling of the decimal boundary's `mantissa · 10^-scale`.
+// ---------------------------------------------------------------------------
+
+/// Any 128-bit-backed `fixed` type as a `Rat`, rounding in direction `dir`
+/// once `bits / 2^FRAC_NBITS` no longer fits the width budget. `FRAC_NBITS >
+/// 126` refuses outright: `2^127` and up does not fit an `i128` denominator
+/// at all, so no `(n, d)` pair can name the value here in the first place —
+/// this is a limit of representing the value as an exact `i128` ratio, not a
+/// further approximation on top of one.
+#[cfg(feature = "fixed")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_fixed_dir<F>(v: F, dir: Dir) -> Option<Rat>
+where
+    F: fixed::traits::Fixed<Bits = i128>,
+{
+    if F::FRAC_NBITS > 126 {
+        return None;
+    }
+    let d = crate::round::pow2_i128(F::FRAC_NBITS);
+    from_ratio128_dir(v.to_bits(), d, dir)
+}
+
+/// The exact value of a 128-bit-backed `fixed` type as a `Rat`, `None` unless
+/// the reduced `(bits, 2^FRAC_NBITS)` pair already fits the width budget.
+#[cfg(feature = "fixed")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_fixed_exact<F>(v: F) -> Option<Rat>
+where
+    F: fixed::traits::Fixed<Bits = i128>,
+{
+    if F::FRAC_NBITS > 126 {
+        return None;
+    }
+    let d = crate::round::pow2_i128(F::FRAC_NBITS);
+    from_ratio128_exact(v.to_bits(), d)
+}
+
+/// Any 128-bit-backed `fixed` type as a `Q`, rounding to nearest and
+/// saturating by sign past the budget. Past `FRAC_NBITS > 126` (where no
+/// `i128` denominator can name the value, per [`from_fixed_dir`]) this falls
+/// back to a lossy `to_num::<f64>()` conversion through [`q_from_f64`] rather
+/// than guessing a saturation sign: that domain is `INT_NBITS < 2`, values
+/// bounded near `[-1, 1)`, nowhere near the budget's ceiling, so a magnitude
+/// this function cannot represent exactly is never actually saturated.
+///
+/// A named function, not `impl From<F> for Q`: a blanket `impl<F: Fixed<..>>
+/// From<F> for Q` cannot coexist with the concrete `impl From<Decimal> for Q`
+/// above (or any future concrete one) — the compiler cannot rule out some
+/// downstream type implementing both `Fixed` and, say, being `Decimal`
+/// itself, so it refuses the overlap outright (`E0119`). The same reasoning
+/// rules out a blanket `TryFrom<F> for Exact` below.
+#[cfg(feature = "fixed")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_fixed<F>(v: F) -> crate::ext::Q
+where
+    F: fixed::traits::Fixed<Bits = i128>,
+{
+    if F::FRAC_NBITS > 126 {
+        return q_from_f64(v.to_num::<f64>());
+    }
+    let d = crate::round::pow2_i128(F::FRAC_NBITS);
+    q_from_ratio128(v.to_bits(), d)
+}
+
+/// Any 128-bit-backed `fixed` type as an [`Exact`](crate::exact::Exact) —
+/// `Err(ExactError::Inexact)` when the reduced pair does not already fit the
+/// width budget, `FRAC_NBITS > 126` included.
+#[cfg(feature = "fixed")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_fixed<F>(v: F) -> Result<crate::exact::Exact, crate::exact::ExactError>
+where
+    F: fixed::traits::Fixed<Bits = i128>,
+{
+    if F::FRAC_NBITS > 126 {
+        return Err(crate::exact::ExactError::Inexact);
+    }
+    let d = crate::round::pow2_i128(F::FRAC_NBITS);
+    exact_from_ratio128(v.to_bits(), d)
+}
+
+// ---------------------------------------------------------------------------
+// The `num-rational` boundary: `Ratio<i64>` (always exact, no truncation
+// needed) and `BigRational` (arbitrary precision; needs a fallible `i128`
+// extraction first).
+// ---------------------------------------------------------------------------
+
+/// `num_rational::Ratio<i64>` as a `Rat`, rounding in direction `dir` once it
+/// leaves the width budget. `Ratio`'s own invariant (a nonzero denominator)
+/// is exactly what `from_ratio128_dir` needs to never return `None` on an
+/// `i64` pair, so this is total.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_num_rational_i64_dir(v: num_rational::Ratio<i64>, dir: Dir) -> Rat {
+    from_ratio128_dir(i128::from(*v.numer()), i128::from(*v.denom()), dir)
+        .expect("the-q: an i64 pair is always within from_ratio128_dir's domain")
+}
+
+/// The exact value of a `num_rational::Ratio<i64>` as a `Rat`, `None` unless
+/// the reduced pair already fits the width budget.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_num_rational_i64_exact(v: num_rational::Ratio<i64>) -> Option<Rat> {
+    from_ratio128_exact(i128::from(*v.numer()), i128::from(*v.denom()))
+}
+
+/// `num_rational::Ratio<i64>` as a `Q`, rounding to nearest and saturating by
+/// sign past the budget.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_num_rational_i64(v: num_rational::Ratio<i64>) -> crate::ext::Q {
+    q_from_ratio128(i128::from(*v.numer()), i128::from(*v.denom()))
+}
+
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl From<num_rational::Ratio<i64>> for crate::ext::Q {
+    /// Rounds to nearest; see [`q_from_num_rational_i64`].
+    fn from(v: num_rational::Ratio<i64>) -> Self {
+        q_from_num_rational_i64(v)
+    }
+}
+
+/// `num_rational::Ratio<i64>` as an [`Exact`](crate::exact::Exact) —
+/// `Err(ExactError::Inexact)` unless the reduced pair already fits the width
+/// budget.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_num_rational_i64(
+    v: num_rational::Ratio<i64>,
+) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    exact_from_ratio128(i128::from(*v.numer()), i128::from(*v.denom()))
+}
+
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl TryFrom<num_rational::Ratio<i64>> for crate::exact::Exact {
+    type Error = crate::exact::ExactError;
+
+    /// See [`exact_from_num_rational_i64`].
+    fn try_from(v: num_rational::Ratio<i64>) -> Result<Self, Self::Error> {
+        exact_from_num_rational_i64(v)
+    }
+}
+
+/// `num_rational::BigRational` as a `Rat`, rounding in direction `dir`.
+/// `None` when either the (already-reduced, by `Ratio`'s own invariant)
+/// numerator or denominator does not fit an `i128` — arbitrary precision
+/// means there is always a `BigRational` outside any fixed-width
+/// representation.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_big_rational_dir(v: &num_rational::BigRational, dir: Dir) -> Option<Rat> {
+    let n = i128::try_from(v.numer()).ok()?;
+    let d = i128::try_from(v.denom()).ok()?;
+    from_ratio128_dir(n, d, dir)
+}
+
+/// The exact value of a `BigRational` as a `Rat`, `None` unless both the
+/// reduced numerator and denominator fit an `i128` and that pair already
+/// fits the width budget.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_big_rational_exact(v: &num_rational::BigRational) -> Option<Rat> {
+    let n = i128::try_from(v.numer()).ok()?;
+    let d = i128::try_from(v.denom()).ok()?;
+    from_ratio128_exact(n, d)
+}
+
+/// `BigRational` as a `Q`, rounding to nearest. When the reduced numerator
+/// and denominator both fit an `i128`, this saturates by sign past the
+/// budget like every other adapter here; short of that it falls back to a
+/// lossy `to_f64` conversion (through [`q_from_f64`]) rather than guessing a
+/// saturation sign, because `Ratio` reduces its terms to lowest form and
+/// nothing bounds *those* by the value's own magnitude — `(10^100 + 1) /
+/// 10^100` is a value near `1`, not one anywhere near the budget's ceiling,
+/// even though neither term fits `i128`.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_big_rational(v: &num_rational::BigRational) -> crate::ext::Q {
+    match (i128::try_from(v.numer()), i128::try_from(v.denom())) {
+        (Ok(n), Ok(d)) => q_from_ratio128(n, d),
+        _ => q_from_f64(num_traits::ToPrimitive::to_f64(v).unwrap_or(f64::NAN)),
+    }
+}
+
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl From<num_rational::BigRational> for crate::ext::Q {
+    /// Rounds to nearest; see [`q_from_big_rational`].
+    fn from(v: num_rational::BigRational) -> Self {
+        q_from_big_rational(&v)
+    }
+}
+
+/// `BigRational` as an [`Exact`](crate::exact::Exact) —
+/// `Err(ExactError::Inexact)` unless both the reduced numerator and
+/// denominator fit an `i128` and that pair already fits the width budget.
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_big_rational(
+    v: &num_rational::BigRational,
+) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    let n = i128::try_from(v.numer()).map_err(|_| crate::exact::ExactError::Inexact)?;
+    let d = i128::try_from(v.denom()).map_err(|_| crate::exact::ExactError::Inexact)?;
+    exact_from_ratio128(n, d)
+}
+
+#[cfg(feature = "num-rational")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl TryFrom<num_rational::BigRational> for crate::exact::Exact {
+    type Error = crate::exact::ExactError;
+
+    /// See [`exact_from_big_rational`].
+    fn try_from(v: num_rational::BigRational) -> Result<Self, Self::Error> {
+        exact_from_big_rational(&v)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The `num-bigint` boundary: a bare `BigInt`, i.e. `n / 1`. Unlike
+// `BigRational`, an integer's own magnitude *is* the value — there is no
+// reduced-terms ambiguity — so "does not fit `i128`" always means "the
+// magnitude itself is too wide", and saturation by sign is exact, not a
+// fallback.
+// ---------------------------------------------------------------------------
+
+/// `num_bigint::BigInt` as a `Rat`, rounding in direction `dir`. `None` when
+/// the integer itself does not fit an `i128`.
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_bigint_dir(v: &num_bigint::BigInt, dir: Dir) -> Option<Rat> {
+    let n = i128::try_from(v).ok()?;
+    from_ratio128_dir(n, 1, dir)
+}
+
+/// The exact value of a `BigInt` as a `Rat`, `None` unless it fits an `i128`
+/// and is within `MAX_MAG`.
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_bigint_exact(v: &num_bigint::BigInt) -> Option<Rat> {
+    let n = i128::try_from(v).ok()?;
+    from_ratio128_exact(n, 1)
+}
+
+/// `BigInt` as a `Q`, saturating by sign once the integer itself no longer
+/// fits an `i128` (equivalently, once it exceeds `MAX_MAG`, since past that
+/// this is still exactly the "too big" case, not a resolution limit).
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_bigint(v: &num_bigint::BigInt) -> crate::ext::Q {
+    use crate::ext::Q;
+    match i128::try_from(v) {
+        Ok(n) => q_from_ratio128(n, 1),
+        Err(_) => {
+            if v.sign() == num_bigint::Sign::Minus {
+                Q::NegSat
+            } else {
+                Q::PosSat
+            }
+        }
+    }
+}
+
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl From<num_bigint::BigInt> for crate::ext::Q {
+    /// See [`q_from_bigint`].
+    fn from(v: num_bigint::BigInt) -> Self {
+        q_from_bigint(&v)
+    }
+}
+
+/// `BigInt` as an [`Exact`](crate::exact::Exact) — `Err(ExactError::Inexact)`
+/// unless it fits an `i128` and is within `MAX_MAG`.
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_bigint(
+    v: &num_bigint::BigInt,
+) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    let n = i128::try_from(v).map_err(|_| crate::exact::ExactError::Inexact)?;
+    exact_from_ratio128(n, 1)
+}
+
+#[cfg(feature = "num-bigint")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl TryFrom<num_bigint::BigInt> for crate::exact::Exact {
+    type Error = crate::exact::ExactError;
+
+    /// See [`exact_from_bigint`].
+    fn try_from(v: num_bigint::BigInt) -> Result<Self, Self::Error> {
+        exact_from_bigint(&v)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The `bigdecimal` boundary: `BigDecimal` is `digits · 10^-scale` with an
+// arbitrary-precision `digits` and an `i64` `scale` that (unlike
+// `rust_decimal::Decimal`'s) may be negative, meaning `digits · 10^|scale|`.
+// Negative-scale values are normalised to that product (still exact, still
+// arbitrary precision) before the same fallible `i128` extraction the other
+// big-number boundaries use.
+// ---------------------------------------------------------------------------
+
+/// `(n, 10^scale)` for a `BigDecimal`, both as `i128`, when representable at
+/// all: `None` when the (possibly negative-scale-normalised) digits do not
+/// fit an `i128`, or the resulting scale exceeds [`MAX_DECIMAL_SCALE`]. A
+/// negative scale beyond -40 is refused before doing any arbitrary-precision
+/// multiplication for it, since `digits · 10^40` is already far past any
+/// `i128`.
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+fn bigdecimal_ratio_i128(v: &bigdecimal::BigDecimal) -> Option<(i128, i128)> {
+    let (digits, scale) = v.as_bigint_and_scale();
+    if scale >= 0 {
+        if scale > i64::from(MAX_DECIMAL_SCALE) {
+            return None;
+        }
+        let n = i128::try_from(digits.as_ref()).ok()?;
+        let d = pow10_i128(u32::try_from(scale).ok()?);
+        Some((n, d))
+    } else {
+        let shift = scale.checked_neg()?;
+        if shift > 40 {
+            return None;
+        }
+        let factor = num_bigint::BigInt::from(10u8).pow(u32::try_from(shift).ok()?);
+        let n_big = digits.into_owned() * factor;
+        let n = i128::try_from(&n_big).ok()?;
+        Some((n, 1))
+    }
+}
+
+/// `bigdecimal::BigDecimal` as a `Rat`, rounding in direction `dir`. `None`
+/// outside [`bigdecimal_ratio_i128`]'s domain.
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_bigdecimal_dir(v: &bigdecimal::BigDecimal, dir: Dir) -> Option<Rat> {
+    let (n, d) = bigdecimal_ratio_i128(v)?;
+    from_ratio128_dir(n, d, dir)
+}
+
+/// The exact value of a `BigDecimal` as a `Rat`, `None` unless it is inside
+/// [`bigdecimal_ratio_i128`]'s domain and that pair already fits the width
+/// budget.
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_bigdecimal_exact(v: &bigdecimal::BigDecimal) -> Option<Rat> {
+    let (n, d) = bigdecimal_ratio_i128(v)?;
+    from_ratio128_exact(n, d)
+}
+
+/// `BigDecimal` as a `Q`, rounding to nearest. Falls back to a lossy `to_f64`
+/// conversion (through [`q_from_f64`]) outside [`bigdecimal_ratio_i128`]'s
+/// domain, the same way [`q_from_big_rational`] does and for the same
+/// reason: arbitrarily many digits do not imply an arbitrarily large value.
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_bigdecimal(v: &bigdecimal::BigDecimal) -> crate::ext::Q {
+    match bigdecimal_ratio_i128(v) {
+        Some((n, d)) => q_from_ratio128(n, d),
+        None => q_from_f64(num_traits::ToPrimitive::to_f64(v).unwrap_or(f64::NAN)),
+    }
+}
+
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl From<bigdecimal::BigDecimal> for crate::ext::Q {
+    /// Rounds to nearest; see [`q_from_bigdecimal`].
+    fn from(v: bigdecimal::BigDecimal) -> Self {
+        q_from_bigdecimal(&v)
+    }
+}
+
+/// `BigDecimal` as an [`Exact`](crate::exact::Exact) —
+/// `Err(ExactError::Inexact)` outside [`bigdecimal_ratio_i128`]'s domain or
+/// when that pair does not already fit the width budget.
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_bigdecimal(
+    v: &bigdecimal::BigDecimal,
+) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    let (n, d) = bigdecimal_ratio_i128(v).ok_or(crate::exact::ExactError::Inexact)?;
+    exact_from_ratio128(n, d)
+}
+
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl TryFrom<bigdecimal::BigDecimal> for crate::exact::Exact {
+    type Error = crate::exact::ExactError;
+
+    /// See [`exact_from_bigdecimal`].
+    fn try_from(v: bigdecimal::BigDecimal) -> Result<Self, Self::Error> {
+        exact_from_bigdecimal(&v)
     }
 }

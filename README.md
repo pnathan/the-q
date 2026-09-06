@@ -156,6 +156,43 @@ conversion that *refuses* rather than rounds, `convert::exact_from_rust_decimal`
 /`impl TryFrom<Decimal> for Exact` returns `Err(ExactError::Inexact)` exactly
 when ingestion itself would have to round; see `tests/rust_decimal.rs`.
 
+#### Other numeric libraries
+
+Every integration below shares one verified core,
+`convert::from_ratio128_dir`/`from_ratio128_exact` (an arbitrary `i128`
+numerator/denominator pair, sign-normalised and bound-checked once); each
+adapter reduces its own library's representation to that pair. Each follows
+the same three-tier shape as `rust_decimal` above: a directed `Rat` function,
+a total `Q` function (`impl From`, rounds to nearest and saturates), and an
+`Exact` function (`impl TryFrom`, refuses rather than rounds). Enable
+`all-integrations` to pull in all of them at once (used by their test
+suites).
+
+* **`fixed`**: `convert::from_fixed_dir`/`from_fixed_exact`/`q_from_fixed`/
+  `exact_from_fixed`, generic over `fixed::traits::Fixed<Bits = i128>` — every
+  128-bit-backed `fixed::types::I*F*` alias (e.g. `I64F64`) in one function,
+  since the value `bits · 2^-FRAC_NBITS` is the dyadic sibling of the decimal
+  boundary's `mantissa · 10^-scale`. No `From`/`TryFrom` impls: a blanket
+  `impl<F: Fixed<..>> From<F> for Q` cannot coexist with the concrete
+  `impl From<Decimal> for Q` (`E0119`); see `tests/fixed_point.rs`.
+* **`num-rational`**: `Ratio<i64>` (always exact — `Ratio`'s own invariant is
+  exactly what the core needs) and `BigRational` (arbitrary precision, needs a
+  fallible `i128` extraction first). `q_from_big_rational` falls back to a
+  lossy `to_f64` conversion when that extraction fails, rather than guessing a
+  saturation sign: `Ratio` stores its terms in lowest form, and nothing bounds
+  *those* by the value's own magnitude (`(10^100 + 1) / 10^100` is a value
+  near `1`, not one anywhere near the budget's ceiling, even though neither
+  term fits an `i128`). See `tests/num_rational.rs`.
+* **`num-bigint`**: a bare `BigInt` as `n / 1`. Unlike a fraction, an
+  integer's own magnitude *is* the value, so "does not fit `i128`" always
+  means genuine saturation — no lossy fallback needed. See
+  `tests/num_bigint.rs`.
+* **`bigdecimal`**: `BigDecimal` is `digits · 10^-scale` with
+  arbitrary-precision `digits` and an `i64` `scale` that (unlike
+  `rust_decimal::Decimal`'s) may be negative, meaning `digits · 10^|scale|`;
+  normalised to that product before the same fallible extraction and `to_f64`
+  fallback as `num-rational`'s `BigRational`. See `tests/bigdecimal.rs`.
+
 ### Roots and transcendentals, on `Q`
 
 `sqrt`, `cbrt`, `hypot`; `exp`, `exp2`, `powf`, `pow_i32`, `ln`, `log2`,
