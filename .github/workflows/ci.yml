@@ -31,9 +31,11 @@ jobs:
     name: MSRV (Rust 1.85)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # A tag, `1.85.0` included, is a branch: mutable, and re-pointable
+      # without a commit to this repository. Pin the commit it resolves to.
+      - uses: dtolnay/rust-toolchain@3230091d7ef9483f601620abacc570c22cf44d22 # 1.85.0
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
       - run: cargo +1.85.0 check --locked --lib --no-default-features
       - run: cargo +1.85.0 check --locked --lib --all-features
 
@@ -41,14 +43,19 @@ jobs:
     name: cargo build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # Pinned to an exact release commit, not the `stable` branch: `stable`
+      # moves with every Rust release, which would let a new rustc change the
+      # outcome of this required check with no commit to this repository —
+      # the same failure mode the pinned Verus install in the `verify` job
+      # exists to rule out. Bump the pin here on purpose when needed.
       - name: Install the Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
       # Plain rustc must build the annotated sources: the `verus!` macro erases
       # all ghost code, so a Verus-annotated crate is still an ordinary crate.
@@ -91,9 +98,9 @@ jobs:
     name: no copyleft in the shipped tree
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
       # malachite-q is the test oracle and is LGPL-3.0-only. It must never
       # appear outside [dev-dependencies].
@@ -115,9 +122,8 @@ jobs:
     name: verus verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
 
       - name: Install Verus
         env:
@@ -173,6 +179,14 @@ jobs:
           rustup toolchain install "$tc" --profile minimal
           rustup default "$tc"
           rustc --version
+
+      # Deliberately placed after the toolchain switch above, not before it:
+      # `rust-cache` fingerprints the active toolchain into its cache key, and
+      # the active toolchain up to this point is still the `stable` one
+      # installed for checkout, not the Verus-pinned rustc that actually
+      # builds this job's artifacts. Caching under the wrong key is silently
+      # wrong rather than silently broken, so key it correctly instead.
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
       - name: Verus version
         run: verus --version
