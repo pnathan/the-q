@@ -10,7 +10,7 @@ rlib=$(find "$probe_dir/target/debug/deps" -maxdepth 1 -name 'libthe_q-*.rlib' -
 test -n "$rlib"
 
 cat >"$probe_dir/probe.rs" <<'RS'
-use the_q::{QI, Rat};
+use the_q::{Exact, QI, Rat};
 
 fn main() {
     let mut r = Rat::one();
@@ -18,6 +18,9 @@ fn main() {
     let _ = QI { lo: Rat::zero(), hi: Rat::one() };
     let mut i = QI::exact(Rat::zero());
     i.lo = Rat::one();
+    let _ = Exact { value: Rat::one() };
+    let mut e = Exact::new(Rat::one());
+    e.value = Rat::zero();
 }
 RS
 
@@ -36,4 +39,8 @@ if ! grep -q 'field `lo` of struct `QI` is private' "$probe_dir/error"; then
     cat "$probe_dir/error" >&2
     exit 1
 fi
-echo "ok: downstream Rat and QI field access is rejected"
+if ! grep -q 'field `value` of struct `Exact` is private' "$probe_dir/error"; then
+    cat "$probe_dir/error" >&2
+    exit 1
+fi
+echo "ok: downstream Rat, QI, and Exact field access is rejected"
