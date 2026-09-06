@@ -12,6 +12,31 @@
 //! theorem is one-directional: success of every step is sufficient, not
 //! claimed necessary — a computation that left the exact path could still
 //! happen to satisfy the same equation or inequality.
+//!
+//! ```
+//! use the_q::{Exact, ExactError, Rat};
+//!
+//! let half = Exact::new(Rat::new(1, 2).unwrap());
+//! let one = Exact::add(half, half).expect("1/2 + 1/2 is exact");
+//! assert_eq!(one.value(), Rat::new(1, 1).unwrap());
+//!
+//! // A sum whose reduced denominator would exceed the budget fails instead
+//! // of rounding silently.
+//! let a = Exact::new(Rat::new(1, 3_037_000_493).unwrap());
+//! let b = Exact::new(Rat::new(1, 3_037_000_499).unwrap());
+//! assert_eq!(Exact::add(a, b), Err(ExactError::Inexact));
+//!
+//! // A chain that stays on the exact path the whole way is genuinely
+//! // associative -- not approximately, exactly equal.
+//! let (x, y, z) = (
+//!     Exact::new(Rat::new(1, 2).unwrap()),
+//!     Exact::new(Rat::new(1, 3).unwrap()),
+//!     Exact::new(Rat::new(1, 6).unwrap()),
+//! );
+//! let left = Exact::add(Exact::add(x, y).unwrap(), z).unwrap();
+//! let right = Exact::add(x, Exact::add(y, z).unwrap()).unwrap();
+//! assert_eq!(left.value(), right.value());
+//! ```
 
 use verus_builtin_macros::verus;
 
@@ -92,6 +117,13 @@ impl Exact {
     }
 
     /// Wraps an already-computed [`Rat`]. Always exact: it denotes itself.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let half = Exact::new(Rat::new(1, 2).unwrap());
+    /// assert_eq!(half.value(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn new(value: Rat) -> (r: Exact)
         requires
             value.wf(),
@@ -103,6 +135,13 @@ impl Exact {
     }
 
     /// The wrapped value.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let e = Exact::new(Rat::new(3, 4).unwrap());
+    /// assert_eq!(e.value(), Rat::new(3, 4).unwrap());
+    /// ```
     pub fn value(&self) -> (r: Rat)
         ensures
             r == self.spec_value(),
@@ -114,6 +153,14 @@ impl Exact {
     }
 
     /// Whether the wrapped value is nonnegative.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// assert!(Exact::new(Rat::new(1, 2).unwrap()).is_nonneg());
+    /// assert!(Exact::new(Rat::zero()).is_nonneg());
+    /// assert!(!Exact::new(Rat::new(-1, 2).unwrap()).is_nonneg());
+    /// ```
     pub fn is_nonneg(&self) -> (r: bool)
         requires
             self.wf(),
@@ -127,6 +174,16 @@ impl Exact {
     }
 
     /// `a <= b`.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(1, 3).unwrap());
+    /// let b = Exact::new(Rat::new(1, 2).unwrap());
+    /// assert!(Exact::le(a, b));
+    /// assert!(!Exact::le(b, a));
+    /// assert!(Exact::le(a, a));
+    /// ```
     pub fn le(a: Exact, b: Exact) -> (r: bool)
         requires
             a.wf(),
@@ -141,6 +198,20 @@ impl Exact {
     }
 
     /// `a + b`, or `None` if the exact sum needs rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let half = Exact::new(Rat::new(1, 2).unwrap());
+    /// let sum = Exact::checked_add(half, half).expect("1/2 + 1/2 is exact");
+    /// assert_eq!(sum.value(), Rat::new(1, 1).unwrap());
+    ///
+    /// // The reduced denominator of this sum is about 9.2e18, past the
+    /// // budget -- `None`, not a silently rounded answer.
+    /// let a = Exact::new(Rat::new(1, 3_037_000_493).unwrap());
+    /// let b = Exact::new(Rat::new(1, 3_037_000_499).unwrap());
+    /// assert_eq!(Exact::checked_add(a, b), None);
+    /// ```
     pub fn checked_add(a: Exact, b: Exact) -> (r: Option<Exact>)
         requires
             a.wf(),
@@ -166,6 +237,15 @@ impl Exact {
     }
 
     /// `a - b`, or `None` if the exact difference needs rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(3, 4).unwrap());
+    /// let b = Exact::new(Rat::new(1, 4).unwrap());
+    /// let diff = Exact::checked_sub(a, b).expect("3/4 - 1/4 is exact");
+    /// assert_eq!(diff.value(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn checked_sub(a: Exact, b: Exact) -> (r: Option<Exact>)
         requires
             a.wf(),
@@ -191,6 +271,15 @@ impl Exact {
     }
 
     /// `a * b`, or `None` if the exact product needs rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(2, 3).unwrap());
+    /// let b = Exact::new(Rat::new(3, 4).unwrap());
+    /// let product = Exact::checked_mul(a, b).expect("(2/3) * (3/4) is exact");
+    /// assert_eq!(product.value(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn checked_mul(a: Exact, b: Exact) -> (r: Option<Exact>)
         requires
             a.wf(),
@@ -216,6 +305,20 @@ impl Exact {
     }
 
     /// `a / b`, or `None` if `b` is zero or the exact quotient needs rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(1, 2).unwrap());
+    /// let b = Exact::new(Rat::new(1, 3).unwrap());
+    /// let quotient = Exact::checked_div(a, b).expect("(1/2) / (1/3) is exact");
+    /// assert_eq!(quotient.value(), Rat::new(3, 2).unwrap());
+    ///
+    /// // Division by zero is `None`, the same as any other operand that
+    /// // leaves the exact path -- `checked_div` does not distinguish the two
+    /// // causes (the `Result`-returning `div` does; see below).
+    /// assert_eq!(Exact::checked_div(a, Exact::new(Rat::zero())), None);
+    /// ```
     pub fn checked_div(a: Exact, b: Exact) -> (r: Option<Exact>)
         requires
             a.wf(),
@@ -486,23 +589,63 @@ impl std::error::Error for ExactError {}
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 impl Exact {
     /// `a + b`, or [`ExactError::Inexact`] if the exact sum needs rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, ExactError, Rat};
+    ///
+    /// let half = Exact::new(Rat::new(1, 2).unwrap());
+    /// assert_eq!(Exact::add(half, half).unwrap().value(), Rat::new(1, 1).unwrap());
+    ///
+    /// let a = Exact::new(Rat::new(1, 3_037_000_493).unwrap());
+    /// let b = Exact::new(Rat::new(1, 3_037_000_499).unwrap());
+    /// assert_eq!(Exact::add(a, b), Err(ExactError::Inexact));
+    /// ```
     pub fn add(a: Exact, b: Exact) -> Result<Exact, ExactError> {
         Exact::checked_add(a, b).ok_or(ExactError::Inexact)
     }
 
     /// `a - b`, or [`ExactError::Inexact`] if the exact difference needs
     /// rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(3, 4).unwrap());
+    /// let b = Exact::new(Rat::new(1, 4).unwrap());
+    /// assert_eq!(Exact::sub(a, b).unwrap().value(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn sub(a: Exact, b: Exact) -> Result<Exact, ExactError> {
         Exact::checked_sub(a, b).ok_or(ExactError::Inexact)
     }
 
     /// `a * b`, or [`ExactError::Inexact`] if the exact product needs
     /// rounding.
+    ///
+    /// ```
+    /// use the_q::{Exact, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(2, 3).unwrap());
+    /// let b = Exact::new(Rat::new(3, 4).unwrap());
+    /// assert_eq!(Exact::mul(a, b).unwrap().value(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn mul(a: Exact, b: Exact) -> Result<Exact, ExactError> {
         Exact::checked_mul(a, b).ok_or(ExactError::Inexact)
     }
 
     /// `a / b`, or [`ExactError::DivisionByZero`] / [`ExactError::Inexact`].
+    ///
+    /// ```
+    /// use the_q::{Exact, ExactError, Rat};
+    ///
+    /// let a = Exact::new(Rat::new(1, 2).unwrap());
+    /// let b = Exact::new(Rat::new(1, 3).unwrap());
+    /// assert_eq!(Exact::div(a, b).unwrap().value(), Rat::new(3, 2).unwrap());
+    ///
+    /// assert_eq!(
+    ///     Exact::div(a, Exact::new(Rat::zero())),
+    ///     Err(ExactError::DivisionByZero),
+    /// );
+    /// ```
     pub fn div(a: Exact, b: Exact) -> Result<Exact, ExactError> {
         if b.value().numerator() == 0 {
             return Err(ExactError::DivisionByZero);
