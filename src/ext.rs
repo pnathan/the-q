@@ -212,6 +212,7 @@ impl Q {
             r.spec_is_number(),
             r.spec_is_value(1, 1),
             r.spec_is_one(),
+            r == Q::Number(Rat::from_raw_spec(1, 1)),
     {
         Q::Number(Rat::one())
     }
@@ -1525,6 +1526,9 @@ impl Q {
         ensures
             r.wf(),
             self.spec_is_nan() ==> r.spec_is_nan(),
+            // theorem_q_recip_is_div_one: true by definition, not derived —
+            // recip's only body is this call.
+            r == Q::spec_div(Q::Number(Rat::from_raw_spec(1, 1)), self),
     {
         // The cell-by-cell table is deliberately not restated in ghost form: a spec
         // shaped like the table verifies with a shared mistake.

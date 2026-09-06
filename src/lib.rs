@@ -98,10 +98,12 @@ pub mod saturation;
 pub mod q;
 
 pub mod convert;
+pub mod denote;
 pub mod exact;
 pub mod ext;
 pub mod interval;
 pub mod laws;
+pub mod laws_q;
 pub mod lipschitz;
 pub mod nary;
 pub mod transcendental;
