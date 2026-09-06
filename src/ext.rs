@@ -200,6 +200,7 @@ impl Q {
             r.spec_is_number(),
             r.spec_is_value(0, 1),
             r.spec_is_zero(),
+            r == Q::Number(Rat::from_raw_spec(0, 1)),
     {
         Q::Number(Rat::zero())
     }
@@ -575,6 +576,31 @@ impl Q {
 // ---------------------------------------------------------------------------
 
 impl Q {
+    /// Ghost mirror of [`Q::add_numbers`]. Exists only so `Q::add`'s result is
+    /// *nameable* in ghost code, the same role `round_frac` plays for
+    /// `round_frac_exec` (V4): it lets `add`'s `ensures` pin `r ==
+    /// Q::spec_add(a, b)`, which is what makes the algebraic-law theorems in
+    /// `laws_q.rs` statable at all.
+    ///
+    /// This is *not* the specification of soundness. It is shaped like the
+    /// implementation on purpose, because its only job is to *equal* the
+    /// implementation. `denote.rs`'s `denotes`/`add_sound`/`add_honest` are
+    /// the specification, and by construction they never call this function
+    /// (checked by `scripts/check-no-spec-mirror-in-denote.sh`) — a spec
+    /// shaped like the table it specifies verifies with a shared mistake
+    /// (the scar this crate already carries once, noted at `recip` below).
+    pub open spec fn spec_add_numbers(x: Rat, y: Rat) -> Q {
+        let n = crate::q::add_n(x, y);
+        let d = crate::q::prod_d(x, y);
+        if crate::model::magnitude_fits(n, d) {
+            Q::Number(crate::round::round_frac(n, d, Dir::Nearest))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
     /// `x + y` for two representable rationals, saturating rather than clamping.
     fn add_numbers(x: Rat, y: Rat) -> (r: Q)
         requires
@@ -584,6 +610,7 @@ impl Q {
             r.wf(),
             !r.spec_is_nan(),
             !r.spec_is_infinite(),
+            r == Q::spec_add_numbers(x, y),
     {
         let n: i128 = crate::q::add_n_exec(x, y);
         let d: i128 = crate::q::prod_d_exec(x, y);
@@ -600,6 +627,19 @@ impl Q {
         }
     }
 
+    /// Ghost mirror of [`Q::mul_numbers`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_mul_numbers(x: Rat, y: Rat) -> Q {
+        let n = crate::q::mul_n(x, y);
+        let d = crate::q::prod_d(x, y);
+        if crate::model::magnitude_fits(n, d) {
+            Q::Number(crate::round::round_frac(n, d, Dir::Nearest))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
     /// `x * y` for two representable rationals, saturating rather than clamping.
     fn mul_numbers(x: Rat, y: Rat) -> (r: Q)
         requires
@@ -609,6 +649,7 @@ impl Q {
             r.wf(),
             !r.spec_is_nan(),
             !r.spec_is_infinite(),
+            r == Q::spec_mul_numbers(x, y),
     {
         let n: i128 = crate::q::mul_n_exec(x, y);
         let d: i128 = crate::q::prod_d_exec(x, y);
@@ -625,6 +666,23 @@ impl Q {
         }
     }
 
+    /// Ghost mirror of [`Q::number_plus_sat`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_number_plus_sat(x: Rat, sat_pos: bool) -> Q {
+        if sat_pos {
+            if x.n() >= 0 {
+                Q::PosSat
+            } else {
+                Q::Nan
+            }
+        } else {
+            if x.n() <= 0 {
+                Q::NegSat
+            } else {
+                Q::Nan
+            }
+        }
+    }
+
     /// `Number(x) + Sat`: sound for `x` on the saturation's side; for the other
     /// sign the image reaches inside the budget and the result is `Nan`.
     fn number_plus_sat(x: Rat, sat_pos: bool) -> (r: Q)
@@ -634,6 +692,7 @@ impl Q {
             r.wf(),
             !r.spec_is_infinite(),
             !r.spec_is_number(),
+            r == Q::spec_number_plus_sat(x, sat_pos),
     {
         let s = x.signum();
         if sat_pos {
@@ -654,12 +713,26 @@ impl Q {
     /// `Number(x) * Sat`. Saturated for `|x| >= 1` (inclusive: `one() * PosSat`
     /// must stay `PosSat`), `Nan` for `0 < |x| < 1` where the image reaches
     /// below `MAX_MAG`, and exactly `Number(0)` at zero.
+    /// Ghost mirror of [`Q::number_times_sat`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_number_times_sat(x: Rat, sat_pos: bool) -> Q {
+        if x.n() == 0 {
+            Q::Number(Rat::from_raw_spec(0, 1))
+        } else if !(x.n() >= x.d() || x.n() <= 0 - x.d()) {
+            Q::Nan
+        } else if (x.n() > 0) == sat_pos {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
     fn number_times_sat(x: Rat, sat_pos: bool) -> (r: Q)
         requires
             x.wf(),
         ensures
             r.wf(),
             !r.spec_is_infinite(),
+            r == Q::spec_number_times_sat(x, sat_pos),
     {
         if x.is_zero() {
             return Q::zero();
@@ -680,6 +753,36 @@ impl Q {
         }
     }
 
+    /// Ghost mirror of [`Q::add`]'s match, cell for cell. This is *not* the
+    /// specification of `add`'s correctness — `denote.rs`'s
+    /// `add_sound`/`add_honest`/`add_nan_is_necessary` are, and none of them
+    /// call this function. Its only job is to make `add`'s result nameable in
+    /// ghost code (`r == Q::spec_add(a, b)`), which is the prerequisite the
+    /// commutativity/associativity/distributivity/monotonicity theorems in
+    /// `laws_q.rs` need: none of those properties are even statable against a
+    /// return value that only classification `ensures` clauses constrain.
+    pub open spec fn spec_add(a: Q, b: Q) -> Q {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            (Q::Number(x), Q::Number(y)) => Q::spec_add_numbers(x, y),
+            (Q::Number(x), Q::PosSat) => Q::spec_number_plus_sat(x, true),
+            (Q::Number(x), Q::NegSat) => Q::spec_number_plus_sat(x, false),
+            (Q::PosSat, Q::Number(y)) => Q::spec_number_plus_sat(y, true),
+            (Q::NegSat, Q::Number(y)) => Q::spec_number_plus_sat(y, false),
+            (Q::PosSat, Q::PosSat) => Q::PosSat,
+            (Q::NegSat, Q::NegSat) => Q::NegSat,
+            (Q::PosSat, Q::NegSat) => Q::Nan,
+            (Q::NegSat, Q::PosSat) => Q::Nan,
+            (Q::PosInf, Q::NegInf) => Q::Nan,
+            (Q::NegInf, Q::PosInf) => Q::Nan,
+            (Q::PosInf, _) => Q::PosInf,
+            (Q::NegInf, _) => Q::NegInf,
+            (_, Q::PosInf) => Q::PosInf,
+            (_, Q::NegInf) => Q::NegInf,
+        }
+    }
+
     /// `a + b`, total. Replaces the kernel `add`, which clamps silently.
     pub fn add(a: Q, b: Q) -> (r: Q)
         requires
@@ -687,6 +790,7 @@ impl Q {
             b.wf(),
         ensures
             r.wf(),
+            r == Q::spec_add(a, b),
             a.spec_is_nan() ==> r.spec_is_nan(),
             b.spec_is_nan() ==> r.spec_is_nan(),
             // Two representable rationals can only overflow, never become
@@ -741,6 +845,39 @@ impl Q {
         Q::add(a, b.neg())
     }
 
+    /// Ghost mirror of [`Q::mul`]'s match. See [`Q::spec_add`].
+    pub open spec fn spec_mul(a: Q, b: Q) -> Q {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            (Q::Number(x), Q::Number(y)) => Q::spec_mul_numbers(x, y),
+            (Q::Number(x), Q::PosSat) => Q::spec_number_times_sat(x, true),
+            (Q::Number(x), Q::NegSat) => Q::spec_number_times_sat(x, false),
+            (Q::PosSat, Q::Number(y)) => Q::spec_number_times_sat(y, true),
+            (Q::NegSat, Q::Number(y)) => Q::spec_number_times_sat(y, false),
+            (Q::Number(x), Q::PosInf) => Q::spec_number_times_inf(x, true),
+            (Q::Number(x), Q::NegInf) => Q::spec_number_times_inf(x, false),
+            (Q::PosInf, Q::Number(y)) => Q::spec_number_times_inf(y, true),
+            (Q::NegInf, Q::Number(y)) => Q::spec_number_times_inf(y, false),
+            (Q::PosSat, Q::PosSat) => Q::PosSat,
+            (Q::PosSat, Q::NegSat) => Q::NegSat,
+            (Q::NegSat, Q::PosSat) => Q::NegSat,
+            (Q::NegSat, Q::NegSat) => Q::PosSat,
+            (Q::PosSat, Q::PosInf) => Q::PosInf,
+            (Q::PosSat, Q::NegInf) => Q::NegInf,
+            (Q::NegSat, Q::PosInf) => Q::NegInf,
+            (Q::NegSat, Q::NegInf) => Q::PosInf,
+            (Q::PosInf, Q::PosSat) => Q::PosInf,
+            (Q::PosInf, Q::NegSat) => Q::NegInf,
+            (Q::NegInf, Q::PosSat) => Q::NegInf,
+            (Q::NegInf, Q::NegSat) => Q::PosInf,
+            (Q::PosInf, Q::PosInf) => Q::PosInf,
+            (Q::PosInf, Q::NegInf) => Q::NegInf,
+            (Q::NegInf, Q::PosInf) => Q::NegInf,
+            (Q::NegInf, Q::NegInf) => Q::PosInf,
+        }
+    }
+
     /// `a * b`, total.
     pub fn mul(a: Q, b: Q) -> (r: Q)
         requires
@@ -748,6 +885,7 @@ impl Q {
             b.wf(),
         ensures
             r.wf(),
+            r == Q::spec_mul(a, b),
             a.spec_is_nan() ==> r.spec_is_nan(),
             b.spec_is_nan() ==> r.spec_is_nan(),
             (a.spec_is_number() && b.spec_is_number()) ==> (r.spec_is_number()
@@ -865,6 +1003,17 @@ impl Q {
         }
     }
 
+    /// Ghost mirror of [`Q::number_times_inf`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_number_times_inf(x: Rat, inf_pos: bool) -> Q {
+        if x.n() == 0 {
+            Q::Nan
+        } else if (x.n() > 0) == inf_pos {
+            Q::PosInf
+        } else {
+            Q::NegInf
+        }
+    }
+
     /// `Number(x) * ±∞`. Zero times an infinity is the classic indeterminate.
     fn number_times_inf(x: Rat, inf_pos: bool) -> (r: Q)
         requires
@@ -873,6 +1022,7 @@ impl Q {
             r.wf(),
             !r.spec_is_number(),
             !r.spec_is_saturated(),
+            r == Q::spec_number_times_inf(x, inf_pos),
     {
         let s = x.signum();
         if s == 0 {
@@ -1086,6 +1236,19 @@ impl Q {
 // ---------------------------------------------------------------------------
 
 impl Q {
+    /// Ghost mirror of [`Q::div_numbers`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_div_numbers(x: Rat, y: Rat) -> Q {
+        let n = crate::q::div_n(x, y);
+        let d = crate::q::div_d(x, y);
+        if crate::model::magnitude_fits(n, d) {
+            Q::Number(crate::round::round_frac(n, d, Dir::Nearest))
+        } else if n > 0 {
+            Q::PosSat
+        } else {
+            Q::NegSat
+        }
+    }
+
     /// `x / y` for representable `x`, `y != 0`; saturates rather than clamps.
     fn div_numbers(x: Rat, y: Rat) -> (r: Q)
         requires
@@ -1096,6 +1259,7 @@ impl Q {
             r.wf(),
             !r.spec_is_nan(),
             !r.spec_is_infinite(),
+            r == Q::spec_div_numbers(x, y),
     {
         let n: i128 = crate::q::div_n_exec(x, y);
         let d: i128 = crate::q::div_d_exec(x, y);
@@ -1109,6 +1273,37 @@ impl Q {
             Q::PosSat
         } else {
             Q::NegSat
+        }
+    }
+
+    /// Ghost mirror of [`Q::sat_div_number`]. See [`Q::spec_add_numbers`].
+    pub open spec fn spec_sat_div_number(pos: bool, y: Rat) -> Q {
+        if y.n() == 0 {
+            if pos {
+                Q::PosInf
+            } else {
+                Q::NegInf
+            }
+        } else if y.n() > 0 {
+            if y.n() <= y.d() {
+                if pos {
+                    Q::PosSat
+                } else {
+                    Q::NegSat
+                }
+            } else {
+                Q::Nan
+            }
+        } else {
+            if y.n() >= 0 - y.d() {
+                if pos {
+                    Q::NegSat
+                } else {
+                    Q::PosSat
+                }
+            } else {
+                Q::Nan
+            }
         }
     }
 
@@ -1126,6 +1321,7 @@ impl Q {
             // ...and conversely, a zero divisor always produces one, so no
             // representable quotient can survive it.
             y.n() == 0 ==> r.spec_is_infinite(),
+            r == Q::spec_sat_div_number(pos, y),
     {
         let s = y.signum();
         if s == 0 {
@@ -1160,6 +1356,67 @@ impl Q {
         }
     }
 
+    /// Ghost mirror of [`Q::div`]'s match. See [`Q::spec_add`].
+    pub open spec fn spec_div(a: Q, b: Q) -> Q {
+        match (a, b) {
+            (Q::Nan, _) => Q::Nan,
+            (_, Q::Nan) => Q::Nan,
+            (Q::Number(x), Q::Number(y)) => {
+                if y.n() == 0 {
+                    if x.n() == 0 {
+                        Q::Nan
+                    } else if x.n() > 0 {
+                        Q::PosInf
+                    } else {
+                        Q::NegInf
+                    }
+                } else {
+                    Q::spec_div_numbers(x, y)
+                }
+            },
+            (Q::Number(x), Q::PosSat) => if x.n() == 0 {
+                Q::Number(Rat::from_raw_spec(0, 1))
+            } else {
+                Q::Nan
+            },
+            (Q::Number(x), Q::NegSat) => if x.n() == 0 {
+                Q::Number(Rat::from_raw_spec(0, 1))
+            } else {
+                Q::Nan
+            },
+            (Q::Number(_), Q::PosInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::Number(_), Q::NegInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::PosSat, Q::Number(y)) => Q::spec_sat_div_number(true, y),
+            (Q::NegSat, Q::Number(y)) => Q::spec_sat_div_number(false, y),
+            (Q::PosSat, Q::PosSat) => Q::Nan,
+            (Q::PosSat, Q::NegSat) => Q::Nan,
+            (Q::NegSat, Q::PosSat) => Q::Nan,
+            (Q::NegSat, Q::NegSat) => Q::Nan,
+            (Q::PosSat, Q::PosInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::PosSat, Q::NegInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::NegSat, Q::PosInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::NegSat, Q::NegInf) => Q::Number(Rat::from_raw_spec(0, 1)),
+            (Q::PosInf, Q::Number(y)) => if y.n() < 0 {
+                Q::NegInf
+            } else {
+                Q::PosInf
+            },
+            (Q::NegInf, Q::Number(y)) => if y.n() < 0 {
+                Q::PosInf
+            } else {
+                Q::NegInf
+            },
+            (Q::PosInf, Q::PosSat) => Q::PosInf,
+            (Q::PosInf, Q::NegSat) => Q::NegInf,
+            (Q::NegInf, Q::PosSat) => Q::NegInf,
+            (Q::NegInf, Q::NegSat) => Q::PosInf,
+            (Q::PosInf, Q::PosInf) => Q::Nan,
+            (Q::PosInf, Q::NegInf) => Q::Nan,
+            (Q::NegInf, Q::PosInf) => Q::Nan,
+            (Q::NegInf, Q::NegInf) => Q::Nan,
+        }
+    }
+
     /// `a / b`, total. Division by zero follows IEEE 754 uniformly, so that
     /// `recip(x) == div(one, x)` holds at zero. `Sat / Inf` is exactly `0` and
     /// `Inf / Sat` a signed infinity, because saturation denotes finite reals.
@@ -1169,6 +1426,7 @@ impl Q {
             b.wf(),
         ensures
             r.wf(),
+            r == Q::spec_div(a, b),
             // `Nan` is absorbing on both sides — no information in, none out.
             a.spec_is_nan() ==> r.spec_is_nan(),
             b.spec_is_nan() ==> r.spec_is_nan(),
