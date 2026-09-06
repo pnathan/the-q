@@ -11,7 +11,10 @@
 #![cfg(feature = "rust_decimal")]
 
 use rust_decimal::Decimal;
-use the_q::{Dir, MAX_DECIMAL_MANTISSA, Q, Rat, from_rust_decimal_dir, q_from_rust_decimal};
+use the_q::{
+    Dir, Exact, ExactError, MAX_DECIMAL_MANTISSA, Q, Rat, exact_from_rust_decimal,
+    from_rust_decimal_dir, q_from_rust_decimal,
+};
 
 #[test]
 fn small_decimal_is_exact_and_reduced() {
@@ -88,4 +91,45 @@ fn zero_is_zero_at_every_scale() {
         let d = Decimal::new(0, scale);
         assert_eq!(from_rust_decimal_dir(d, Dir::Nearest), Rat::zero());
     }
+}
+
+#[test]
+fn exact_conversion_succeeds_when_the_reduced_pair_fits() {
+    // 0.85 == 17/20, comfortably inside the budget: `Exact::new` on the
+    // `Rat` path and the direct `Decimal -> Exact` path must agree.
+    let d = Decimal::new(85, 2);
+    let via_exact = exact_from_rust_decimal(d).unwrap();
+    assert_eq!(via_exact, Exact::new(Rat::new(17, 20).unwrap()));
+    assert_eq!(Exact::try_from(d).unwrap(), via_exact);
+}
+
+#[test]
+fn exact_conversion_refuses_what_from_rust_decimal_dir_would_round() {
+    // Same value as `rounds_when_the_reduced_pair_leaves_the_budget`: an odd
+    // mantissa at the maximum scale reduces to a denominator of 10^28, past
+    // the budget. `from_rust_decimal_dir` rounds it silently (Nearest);
+    // `exact_from_rust_decimal` must refuse instead, precisely because
+    // ingestion itself would have to round to produce a `Rat` at all.
+    let d = Decimal::from_i128_with_scale(MAX_DECIMAL_MANTISSA, 28);
+    assert_eq!(exact_from_rust_decimal(d), Err(ExactError::Inexact));
+    // The `Rat` path did not refuse: it rounded. This is the gap the
+    // `Exact` path exists to close.
+    let rounded = from_rust_decimal_dir(d, Dir::Nearest);
+    assert!(Exact::new(rounded).value().numerator() != 0);
+}
+
+#[test]
+fn exact_conversion_refuses_beyond_the_decimal_scale_too() {
+    // `Decimal::MAX` (mantissa == MAX_DECIMAL_MANTISSA, scale 0) is an
+    // integer, so it *is* exact as a value, but its magnitude alone already
+    // exceeds the budget: `MAX_MAG < Decimal::MAX`. Exactness at the value
+    // level does not imply it fits — `Exact` refuses this too.
+    assert_eq!(
+        exact_from_rust_decimal(Decimal::MAX),
+        Err(ExactError::Inexact)
+    );
+    assert_eq!(
+        exact_from_rust_decimal(Decimal::MIN),
+        Err(ExactError::Inexact)
+    );
 }

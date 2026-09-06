@@ -477,6 +477,48 @@ pub fn from_decimal128_dir(mantissa: i128, scale: u32, dir: Dir) -> (r: Option<R
     Some(round_frac_exec(mantissa, d, dir))
 }
 
+/// The exact decimal `mantissa · 10^-scale` as a `Rat`, `None` unless the
+/// reduced `(mantissa, 10^scale)` pair already fits the width budget — the
+/// domain [`from_decimal128_dir`] takes without rounding or saturating.
+///
+/// Wrapping the result in `crate::exact::Exact` then denotes the same value
+/// as the decimal, not merely a `Rat` that happens not to need *further*
+/// rounding: unlike `from_decimal128_dir`, this refuses exactly the cases
+/// where the *ingestion itself* would have rounded, matching how `Exact`'s
+/// own arithmetic reports rounding instead of performing it silently.
+pub fn from_decimal128_exact(mantissa: i128, scale: u32) -> (r: Option<Rat>)
+    ensures
+        r.is_some() ==> r.unwrap().wf(),
+        r.is_some() ==> q_is(r.unwrap(), mantissa as int, pow10(scale as nat)),
+        r.is_none() <==> !(scale <= MAX_DECIMAL_SCALE && mantissa <= MAX_DECIMAL_MANTISSA
+            && mantissa >= -MAX_DECIMAL_MANTISSA
+            && crate::round::exact_path(mantissa as int, pow10(scale as nat))),
+{
+    if scale > MAX_DECIMAL_SCALE {
+        return None;
+    }
+    if mantissa > MAX_DECIMAL_MANTISSA || mantissa < -MAX_DECIMAL_MANTISSA {
+        return None;
+    }
+    let d: i128 = pow10_i128(scale);
+    proof {
+        lemma_pow2_124();
+        lemma_pow2_126();
+        assert(abs_int(mantissa as int) <= MAX_DECIMAL_MANTISSA as int);
+        assert((MAX_DECIMAL_MANTISSA as int) < (pow2(126)));
+        assert(d as int <= 10000000000000000000000000000int);
+        assert(10000000000000000000000000000int <= pow2(124));
+    }
+    if crate::round::exact_path_exec(mantissa, d) {
+        proof {
+            crate::round::lemma_r1_identity(mantissa as int, d as int, Dir::Nearest);
+        }
+        Some(round_frac_exec(mantissa, d, Dir::Nearest))
+    } else {
+        None
+    }
+}
+
 } // verus!
 
 // ---------------------------------------------------------------------------
@@ -817,5 +859,34 @@ impl From<rust_decimal::Decimal> for crate::ext::Q {
     /// Rounds to nearest; see [`q_from_rust_decimal`].
     fn from(v: rust_decimal::Decimal) -> Self {
         q_from_rust_decimal(v)
+    }
+}
+
+/// `rust_decimal::Decimal` as an [`Exact`](crate::exact::Exact) —
+/// `Err(ExactError::Inexact)` when the reduced `(mantissa, 10^scale)` pair
+/// does not already fit the width budget, rather than silently handing back
+/// an `Exact` that has already rounded on the way in. `Exact`'s own
+/// `add`/`sub`/`mul`/`div` report rounding the same way; this makes ingestion
+/// consistent with them, instead of a `Rat` conversion (which does round or
+/// saturate) wrapped in `Exact::new` after the fact.
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn exact_from_rust_decimal(
+    v: rust_decimal::Decimal,
+) -> Result<crate::exact::Exact, crate::exact::ExactError> {
+    match from_decimal128_exact(v.mantissa(), v.scale()) {
+        Some(x) => Ok(crate::exact::Exact::new(x)),
+        None => Err(crate::exact::ExactError::Inexact),
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl TryFrom<rust_decimal::Decimal> for crate::exact::Exact {
+    type Error = crate::exact::ExactError;
+
+    /// See [`exact_from_rust_decimal`].
+    fn try_from(v: rust_decimal::Decimal) -> Result<Self, Self::Error> {
+        exact_from_rust_decimal(v)
     }
 }

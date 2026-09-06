@@ -151,8 +151,10 @@ The `rust_decimal` feature adds `convert::from_rust_decimal_dir` (`Decimal` to
 `Rat`, directed) and `convert::q_from_rust_decimal`/`impl From<Decimal> for Q`
 (rounds to nearest, saturating by sign past the budget, like `q_from_f64`).
 `Decimal`'s own representation is exact (`mantissa · 10^-scale`, no rounding of
-its own), so the conversion is exact whenever the reduced pair fits; see
-`tests/rust_decimal.rs`.
+its own), so the conversion is exact whenever the reduced pair fits. For a
+conversion that *refuses* rather than rounds, `convert::exact_from_rust_decimal`
+/`impl TryFrom<Decimal> for Exact` returns `Err(ExactError::Inexact)` exactly
+when ingestion itself would have to round; see `tests/rust_decimal.rs`.
 
 ### Roots and transcendentals, on `Q`
 
