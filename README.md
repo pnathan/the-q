@@ -263,5 +263,13 @@ six recorded departures.
 
 ## Licence
 
-LGPL-3.0-or-later. The LGPL-3.0-only oracle `malachite-q` is a dev-dependency
-only and never ships. Contact the author for other terms.
+Dual-licensed. Free under AGPL-3.0-or-later: use, modify, and redistribute
+freely, including as a network service, as long as you release your source
+under the same terms (`AGPL-3.0-or-later` section 13 — the network-use
+clause — applies to any service built on this crate, not only to
+redistributed binaries). If that obligation does not work for your use —
+most commercial and closed-source use — a separate commercial licence is
+available; contact the author for terms.
+
+The LGPL-3.0-only oracle `malachite-q` is a dev-dependency only and never
+ships, so its terms do not apply to any release of this crate.
