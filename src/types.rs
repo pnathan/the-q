@@ -23,6 +23,16 @@ pub const MAX_MAG: i64 = 4611686018427387903;  // 2^62 - 1
 /// whose scale factor is itself representable.
 pub const MAX_DEC_PLACES: u8 = 18;
 
+/// The largest scale (digits after the point) a `rust_decimal::Decimal`
+/// carries. `crate::convert::from_decimal128_dir` accepts exactly the domain
+/// `Decimal` itself guarantees: `scale() <= MAX_DECIMAL_SCALE` and
+/// `|mantissa()| <= MAX_DECIMAL_MANTISSA`.
+pub const MAX_DECIMAL_SCALE: u32 = 28;
+
+/// `2^96 - 1`, the largest magnitude a `rust_decimal::Decimal` mantissa
+/// carries (a 96-bit unsigned integer with the sign held separately).
+pub const MAX_DECIMAL_MANTISSA: i128 = 79228162514264337593543950335;
+
 /// Rounding direction for the operations that can round.
 ///
 /// `Down` and `Up` are *directed*: they bracket the exact value (R2). This

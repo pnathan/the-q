@@ -106,8 +106,10 @@ pub mod lipschitz;
 pub mod nary;
 pub mod transcendental;
 
-pub use convert::{ParseQError, from_f64_dir, q_from_f64, to_f64};
+pub use convert::{ParseQError, from_decimal128_dir, from_f64_dir, q_from_f64, to_f64};
+#[cfg(feature = "rust_decimal")]
+pub use convert::{from_rust_decimal_dir, q_from_rust_decimal};
 pub use exact::{Exact, ExactError};
 pub use ext::{Q, Sign};
 pub use interval::QI;
-pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
+pub use types::{Dir, MAX_DEC_PLACES, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE, MAX_MAG, Rat};

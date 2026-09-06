@@ -111,7 +111,9 @@ reduced but over budget; `Rat::new_rounded` is total in the numerator.
 ## API
 
 Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
-`from_decimal`, `convert::from_f64_dir`.
+`from_decimal`, `convert::from_f64_dir`, `convert::from_decimal128_dir` (a
+wider `from_decimal`: `i128` mantissa, scale up to 28, directed rounding once
+the exact value leaves the budget instead of refusing it).
 
 Arithmetic: `add`, `sub`, `mul`, `div` (nearest, ties to even); `*_dir`
 (explicit direction); `checked_*` (`None` on saturation, and on a zero divisor
@@ -144,6 +146,13 @@ operation in the chain succeeded — sufficient, not claimed necessary
 
 Out: `to_f64` (display only; see `TRUSTED.md`), `Display` (`num/den`), serde
 (feature-gated; encodes the exact pair).
+
+The `rust_decimal` feature adds `convert::from_rust_decimal_dir` (`Decimal` to
+`Rat`, directed) and `convert::q_from_rust_decimal`/`impl From<Decimal> for Q`
+(rounds to nearest, saturating by sign past the budget, like `q_from_f64`).
+`Decimal`'s own representation is exact (`mantissa · 10^-scale`, no rounding of
+its own), so the conversion is exact whenever the reduced pair fits; see
+`tests/rust_decimal.rs`.
 
 ### Roots and transcendentals, on `Q`
 

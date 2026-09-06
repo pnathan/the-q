@@ -47,6 +47,11 @@ verus_builtin_macros = "0.0.0-2026-07-27-0206"
 vstd = "0.0.0-2026-07-27-0206"
 
 serde = { version = "1", optional = true, default-features = false }
+# `rust_decimal`'s own `Decimal` is exact (mantissa · 10^-scale, scale <= 28,
+# no floating-point rounding), which is what makes `convert::from_decimal128_dir`
+# total on it. `default-features = false` drops its optional serde/db
+# integrations; only the numeric core is needed.
+rust_decimal = { version = "1", optional = true, default-features = false }
 
 [dev-dependencies]
 # ORACLE ONLY. malachite-q is LGPL-3.0-only; it must never appear in the
@@ -69,6 +74,7 @@ harness = false
 [features]
 default = []
 serde = ["dep:serde"]
+rust_decimal = ["dep:rust_decimal"]
 
 [lints.rust]
 # `verus_keep_ghost` is set by the Verus driver, not by cargo.

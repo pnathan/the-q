@@ -18,7 +18,7 @@ use vstd::prelude::*;
 use crate::model::*;
 #[allow(unused_imports)]
 use crate::round::*;
-use crate::types::{Dir, Rat};
+use crate::types::{Dir, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE, Rat};
 
 verus! {
 
@@ -380,6 +380,103 @@ pub fn to_f64(q: Rat) -> f64 {
     (q.numerator() as f64) / (q.denominator() as f64)
 }
 
+// ---------------------------------------------------------------------------
+// The decimal boundary (issue #33): `mantissa · 10^-scale`, exact where the
+// budget allows it, rounded per `dir` otherwise. `rust_decimal::Decimal`
+// guarantees `scale() <= MAX_DECIMAL_SCALE` and `|mantissa()| <=
+// MAX_DECIMAL_MANTISSA`, exactly the domain accepted here, so the boundary in
+// `convert.rs` below never observes `None` for a real `Decimal`.
+// ---------------------------------------------------------------------------
+
+/// `10^n` for `n <= MAX_DECIMAL_SCALE`, as a literal table (a loop needs an
+/// invariant and an overflow lemma for the same result; `q::pow10_i64` is the
+/// same idea one order of magnitude short of what a `Decimal` scale needs).
+pub fn pow10_i128(n: u32) -> (r: i128)
+    requires
+        n <= MAX_DECIMAL_SCALE,
+    ensures
+        1 <= r <= 10000000000000000000000000000i128,
+        r == pow10(n as nat),
+{
+    reveal_with_fuel(pow10, 30);
+    match n {
+        0 => 1,
+        1 => 10,
+        2 => 100,
+        3 => 1000,
+        4 => 10000,
+        5 => 100000,
+        6 => 1000000,
+        7 => 10000000,
+        8 => 100000000,
+        9 => 1000000000,
+        10 => 10000000000,
+        11 => 100000000000,
+        12 => 1000000000000,
+        13 => 10000000000000,
+        14 => 100000000000000,
+        15 => 1000000000000000,
+        16 => 10000000000000000,
+        17 => 100000000000000000,
+        18 => 1000000000000000000,
+        19 => 10000000000000000000,
+        20 => 100000000000000000000,
+        21 => 1000000000000000000000,
+        22 => 10000000000000000000000,
+        23 => 100000000000000000000000,
+        24 => 1000000000000000000000000,
+        25 => 10000000000000000000000000,
+        26 => 100000000000000000000000000,
+        27 => 1000000000000000000000000000,
+        _ => 10000000000000000000000000000,
+    }
+}
+
+/// Convert the exact decimal `mantissa · 10^-scale` to a `Rat`, rounding in
+/// direction `dir` when the value does not fit the width budget. `None` only
+/// outside the domain a `rust_decimal::Decimal` can produce (`scale >
+/// MAX_DECIMAL_SCALE`, or a mantissa wider than a 96-bit magnitude), so this
+/// is total on every `Decimal`.
+///
+/// Unlike [`from_f64_dir`], there is no separate magnitude cutoff: a mantissa
+/// whose exact value is beyond the crate's budget is not refused, it saturates
+/// to the same `±MAX_MAG/1` boundary every other operation saturates to (R3,
+/// scoped by `!saturated`; see `round.rs`). `crate::ext::Q`-level ingestion
+/// (behind the `rust_decimal` feature) tests that condition separately and
+/// reports it as `PosSat`/`NegSat`, matching `q_from_f64`.
+pub fn from_decimal128_dir(mantissa: i128, scale: u32, dir: Dir) -> (r: Option<Rat>)
+    ensures
+        r.is_some() ==> r.unwrap().wf(),
+        r.is_some() ==> r.unwrap() == round_frac(mantissa as int, pow10(scale as nat), dir),
+        (r.is_some() && !crate::round::saturated(mantissa as int, pow10(scale as nat))) ==> {
+            &&& dir == Dir::Down ==> q_le_frac(r.unwrap(), mantissa as int, pow10(scale as nat))
+            &&& dir == Dir::Up ==> q_ge_frac(r.unwrap(), mantissa as int, pow10(scale as nat))
+            &&& within_error_bound(r.unwrap(), mantissa as int, pow10(scale as nat))
+        },
+        r.is_none() <==> (scale > MAX_DECIMAL_SCALE || mantissa > MAX_DECIMAL_MANTISSA
+            || mantissa < -MAX_DECIMAL_MANTISSA),
+{
+    if scale > MAX_DECIMAL_SCALE {
+        return None;
+    }
+    if mantissa > MAX_DECIMAL_MANTISSA || mantissa < -MAX_DECIMAL_MANTISSA {
+        return None;
+    }
+    let d: i128 = pow10_i128(scale);
+    proof {
+        lemma_pow2_124();
+        lemma_pow2_126();
+        assert(abs_int(mantissa as int) <= MAX_DECIMAL_MANTISSA as int);
+        assert((MAX_DECIMAL_MANTISSA as int) < (pow2(126)));
+        assert(d as int <= 10000000000000000000000000000int);
+        assert(10000000000000000000000000000int <= pow2(124));
+        if !crate::round::saturated(mantissa as int, d as int) {
+            crate::round::lemma_r2_r3_directed(mantissa as int, d as int, dir);
+        }
+    }
+    Some(round_frac_exec(mantissa, d, dir))
+}
+
 } // verus!
 
 // ---------------------------------------------------------------------------
@@ -663,5 +760,62 @@ pub fn q_from_f64(v: f64) -> crate::ext::Q {
                 Q::PosSat
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The `rust_decimal` boundary (issue #33)
+//
+// `rust_decimal::Decimal` stores `mantissa · 10^-scale` exactly, with no
+// rounding of its own (`scale() <= 28`, `|mantissa()| <= 2^96 - 1`). That
+// domain is exactly what `from_decimal128_dir` accepts, so the conversion
+// below is total on every `Decimal` and never takes the defensive `None`
+// branch that function keeps for a malformed `(mantissa, scale)` pair.
+// ---------------------------------------------------------------------------
+
+/// `rust_decimal::Decimal` as a `Rat`, rounding in direction `dir` when the
+/// exact value does not fit the width budget (it then saturates to
+/// `±MAX_MAG/1`, per R3). Exact whenever the reduced value fits, regardless of
+/// `dir` — the crate's `mantissa()`/`scale()` pair is fed straight to
+/// [`from_decimal128_dir`], the verified core.
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn from_rust_decimal_dir(v: rust_decimal::Decimal, dir: Dir) -> Rat {
+    match from_decimal128_dir(v.mantissa(), v.scale(), dir) {
+        Some(x) => x,
+        // Unreachable for a genuine `Decimal`: `scale() <= MAX_DECIMAL_SCALE`
+        // and `|mantissa()| <= MAX_DECIMAL_MANTISSA` are its own invariants.
+        None => unreachable!(
+            "the-q: rust_decimal::Decimal violated its own (mantissa, scale) invariant"
+        ),
+    }
+}
+
+/// `rust_decimal::Decimal` as a `Q`, rounding to nearest. Saturates by sign
+/// once the magnitude leaves the budget, mirroring [`q_from_f64`], rather than
+/// silently returning the clamped boundary `Rat` that [`from_rust_decimal_dir`]
+/// would.
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+pub fn q_from_rust_decimal(v: rust_decimal::Decimal) -> crate::ext::Q {
+    use crate::ext::Q;
+    let mantissa = v.mantissa();
+    let scale = v.scale();
+    let d = pow10_i128(scale);
+    if crate::q::magnitude_fits_exec(mantissa, d) {
+        Q::Number(from_rust_decimal_dir(v, crate::types::Dir::Nearest))
+    } else if mantissa > 0 {
+        Q::PosSat
+    } else {
+        Q::NegSat
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(verus_keep_ghost, verifier::external)]
+impl From<rust_decimal::Decimal> for crate::ext::Q {
+    /// Rounds to nearest; see [`q_from_rust_decimal`].
+    fn from(v: rust_decimal::Decimal) -> Self {
+        q_from_rust_decimal(v)
     }
 }
