@@ -464,4 +464,71 @@ pub proof fn theorem_add_honest(a: Q, b: Q)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Necessity (pilot): `Nan` is not a lazy answer at `PosSat + NegSat`
+//
+// Soundness alone is satisfiable by `Nan` everywhere (it denotes every
+// value), so it cannot be the whole obligation. Honesty rules `Nan` in at
+// the one cell with no defined witness at all (`PosInf + NegInf`, both
+// singleton denotations, `xr_add` already `None`). `PosSat + NegSat` is the
+// complementary case: witnesses exist and their sums *are* defined, yet no
+// single non-`Nan` state can be sound for both at once. Two sums that
+// straddle zero (one negative, one positive) rule out every other variant:
+// `Number` cannot equal two different values at once, `PosSat`/`NegSat`
+// each demand a fixed sign, and `PosInf`/`NegInf` are never finite. This one
+// cell is the pattern; it is not repeated for every `Nan` cell of `mul` and
+// `div` (documented as a scoping decision, `VERIFICATION.md`).
+// ---------------------------------------------------------------------------
+
+/// If `r` is sound for `PosSat + NegSat`, `r` is `Nan` — no tighter answer
+/// is sound for both of two witness pairs whose sums straddle zero.
+pub proof fn theorem_add_nan_necessary_sat_sat_opposite(r: Q)
+    requires
+        r.wf(),
+        add_sound(Q::PosSat, Q::NegSat, r),
+    ensures
+        r == Q::Nan,
+{
+    let u1 = XR::Fin(max_mag() + 1, 1);
+    let v1 = XR::Fin(0 - (max_mag() + 2), 1);
+    let u2 = XR::Fin(max_mag() + 5, 1);
+    let v2 = XR::Fin(0 - (max_mag() + 2), 1);
+    assert(xr_wf(u1) && xr_wf(v1));
+    assert(xr_wf(u2) && xr_wf(v2));
+    assert(denotes(Q::PosSat, u1));
+    assert(denotes(Q::NegSat, v1));
+    assert(denotes(Q::PosSat, u2));
+    assert(denotes(Q::NegSat, v2));
+    assert(xr_add(u1, v1) == Some(XR::Fin(0 - 1, 1)));
+    assert(xr_add(u2, v2) == Some(XR::Fin(3, 1)));
+    assert(denotes(r, xr_add(u1, v1).unwrap()));
+    assert(denotes(r, xr_add(u2, v2).unwrap()));
+    assert(denotes(r, XR::Fin(0 - 1, 1)));
+    assert(denotes(r, XR::Fin(3, 1)));
+    if r != Q::Nan {
+        match r {
+            Q::Number(x) => {
+                assert(0 - 1 * x.d() == x.n() * 1);
+                assert(3 * x.d() == x.n() * 1);
+                assert(x.d() == 0) by (nonlinear_arith)
+                    requires
+                        0 - x.d() == x.n(),
+                        3 * x.d() == x.n(),
+                ;
+                assert(false);
+            },
+            Q::PosSat => {
+                assert(false);
+            },
+            Q::NegSat => {
+                assert(false);
+            },
+            Q::PosInf | Q::NegInf => {
+                assert(false);
+            },
+            Q::Nan => {},
+        }
+    }
+}
+
 } // verus!
