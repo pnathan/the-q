@@ -8,7 +8,10 @@
 //! off that path none of the three is guaranteed in general (`README.md`).
 //! `Exact` turns "did this operation leave the exact path?" into an explicit
 //! failure instead of a silent, unguaranteed answer, and the theorems below
-//! recover each property exactly when every operation involved succeeded.
+//! recover each property whenever every operation involved succeeded. Each
+//! theorem is one-directional: success of every step is sufficient, not
+//! claimed necessary — a computation that left the exact path could still
+//! happen to satisfy the same equation or inequality.
 
 use verus_builtin_macros::verus;
 
@@ -255,7 +258,8 @@ impl Exact {
 
 // ---------------------------------------------------------------------------
 // Theorems: associativity, distributivity, and monotonicity, each holding
-// exactly when every `Exact` operation it names actually succeeded.
+// whenever every `Exact` operation it names actually succeeded (sufficient,
+// not claimed necessary).
 // ---------------------------------------------------------------------------
 
 /// If `(a+b)+c` and `a+(b+c)` both succeeded exactly, they are equal.

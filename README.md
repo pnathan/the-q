@@ -133,9 +133,11 @@ pattern.
 succeed only when the result needs no rounding, returning
 `Result<Exact, ExactError>` (`Inexact`, or `DivisionByZero` for `div`) the
 moment it would leave that path — `checked_*` variants return `Option`
-instead. Associativity, distributivity, and monotonicity, absent in general
-once rounding happens (see Limits above), hold for a chain of `Exact`
-operations exactly when every operation in the chain succeeded
+instead. Unlike `Rat::checked_*`, which is `None` only on saturation, `Exact`'s
+`checked_*` is `None` on *any* rounding, saturating or not. Associativity,
+distributivity, and monotonicity, absent in general once rounding happens
+(see Limits above), hold for a chain of `Exact` operations whenever every
+operation in the chain succeeded — sufficient, not claimed necessary
 (`theorem_exact_add_associative`, `theorem_exact_mul_associative`,
 `theorem_exact_distributive`, `theorem_exact_add_monotone`,
 `theorem_exact_mul_monotone_nonneg`).

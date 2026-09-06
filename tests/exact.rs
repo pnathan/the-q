@@ -49,11 +49,86 @@ fn add_with_large_coprime_denominators_needs_rounding_and_is_inexact() {
 }
 
 #[test]
+fn sub_with_large_coprime_denominators_needs_rounding_and_is_inexact() {
+    // 1/3037000493 - 1/3037000499 reduces to a denominator of about 9.2e18.
+    let a = exact(1, 3_037_000_493);
+    let b = exact(1, 3_037_000_499);
+    assert_eq!(Exact::sub(a, b), Err(ExactError::Inexact));
+}
+
+#[test]
+fn mul_with_large_coprime_denominators_needs_rounding_and_is_inexact() {
+    // (1/3037000493) * (1/3037000499) has a denominator of about 9.2e18; the
+    // numerator is 1, so no reduction can bring it back into budget.
+    let a = exact(1, 3_037_000_493);
+    let b = exact(1, 3_037_000_499);
+    assert_eq!(Exact::mul(a, b), Err(ExactError::Inexact));
+}
+
+#[test]
+fn div_with_large_coprime_denominators_needs_rounding_and_is_inexact() {
+    // (1/3037000493) / 3037000499 == 1/(3037000493 * 3037000499), same shape
+    // as the multiplication case above.
+    let a = exact(1, 3_037_000_493);
+    let b = exact(3_037_000_499, 1);
+    assert_eq!(Exact::div(a, b), Err(ExactError::Inexact));
+}
+
+#[test]
 fn div_by_zero_is_division_by_zero_not_inexact() {
     assert_eq!(
         Exact::div(exact(1, 2), exact(0, 1)),
         Err(ExactError::DivisionByZero)
     );
+}
+
+#[test]
+fn add_split_outcome_one_order_fails_while_the_other_succeeds() {
+    // The associativity theorem is one-directional: it says nothing unless
+    // *every* intermediate operation succeeds. Here (a+b)+c never gets past
+    // its first step, while a+(b+c) succeeds trivially -- that success
+    // carries no implication about the other bracketing.
+    let a = exact(1, 3_037_000_493);
+    let b = exact(1, 3_037_000_499);
+    let c = exact(-1, 3_037_000_499);
+    assert_eq!(Exact::add(a, b), Err(ExactError::Inexact));
+    let bc = Exact::add(b, c).expect("b + c is exact zero");
+    assert_eq!(bc.value(), rat(0, 1));
+    let right = Exact::add(a, bc).expect("a + 0 is exact");
+    assert_eq!(right.value(), a.value());
+}
+
+#[test]
+fn le_agrees_with_ordinary_rat_comparison() {
+    assert!(Exact::le(exact(1, 3), exact(1, 2)));
+    assert!(!Exact::le(exact(1, 2), exact(1, 3)));
+    assert!(Exact::le(exact(1, 2), exact(1, 2)));
+}
+
+#[test]
+fn is_nonneg_reports_sign() {
+    assert!(exact(0, 1).is_nonneg());
+    assert!(exact(1, 2).is_nonneg());
+    assert!(!exact(-1, 2).is_nonneg());
+}
+
+#[test]
+fn add_monotone_when_both_sums_succeed() {
+    let (a, b, c) = (exact(1, 3), exact(1, 2), exact(1, 6));
+    assert!(Exact::le(a, b));
+    let ac = Exact::add(a, c).unwrap();
+    let bc = Exact::add(b, c).unwrap();
+    assert!(Exact::le(ac, bc));
+}
+
+#[test]
+fn mul_monotone_nonneg_when_both_products_succeed() {
+    let (a, b, c) = (exact(1, 3), exact(1, 2), exact(3, 4));
+    assert!(Exact::le(a, b));
+    assert!(c.is_nonneg());
+    let ac = Exact::mul(a, c).unwrap();
+    let bc = Exact::mul(b, c).unwrap();
+    assert!(Exact::le(ac, bc));
 }
 
 #[test]
