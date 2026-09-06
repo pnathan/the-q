@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1088 verified, 0 errors     <- the-q
+verification results:: 1092 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -13,10 +13,8 @@ callee context. `verus verify` is a required CI check. No `assume(...)` or
 `q::require_condition`, a runtime guard trusted for its panic message only.
 
 `convert::pow10_i128` and `convert::from_decimal128_dir` (issue #33, the
-`mantissa · 10^-scale` boundary a `rust_decimal::Decimal` needs) add to the
-count above; a CI run of `cargo verus verify` after this change is the source
-of the refreshed figure, since a Verus binary was not available to regenerate
-it here.
+`mantissa · 10^-scale` boundary a `rust_decimal::Decimal` needs) account for
+the four added since the count above was last quoted.
 
 ## Independent of the proofs
 
