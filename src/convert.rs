@@ -519,6 +519,136 @@ pub fn from_decimal128_exact(mantissa: i128, scale: u32) -> (r: Option<Rat>)
     }
 }
 
+// ---------------------------------------------------------------------------
+// The shared ratio core (issue #33 follow-up): every other library's exact
+// fraction reduces to an `(n, d)` pair over `i128` and calls one of the two
+// functions below. `from_decimal128_dir`/`from_decimal128_exact` above predate
+// this and are left as they were verified (`d = 10^scale`, always positive,
+// never needs the sign normalisation below); every *new* adapter in this
+// module is built on this pair instead of repeating that proof shape.
+// ---------------------------------------------------------------------------
+
+/// `2^126 - 1`: the largest numerator magnitude [`from_ratio128_dir`] and
+/// [`from_ratio128_exact`] accept. Chosen (rather than `i128::MAX`) so that
+/// `abs(n) <= RATIO_N_LIMIT` implies the strict `abs(n) < num_input_bound()`
+/// (`2^126`) `round_frac_exec` requires, and so that negating `n` below —
+/// needed to fold a negative `d`'s sign onto it — never overflows.
+const RATIO_N_LIMIT: i128 = 85070591730234615865843651857942052863;
+
+/// `2^124`, exactly `den_input_bound()`: the largest denominator magnitude
+/// the two functions below accept.
+const RATIO_D_LIMIT: i128 = 21267647932558653966460912964485513216;
+
+/// Convert the exact ratio `n / d` to a `Rat`, rounding in direction `dir`
+/// once it no longer fits the width budget. `None` only when `d == 0`, or
+/// either magnitude is too wide for `round_frac_exec` to accept at all
+/// (`abs(n) <= 2^126 - 1`, `abs(d) <= 2^124`) — wider than that and no
+/// `i128` pair can name the value in the first place, regardless of which
+/// library produced it.
+pub fn from_ratio128_dir(n: i128, d: i128, dir: Dir) -> (r: Option<Rat>)
+    ensures
+        r.is_some() ==> r.unwrap().wf(),
+        r.is_some() ==> r.unwrap() == round_frac(
+            crate::q::signed_den_num(n as int, d as int),
+            abs_int(d as int),
+            dir,
+        ),
+        (r.is_some() && !crate::round::saturated(
+            crate::q::signed_den_num(n as int, d as int),
+            abs_int(d as int),
+        )) ==> {
+            &&& dir == Dir::Down ==> q_le_frac(
+                r.unwrap(),
+                crate::q::signed_den_num(n as int, d as int),
+                abs_int(d as int),
+            )
+            &&& dir == Dir::Up ==> q_ge_frac(
+                r.unwrap(),
+                crate::q::signed_den_num(n as int, d as int),
+                abs_int(d as int),
+            )
+            &&& within_error_bound(
+                r.unwrap(),
+                crate::q::signed_den_num(n as int, d as int),
+                abs_int(d as int),
+            )
+        },
+        r.is_none() <==> (d == 0 || n > RATIO_N_LIMIT || n < -RATIO_N_LIMIT || d > RATIO_D_LIMIT
+            || d < -RATIO_D_LIMIT),
+{
+    if d == 0 {
+        return None;
+    }
+    if n > RATIO_N_LIMIT || n < -RATIO_N_LIMIT {
+        return None;
+    }
+    if d > RATIO_D_LIMIT || d < -RATIO_D_LIMIT {
+        return None;
+    }
+    let mut nn: i128 = n;
+    let mut dd: i128 = d;
+    if dd < 0 {
+        nn = 0 - nn;
+        dd = 0 - dd;
+    }
+    proof {
+        lemma_pow2_124();
+        lemma_pow2_126();
+        if !crate::round::saturated(nn as int, dd as int) {
+            crate::round::lemma_r2_r3_directed(nn as int, dd as int, dir);
+        }
+    }
+    Some(round_frac_exec(nn, dd, dir))
+}
+
+/// The exact ratio `n / d` as a `Rat`, `None` unless the reduced pair already
+/// fits the width budget — the domain [`from_ratio128_dir`] takes without
+/// rounding or saturating. Wrapping the result in `crate::exact::Exact` then
+/// denotes the same value as the original `n / d`, not merely a `Rat` that
+/// happens not to need *further* rounding.
+pub fn from_ratio128_exact(n: i128, d: i128) -> (r: Option<Rat>)
+    ensures
+        r.is_some() ==> r.unwrap().wf(),
+        r.is_some() ==> q_is(
+            r.unwrap(),
+            crate::q::signed_den_num(n as int, d as int),
+            abs_int(d as int),
+        ),
+        r.is_none() <==> !(d != 0 && n <= RATIO_N_LIMIT && n >= -RATIO_N_LIMIT
+            && d <= RATIO_D_LIMIT && d >= -RATIO_D_LIMIT && crate::round::exact_path(
+            crate::q::signed_den_num(n as int, d as int),
+            abs_int(d as int),
+        )),
+{
+    if d == 0 {
+        return None;
+    }
+    if n > RATIO_N_LIMIT || n < -RATIO_N_LIMIT {
+        return None;
+    }
+    if d > RATIO_D_LIMIT || d < -RATIO_D_LIMIT {
+        return None;
+    }
+    let mut nn: i128 = n;
+    let mut dd: i128 = d;
+    if dd < 0 {
+        nn = 0 - nn;
+        dd = 0 - dd;
+    }
+    proof {
+        lemma_pow2_124();
+        lemma_pow2_126();
+    }
+    if crate::round::exact_path_exec(nn, dd) {
+        proof {
+            crate::round::lemma_r1_identity(nn as int, dd as int, Dir::Nearest);
+        }
+        Some(round_frac_exec(nn, dd, Dir::Nearest))
+    } else {
+        None
+    }
+}
+
 } // verus!
 
 // ---------------------------------------------------------------------------
