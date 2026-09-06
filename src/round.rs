@@ -1677,6 +1677,56 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     round_frac_exec_with_gcd(n, d, g, dir)
 }
 
+/// Whether `n / d` is on the exact path (R1): the reduced pair fits the
+/// budget, so [`round_frac_exec`] returns it unchanged in every direction.
+/// Reduction and the budget test mirror [`round_frac_exec_with_gcd`]'s own
+/// exact-path arm exactly, minus the snap branch this function never reaches.
+pub fn exact_path_exec(n: i128, d: i128) -> (r: bool)
+    requires
+        d > 0,
+        abs_int(n as int) < num_input_bound(),
+        d as int <= den_input_bound(),
+    ensures
+        r <==> exact_path(n as int, d as int),
+{
+    proof {
+        crate::model::lemma_pow2_126();
+    }
+    let g: i128 = gcd_abs_i128(n, d);
+    proof {
+        lemma_reduce_exact(n as int, d as int);
+        lemma_reduce_abs(n as int, d as int);
+        assert((g as int) * red_num(n as int, d as int) == red_num(n as int, d as int) * (
+        g as int)) by (nonlinear_arith);
+        assert((g as int) * red_den(n as int, d as int) == red_den(n as int, d as int) * (
+        g as int)) by (nonlinear_arith);
+    }
+    let rn: i128;
+    let rd: i128;
+    if g == 1 {
+        proof {
+            vstd::arithmetic::div_mod::lemma_div_basics(n as int);
+            vstd::arithmetic::div_mod::lemma_div_basics(d as int);
+        }
+        rn = n;
+        rd = d;
+    } else {
+        rn = n / g;
+        rd = d / g;
+    }
+    proof {
+        assert(rn as int == red_num(n as int, d as int));
+        assert(rd as int == red_den(n as int, d as int));
+    }
+    let arn: i128 = if rn < 0 {
+        0 - rn
+    } else {
+        rn
+    };
+    let mm: i128 = MAX_MAG as i128;
+    n == 0 || (arn <= mm && rd <= mm)
+}
+
 /// [`round_frac_exec`] with the gcd supplied. The precondition pins `g` to the
 /// value the general entry point computes, so the postcondition is identical.
 // Carries the whole rounding contract and sits at the edge of the default

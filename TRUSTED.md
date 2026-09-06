@@ -86,4 +86,10 @@ carries a precondition an operator cannot express); `Display` prints
 decodes through `Rat::new`, so a corrupt payload is an error rather than a
 malformed value (`Q` uses `deserialize_any` and needs a self-describing
 format). `convert::q_from_f64` splits on `is_nan`/`is_infinite`/sign and
-delegates to `from_f64_dir`.
+delegates to `from_f64_dir`. `exact::Exact`'s public `add`/`sub`/`mul`/`div`
+are the same shape: each is `#[verifier::external]` and delegates to the
+verified `checked_add`/`checked_sub`/`checked_mul`/`checked_div`, only
+reshaping `Option` into `Result<Exact, ExactError>` and, for `div`, checking
+the zero divisor first so the two failure causes are distinguishable; no new
+assumption. `Display` and `Error` for `ExactError` are ordinary formatting,
+`#[verifier::external]` for the same reason as `ParseQError`'s.

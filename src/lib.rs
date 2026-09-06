@@ -98,6 +98,7 @@ pub mod saturation;
 pub mod q;
 
 pub mod convert;
+pub mod exact;
 pub mod ext;
 pub mod interval;
 pub mod laws;
@@ -106,6 +107,7 @@ pub mod nary;
 pub mod transcendental;
 
 pub use convert::{ParseQError, from_f64_dir, q_from_f64, to_f64};
+pub use exact::{Exact, ExactError};
 pub use ext::{Q, Sign};
 pub use interval::QI;
 pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};

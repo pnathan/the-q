@@ -129,6 +129,19 @@ Intervals (`interval::QI`): `new` (panics on `lo > hi`), `checked_new`, `add`,
 too wide to represent), `checked_width`. Enclosure is proven for every sign
 pattern.
 
+`Exact` (`exact::Exact`): a `Rat` wrapper whose `add`, `sub`, `mul`, `div`
+succeed only when the result needs no rounding, returning
+`Result<Exact, ExactError>` (`Inexact`, or `DivisionByZero` for `div`) the
+moment it would leave that path — `checked_*` variants return `Option`
+instead. Unlike `Rat::checked_*`, which is `None` only on saturation, `Exact`'s
+`checked_*` is `None` on *any* rounding, saturating or not. Associativity,
+distributivity, and monotonicity, absent in general once rounding happens
+(see Limits above), hold for a chain of `Exact` operations whenever every
+operation in the chain succeeded — sufficient, not claimed necessary
+(`theorem_exact_add_associative`, `theorem_exact_mul_associative`,
+`theorem_exact_distributive`, `theorem_exact_add_monotone`,
+`theorem_exact_mul_monotone_nonneg`).
+
 Out: `to_f64` (display only; see `TRUSTED.md`), `Display` (`num/den`), serde
 (feature-gated; encodes the exact pair).
 
@@ -176,7 +189,7 @@ test that the two are bit-identical.
 
 ## What is proven
 
-`1068 verified, 0 errors` in CI; no `assume`, no `admit`; three
+`1088 verified, 0 errors` in CI; no `assume`, no `admit`; three
 `external_body` functions, enumerated in `TRUSTED.md`.
 
 * **V1** Every public operation preserves canonical form and the budget.
