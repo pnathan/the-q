@@ -48,9 +48,10 @@ numerator and denominator are each bounded by `2^62 − 1`, chosen so that every
 cross-multiplied `i128` intermediate provably fits. When an exact result would
 leave that budget, it is rounded, once, to a dyadic grid, and the rounding
 satisfies four properties (R1–R4 below) that are theorems about the code, not
-documentation of it. A short computation on everyday fractions never rounds; a
-long chain fills the budget within a few dozen steps and then rounds at every
-step, each time by a proven amount, in the direction you asked for.
+documentation of it. A step rounds only when its reduced result no longer fits
+`2^62 − 1`: sums and products of a handful of small fractions are exact, while
+in a long chain the denominators grow until every step rounds, each time by a
+proven amount, in the direction you asked for.
 
 The proofs are written in Verus inside the source files. `cargo build` erases
 them and compiles ordinary Rust; `cargo verus verify` checks them. The verified
