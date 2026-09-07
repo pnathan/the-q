@@ -1,5 +1,5 @@
-//! Issue #28: the containment obligation for [`crate::ext::Q::div`], proven
-//! against [`crate::denote`]'s ghost `XR` model. Same scope discipline as
+//! Issue #28: the containment obligation for `crate::ext::Q::div`, proven
+//! against `crate::denote`'s ghost `XR` model. Same scope discipline as
 //! `soundness.rs`/`soundness_mul.rs`: `Number × Number` is excluded
 //! (`R1`–`R4`'s job), including its zero-divisor sub-case.
 //!
@@ -9,13 +9,13 @@
 //! `div`'s one true indeterminate, `∞/∞`, is witnessed *only* by `Inf/Inf`
 //! (both denotations singletons; the other genuine indeterminate, `0/0`, is
 //! witnessed only by `Number(0)/Number(0)`, inside the excluded region). So
-//! [`theorem_div_honest`] only has to work at `Inf/Inf`, and the remaining
+//! `theorem_div_honest` only has to work at `Inf/Inf`, and the remaining
 //! soundness work is five families, several of them exact rather than
-//! merely sound: [`lemma_div_sound_number_sat`] (`Number(x)/Sat`, exact `0`
-//! at `x = 0`), [`lemma_div_sound_to_inf`] (`Number/Inf` and `Sat/Inf`,
-//! exact `0` always: a finite value over an infinity), [`lemma_div_sound_sat_number`]
-//! (`Sat/Number`, the real magnitude test), and [`lemma_div_sound_inf_number`]
-//! / [`lemma_div_sound_inf_sat`] (an infinite numerator, sign-based, no `Nan`
+//! merely sound: `lemma_div_sound_number_sat` (`Number(x)/Sat`, exact `0`
+//! at `x = 0`), `lemma_div_sound_to_inf` (`Number/Inf` and `Sat/Inf`,
+//! exact `0` always: a finite value over an infinity), `lemma_div_sound_sat_number`
+//! (`Sat/Number`, the real magnitude test), and `lemma_div_sound_inf_number`
+//! / `lemma_div_sound_inf_sat` (an infinite numerator, sign-based, no `Nan`
 //! at all — `§4`'s IEEE convention makes `±∞/0` defined).
 
 use verus_builtin_macros::verus;

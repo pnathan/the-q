@@ -1,5 +1,5 @@
-//! Issue #28: the containment obligation for [`crate::ext::Q::mul`], proven
-//! against [`crate::denote`]'s ghost `XR` model. Same scope discipline as
+//! Issue #28: the containment obligation for `crate::ext::Q::mul`, proven
+//! against `crate::denote`'s ghost `XR` model. Same scope discipline as
 //! `soundness.rs`: `Number × Number -> Number` (or `-> Sat`) is excluded,
 //! governed instead by the already-proven rounding contract (`R1`–`R4`).
 //!
@@ -8,10 +8,10 @@
 //! `Nan` appearing only where a `Number` operand could be exactly zero
 //! against an infinity (`0 · ∞`). That shared shape is factored into one
 //! lemma per "what kind of thing is on each side", not one per cell:
-//! [`lemma_mul_sound_number_inf`] (`Number × Inf`, the only cells that can
-//! produce `Nan`), [`lemma_mul_sound_sat_inf`] and
-//! [`lemma_mul_sound_inf_inf`] (pure sign products, no `Nan` possible: `Sat`
-//! and `Inf` are never zero), and [`lemma_mul_sound_sat_sat`] (`Sat`'s sign
+//! `lemma_mul_sound_number_inf` (`Number × Inf`, the only cells that can
+//! produce `Nan`), `lemma_mul_sound_sat_inf` and
+//! `lemma_mul_sound_inf_inf` (pure sign products, no `Nan` possible: `Sat`
+//! and `Inf` are never zero), and `lemma_mul_sound_sat_sat` (`Sat`'s sign
 //! product, also never `Nan` since `Sat` is never zero — the one place
 //! `mul`'s table has no `Nan` where `add`'s corresponding cell does).
 

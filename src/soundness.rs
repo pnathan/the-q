@@ -1,5 +1,5 @@
-//! Issue #28: the containment obligation for [`crate::ext::Q::add`], proven
-//! against [`crate::denote`]'s ghost `XR` model, restricted to the
+//! Issue #28: the containment obligation for `crate::ext::Q::add`, proven
+//! against `crate::denote`'s ghost `XR` model, restricted to the
 //! special-value propagation cells — at least one operand is not a `Number`.
 //!
 //! The `Number × Number -> Number` cell is deliberately **not** covered here:
@@ -13,18 +13,18 @@
 //! lemma settles, not by table cell, because `Q::add`'s own table is already
 //! symmetric and dominance-shaped:
 //!
-//! * [`lemma_add_sound_symm`] turns a proof for `(a, b)` into one for `(b,
-//!   a)` for free, using [`crate::laws_q::theorem_q_add_commutative`] and
-//!   [`lemma_xr_add_comm`] — halving the casework the table's symmetric
+//! * `lemma_add_sound_symm` turns a proof for `(a, b)` into one for `(b,
+//!   a)` for free, using `crate::laws_q::theorem_q_add_commutative` and
+//!   `lemma_xr_add_comm` — halving the casework the table's symmetric
 //!   layout already implies.
-//! * [`lemma_add_sound_posinf_dominates`] and its `NegInf` mirror settle
+//! * `lemma_add_sound_posinf_dominates` and its `NegInf` mirror settle
 //!   *every* cell where one operand is a same-signed-or-absent infinity in
 //!   one shot: an infinity's denotation is a singleton, so once the other
 //!   operand is confirmed not to be the opposite infinity, its own shape
 //!   (`Number`, `Sat`, or the same infinity) never enters the argument.
 //! * What is left — `Number + Sat` and `Sat + Sat` (same sign) — is the two
-//!   genuine magnitude arguments, [`lemma_add_sound_number_sat`] and
-//!   [`lemma_add_sound_sat_sat_same_sign`].
+//!   genuine magnitude arguments, `lemma_add_sound_number_sat` and
+//!   `lemma_add_sound_sat_sat_same_sign`.
 
 use verus_builtin_macros::verus;
 
@@ -75,7 +75,7 @@ pub open spec fn add_honest(a: Q, b: Q, r: Q) -> bool {
 
 /// `xr_add` is commutative. The `Fin, Fin` case needs multiplication
 /// commutativity for its denominator; every other case is already written
-/// symmetrically in [`xr_add`]'s own match.
+/// symmetrically in `xr_add`'s own match.
 pub proof fn lemma_xr_add_comm(u: XR, v: XR)
     requires
         xr_wf(u),
@@ -145,7 +145,7 @@ pub proof fn lemma_not_neginf_excludes_neginfinity(b: Q, v: XR)
     }
 }
 
-/// Mirror of [`lemma_not_neginf_excludes_neginfinity`].
+/// Mirror of `lemma_not_neginf_excludes_neginfinity`.
 pub proof fn lemma_not_posinf_excludes_posinfinity(b: Q, v: XR)
     requires
         b.wf(),
@@ -179,7 +179,7 @@ pub proof fn lemma_not_posinf_excludes_posinfinity(b: Q, v: XR)
 /// **`PosInf` dominates.** For *any* `b` (including `NegInf`: there the
 /// hypothesis `xr_add(u, v).is_some()` is simply never satisfiable, and the
 /// statement holds vacuously — `spec_add(PosInf, NegInf)` is `Nan`, not
-/// `PosInf`, and it is [`theorem_add_honest`] that rules the vacuous cell
+/// `PosInf`, and it is `theorem_add_honest` that rules the vacuous cell
 /// out, not this lemma), the sum is sound as `PosInf` whenever it is defined
 /// at all: `a`'s denotation is the singleton `PosInfinity`, and `xr_add`'s
 /// only `None` case with a `PosInfinity` first argument is `NegInfinity`
@@ -201,7 +201,7 @@ pub proof fn lemma_add_sound_posinf_dominates(b: Q)
     }
 }
 
-/// Mirror of [`lemma_add_sound_posinf_dominates`].
+/// Mirror of `lemma_add_sound_posinf_dominates`.
 pub proof fn lemma_add_sound_neginf_dominates(b: Q)
     requires
         b.wf(),

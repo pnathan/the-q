@@ -1,4 +1,4 @@
-//! Algebraic laws for [`Q`] (issue #26 §5/§10.3, the V6 gap this crate's laws
+//! Algebraic laws for `Q` (issue #26 §5/§10.3, the V6 gap this crate's laws
 //! never closed at the `Q` level: `grep -n "Q::" src/laws.rs` was empty before
 //! this file).
 //!
@@ -15,7 +15,7 @@
 //!   rounding, not "nearest in a fixed set", so it is not a monotone map. See
 //!   `tests/q_laws.rs` for the counterexample. |
 //! | `recip(x) == div(one, x)` | unconditional — proven directly on
-//!   [`crate::ext::Q::recip`]'s `ensures`, since that is its literal definition |
+//!   `crate::ext::Q::recip`'s `ensures`, since that is its literal definition |
 //!
 //! Associativity and distributivity fail as soon as any operand is `PosSat`
 //! or `NegSat` (concrete counterexamples in `tests/q_laws.rs`), and `mul`
@@ -147,7 +147,7 @@ pub proof fn theorem_q_add_commutative(a: Q, b: Q)
     }
 }
 
-/// **`Q::mul` is commutative.** See [`theorem_q_add_commutative`]; here both
+/// **`Q::mul` is commutative.** See `theorem_q_add_commutative`; here both
 /// `mul_n` and `prod_d` need multiplication commutativity.
 pub proof fn theorem_q_mul_commutative(a: Q, b: Q)
     requires
@@ -170,10 +170,10 @@ pub proof fn theorem_q_mul_commutative(a: Q, b: Q)
 // ---------------------------------------------------------------------------
 
 /// **`Q::add` is associative on the all-`Number` exact path.** A thin wrapper:
-/// [`lemma_exact_path_implies_magnitude_fits`] forces `add_numbers` into its
-/// `Number` branch, [`crate::laws::theorem_exact_path_is_exact`] identifies
+/// `lemma_exact_path_implies_magnitude_fits` forces `add_numbers` into its
+/// `Number` branch, `crate::laws::theorem_exact_path_is_exact` identifies
 /// that branch's value with the exact sum, and
-/// [`crate::laws::theorem_add_associative_exact`] does the real work.
+/// `crate::laws::theorem_add_associative_exact` does the real work.
 pub proof fn theorem_q_add_associative_exact(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -218,7 +218,7 @@ pub proof fn theorem_q_add_associative_exact(a: Rat, b: Rat, c: Rat)
 }
 
 /// **`Q::mul` is associative on the all-`Number` exact path.** See
-/// [`theorem_q_add_associative_exact`].
+/// `theorem_q_add_associative_exact`.
 pub proof fn theorem_q_mul_associative_exact(a: Rat, b: Rat, c: Rat)
     requires
         a.wf(),
@@ -334,7 +334,7 @@ pub proof fn theorem_q_distributive_exact(a: Rat, b: Rat, c: Rat)
 
 /// **`Q::add` is monotone in its left argument on the all-`Number` exact
 /// path.** `theorem_add_monotone_exact` gives the inequality on the exact
-/// numerator/denominator pairs; [`crate::interval::lemma_frac_chain_le`]
+/// numerator/denominator pairs; `crate::interval::lemma_frac_chain_le`
 /// transports it across the two `q_is` identifications onto the rounded
 /// (here, exact) results.
 pub proof fn theorem_q_add_monotone_exact(a: Rat, b: Rat, c: Rat)
