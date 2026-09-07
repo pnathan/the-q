@@ -25,18 +25,14 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-use crate::denote::{
-    XR,
-    denotes,
-    lemma_denotes_number_unique,
-    lemma_denotes_neginf_unique,
-    lemma_denotes_posinf_unique,
-    xr_div,
-    xr_wf,
-};
-use crate::ext::Q;
-use crate::model::max_mag;
-use crate::types::Rat;
+#[allow(unused_imports)]
+use crate::denote::*;
+#[allow(unused_imports)]
+use crate::ext::*;
+#[allow(unused_imports)]
+use crate::model::*;
+#[allow(unused_imports)]
+use crate::types::*;
 
 verus! {
 

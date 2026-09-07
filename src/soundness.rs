@@ -33,23 +33,14 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-use crate::denote::{
-    XR,
-    denotes,
-    lemma_denotes_number_unique,
-    lemma_denotes_neginf_unique,
-    lemma_denotes_posinf_unique,
-    lemma_neg_denotes,
-    lemma_number_not_saturated,
-    xr_add,
-    xr_eq,
-    xr_neg,
-    xr_sub,
-    xr_wf,
-};
-use crate::ext::Q;
-use crate::model::{abs_int, max_mag};
-use crate::types::Rat;
+#[allow(unused_imports)]
+use crate::denote::*;
+#[allow(unused_imports)]
+use crate::ext::*;
+#[allow(unused_imports)]
+use crate::model::*;
+#[allow(unused_imports)]
+use crate::types::*;
 
 verus! {
 

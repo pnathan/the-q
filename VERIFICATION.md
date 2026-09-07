@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1088 verified, 0 errors     <- the-q
+verification results:: 1200 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -38,6 +38,7 @@ callee context. `verus verify` is a required CI check. No `assume(...)` or
 | V8 | accumulation bounds | `nary::theorem_sum_error_accumulation`, `theorem_product_error_accumulation`, `theorem_wm_num_error_accumulation`, `theorem_wm_denom_error_accumulation`, `theorem_weighted_mean_return_error` |
 | V9 | `Q`: totality, classification, order | `ext.rs` |
 | V10 | transcendentals: totality, termination | `transcendental.rs` |
+| V11 | `Q`: algebraic laws, and the containment obligation for the propagation tables | `laws_q.rs`, `denote.rs`, `soundness.rs`, `soundness_mul.rs`, `soundness_div.rs` |
 
 ### V1 — the invariant
 
@@ -103,6 +104,10 @@ intermediates.
 
 ### V6 — laws
 
+These are `Rat`'s laws. `laws_q.rs` (V11) closes the corresponding gap at the
+`Q` level, which nothing here previously touched — `grep -n "Q::" laws.rs` is
+empty.
+
 | law | scope | where |
 |---|---|---|
 | `add`, `mul` commutative | unconditional | `theorem_add_commutative`, `theorem_mul_commutative` |
@@ -145,11 +150,68 @@ Every operation is total; `theorem_classification_partitions`,
 `theorem_order_total`, `theorem_order_antisymmetric` (against structural
 equality), `theorem_order_transitive`, `theorem_spec_eq_is_structural_eq`,
 `theorem_sat_separates_numbers`; `Nan` absorbs in `add`/`sub`/`mul`/`div`. The
-propagation tables are deliberately *not* restated as ghost functions (a spec
-shaped like the table it specifies verifies with a shared mistake); they are
-pinned by exhaustive enumeration of the 6×6 state space in
-`tests/extended_q.rs`. The order is on representations: `PosSat == PosSat` even
-though the two true values may differ.
+propagation tables are pinned two ways that are deliberately independent:
+exhaustive enumeration of the 6×6 state space in `tests/extended_q.rs`
+(artifact-level, against no model at all), and containment against the ghost
+`XR` model in V11 (proof-level, against a model with no `Sat`/`Nan` states of
+its own to shadow the code's). `ext.rs`'s `spec_add`/`spec_mul`/`spec_div` are
+match-for-match mirrors of the exec code and are *not* that model — they exist
+only so a result is nameable in ghost code (see V11's header comment on
+`laws_q.rs`); a spec shaped like the table it specifies verifies with a shared
+mistake, which is why `denote.rs`'s `denotes` never calls them. The order is on
+representations: `PosSat == PosSat` even though the two true values may
+differ.
+
+### V11 — `Q`: algebraic laws and the containment obligation
+
+Two obligations issue #26 and #28 left open, both scoped by the same
+principle: `Number × Number` (the ordinary rounding path) is `R1`–`R4`'s job,
+already proven in V4, and is excluded from both.
+
+**Algebraic laws** (`laws_q.rs`), verified against the compiled artifact
+before being attempted as proofs:
+
+| law | scope | where |
+|---|---|---|
+| `add`, `mul` commutative | unconditional | `theorem_q_add_commutative`, `theorem_q_mul_commutative` |
+| associativity, distributivity | all-`Number`, exact path | `theorem_q_add_associative_exact`, `theorem_q_mul_associative_exact`, `theorem_q_distributive_exact` |
+| monotonicity | all-`Number`, exact path — fails even with both outputs `Number` off the exact path, since bounded-denominator rounding is not a "nearest point in a fixed grid" map | `theorem_q_add_monotone_exact` |
+| `recip(x) == div(one, x)` | unconditional | ensures clause on `Q::recip`, `ext.rs` |
+
+Associativity and distributivity fail as soon as any operand is `PosSat` or
+`NegSat`; `mul` additionally fails to associate on values that never touch
+`Sat`, because rounding a product to zero can manufacture a `0 · ∞`
+indeterminate that exact multiplication never would; `div(a, b) ==
+mul(a, recip(b))` fails in the six cells `{NegInf, PosInf, Number(0)} ×
+{PosSat, NegSat}`. No associativity defect bound is stated at this level —
+`Nan` and the unbounded `Sat` intervals carry no metric to bound a defect
+against. Every failing law has an executable counterexample in
+`tests/q_laws.rs`, not just a claim here.
+
+**Containment** (`denote.rs`, `soundness.rs`, `soundness_mul.rs`,
+`soundness_div.rs`): `{x ⊕ y : x ∈ ⟦a⟧, y ∈ ⟦b⟧} ⊆ ⟦op(a, b)⟧`, stated against
+the ghost `XR` type (`Fin`/`PosInfinity`/`NegInfinity` — deliberately no
+`Sat`/`Nan` constructors of its own). Three properties, only the first of
+which is trivially satisfiable by `Nan` everywhere:
+
+* **soundness** (`{add,mul,div,sub}_sound`) — every value the true operation
+  could produce is inside the result's denotation.
+* **honesty** (`{add,mul,div,sub}_honest`) — when the operands can witness a
+  genuine indeterminate (`∞ − ∞`, `0 · ∞`, `0/0`, `∞/∞`), the result must
+  actually *be* `Nan`, proven via `theorem_add_honest`/`theorem_mul_honest`/
+  `theorem_div_honest`/`theorem_sub_honest`.
+* **necessity** — `Nan` is not returned where a strictly smaller state would
+  have been equally sound. Proven for one cell, `PosSat + NegSat`
+  (`theorem_add_nan_necessary_sat_sat_opposite`), as the pattern; not repeated
+  per-cell for every `Nan` cell of `mul`/`div`, a scoping decision rather than
+  a gap.
+
+`sub`'s soundness and honesty (`theorem_sub_sound`, `theorem_sub_honest`) are
+corollaries of `add`'s via `lemma_neg_denotes` (`denotes` commutes with
+negation), since `Q::sub(a, b)` is defined as `Q::add(a, b.neg())`. Fold
+soundness (`Q::sum`/`product`/`weighted_mean`) is a genuinely different,
+harder induction (a set-valued fold) and is out of scope here, noted as
+follow-on work.
 
 ### V10 — transcendentals
 

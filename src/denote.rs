@@ -34,9 +34,12 @@ use verus_builtin::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-use crate::ext::Q;
-use crate::model::max_mag;
-use crate::types::Rat;
+#[allow(unused_imports)]
+use crate::ext::*;
+#[allow(unused_imports)]
+use crate::model::*;
+#[allow(unused_imports)]
+use crate::types::*;
 
 verus! {
 
