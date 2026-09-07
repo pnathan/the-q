@@ -39,9 +39,12 @@ use crate::denote::{
     lemma_denotes_number_unique,
     lemma_denotes_neginf_unique,
     lemma_denotes_posinf_unique,
+    lemma_neg_denotes,
     lemma_number_not_saturated,
     xr_add,
     xr_eq,
+    xr_neg,
+    xr_sub,
     xr_wf,
 };
 use crate::ext::Q;
@@ -528,6 +531,80 @@ pub proof fn theorem_add_nan_necessary_sat_sat_opposite(r: Q)
             },
             Q::Nan => {},
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `Q::sub` — free from `Q::add`'s soundness/honesty plus negation, since
+// `Q::sub(a, b)` is defined as `Q::add(a, b.neg())`.
+// ---------------------------------------------------------------------------
+
+/// **Soundness** for `sub`. See `add_sound`; `xr_sub` in place of `xr_add`.
+pub open spec fn sub_sound(a: Q, b: Q, r: Q) -> bool {
+    forall|u: XR, v: XR|
+        xr_wf(u) && xr_wf(v) && denotes(a, u) && denotes(b, v) && xr_sub(u, v).is_some()
+            ==> #[trigger] denotes(r, xr_sub(u, v).unwrap())
+}
+
+/// **Honesty** for `sub`: `sub`'s one indeterminate is the same as `add`'s,
+/// `∞ - ∞` (i.e. `∞ + (-∞)`), reached through the same `PosInf`/`NegInf`
+/// pairing.
+pub open spec fn sub_honest(a: Q, b: Q, r: Q) -> bool {
+    (exists|u: XR, v: XR|
+        xr_wf(u) && xr_wf(v) && denotes(a, u) && denotes(b, v) && xr_sub(u, v).is_none())
+        ==> r == Q::Nan
+}
+
+/// `spec_neg` preserves (or flips, consistently) every classification
+/// `sub_sound`'s proof needs to carry across.
+proof fn lemma_spec_neg_classifies(b: Q)
+    requires
+        b.wf(),
+    ensures
+        Q::spec_neg(b).spec_is_number() == b.spec_is_number(),
+{
+    match b {
+        Q::Number(_) | Q::PosSat | Q::NegSat | Q::PosInf | Q::NegInf | Q::Nan => {},
+    }
+}
+
+/// **`Q::sub` is sound**, restricted to the same scope as `add_sound`.
+pub proof fn theorem_sub_sound(a: Q, b: Q)
+    requires
+        a.wf(),
+        b.wf(),
+        !(a.spec_is_number() && b.spec_is_number()),
+    ensures
+        sub_sound(a, b, Q::spec_add(a, Q::spec_neg(b))),
+{
+    Q::lemma_spec_neg_wf(b);
+    lemma_spec_neg_classifies(b);
+    let nb = Q::spec_neg(b);
+    theorem_add_sound(a, nb);
+    assert forall|u: XR, v: XR|
+        xr_wf(u) && xr_wf(v) && denotes(a, u) && denotes(b, v) && xr_sub(u, v).is_some()
+        implies #[trigger] denotes(Q::spec_add(a, nb), xr_sub(u, v).unwrap()) by {
+        lemma_neg_denotes(b, v);
+    }
+}
+
+/// **`Q::sub` is honest.**
+pub proof fn theorem_sub_honest(a: Q, b: Q)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        sub_honest(a, b, Q::spec_add(a, Q::spec_neg(b))),
+{
+    Q::lemma_spec_neg_wf(b);
+    let nb = Q::spec_neg(b);
+    theorem_add_honest(a, nb);
+    if exists|u: XR, v: XR|
+        xr_wf(u) && xr_wf(v) && denotes(a, u) && denotes(b, v) && xr_sub(u, v).is_none() {
+        let (u, v): (XR, XR) = choose|u: XR, v: XR|
+            xr_wf(u) && xr_wf(v) && denotes(a, u) && denotes(b, v) && xr_sub(u, v).is_none();
+        lemma_neg_denotes(b, v);
+        assert(xr_wf(xr_neg(v)) && denotes(a, u) && denotes(nb, xr_neg(v)) && xr_add(u, xr_neg(v)).is_none());
     }
 }
 

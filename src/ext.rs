@@ -1061,6 +1061,28 @@ impl Q {
         }
     }
 
+    /// `spec_neg` preserves `wf`, proven independently of the exec `neg`
+    /// (which a `proof fn` cannot call): the `Number` arm's reconstructed
+    /// pair carries the same `gcd` and budget as `x`'s, negation changing
+    /// neither.
+    pub proof fn lemma_spec_neg_wf(a: Q)
+        requires
+            a.wf(),
+        ensures
+            Q::spec_neg(a).wf(),
+    {
+        match a {
+            Q::Number(x) => {
+                let nx = Rat::from_raw_spec((0 - x.n()) as i64, x.d() as i64);
+                Rat::lemma_from_raw_spec_components((0 - x.n()) as i64, x.d() as i64);
+                assert(((0 - x.n()) as i64) as int == 0 - x.n());
+                assert((x.d() as i64) as int == x.d());
+                assert(crate::model::gcd_int(nx.n(), nx.d()) == crate::model::gcd_int(x.n(), x.d()));
+            },
+            _ => {},
+        }
+    }
+
     /// `-self`, exact and total; saturations and infinities negate onto each other.
     pub fn neg(self) -> (r: Q)
         requires

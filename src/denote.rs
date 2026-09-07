@@ -317,4 +317,36 @@ pub proof fn lemma_number_not_saturated(x: Rat)
     ;
 }
 
+// ---------------------------------------------------------------------------
+// Negation commutes with denotation — what makes `sub`'s containment (issue
+// #28) a corollary of `add`'s rather than its own casework, since `Q::sub`
+// is defined as `Q::add(a, b.neg())`.
+// ---------------------------------------------------------------------------
+
+/// `denotes` commutes with negation on both sides: `a` denotes `v` iff
+/// `-a` denotes `-v`.
+pub proof fn lemma_neg_denotes(a: Q, v: XR)
+    requires
+        a.wf(),
+        xr_wf(v),
+    ensures
+        xr_wf(xr_neg(v)),
+        denotes(a, v) == denotes(crate::ext::Q::spec_neg(a), xr_neg(v)),
+{
+    match a {
+        Q::Number(x) => {
+            match v {
+                XR::Fin(n, d) => {
+                    Rat::lemma_from_raw_spec_components((0 - x.n()) as i64, x.d() as i64);
+                    assert((n * x.d() == x.n() * d) == ((0 - n) * x.d() == (0 - x.n()) * d)) by (
+                        nonlinear_arith
+                    );
+                },
+                _ => {},
+            }
+        },
+        Q::PosSat | Q::NegSat | Q::PosInf | Q::NegInf | Q::Nan => {},
+    }
+}
+
 } // verus!
