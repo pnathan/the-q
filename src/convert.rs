@@ -1408,7 +1408,7 @@ fn bigdecimal_ratio_i128(v: &bigdecimal::BigDecimal) -> Option<(i128, i128)> {
 }
 
 /// `bigdecimal::BigDecimal` as a `Rat`, rounding in direction `dir`. `None`
-/// outside [`bigdecimal_ratio_i128`]'s domain.
+/// outside `bigdecimal_ratio_i128`'s domain.
 #[cfg(feature = "bigdecimal")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 pub fn from_bigdecimal_dir(v: &bigdecimal::BigDecimal, dir: Dir) -> Option<Rat> {
@@ -1417,7 +1417,7 @@ pub fn from_bigdecimal_dir(v: &bigdecimal::BigDecimal, dir: Dir) -> Option<Rat> 
 }
 
 /// The exact value of a `BigDecimal` as a `Rat`, `None` unless it is inside
-/// [`bigdecimal_ratio_i128`]'s domain and that pair already fits the width
+/// `bigdecimal_ratio_i128`'s domain and that pair already fits the width
 /// budget.
 #[cfg(feature = "bigdecimal")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
@@ -1427,7 +1427,7 @@ pub fn from_bigdecimal_exact(v: &bigdecimal::BigDecimal) -> Option<Rat> {
 }
 
 /// `BigDecimal` as a `Q`, rounding to nearest. Falls back to a lossy `to_f64`
-/// conversion (through [`q_from_f64`]) outside [`bigdecimal_ratio_i128`]'s
+/// conversion (through [`q_from_f64`]) outside `bigdecimal_ratio_i128`'s
 /// domain, the same way [`q_from_big_rational`] does and for the same
 /// reason: arbitrarily many digits do not imply an arbitrarily large value.
 #[cfg(feature = "bigdecimal")]
@@ -1449,7 +1449,7 @@ impl From<bigdecimal::BigDecimal> for crate::ext::Q {
 }
 
 /// `BigDecimal` as an [`Exact`](crate::exact::Exact) —
-/// `Err(ExactError::Inexact)` outside [`bigdecimal_ratio_i128`]'s domain or
+/// `Err(ExactError::Inexact)` outside `bigdecimal_ratio_i128`'s domain or
 /// when that pair does not already fit the width budget.
 #[cfg(feature = "bigdecimal")]
 #[cfg_attr(verus_keep_ghost, verifier::external)]
