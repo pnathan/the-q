@@ -55,6 +55,12 @@
 //!   associativity holds on the exact path and the defect is bounded.
 //! * Rounding is monotone on each grid, not across the representable/rounded
 //!   boundary. `README.md` has the counterexample.
+//! * `Q` is not a semiring: `add`/`mul` are commutative unconditionally, but
+//!   associative, distributive and monotone only on the all-`Number` exact
+//!   path — every failure past it has a counterexample in `tests/q_laws.rs`.
+//!   `Q::div(a, b) == Q::mul(a, Q::recip(b))` fails in six cells. See
+//!   `VERIFICATION.md`'s V11 for what is proven instead: containment of the
+//!   special-value propagation tables against an independent ghost model.
 //!
 //! ## Verification and API stability
 //!
@@ -98,12 +104,17 @@ pub mod saturation;
 pub mod q;
 
 pub mod convert;
+pub mod denote;
 pub mod exact;
 pub mod ext;
 pub mod interval;
 pub mod laws;
+pub mod laws_q;
 pub mod lipschitz;
 pub mod nary;
+pub mod soundness;
+pub mod soundness_div;
+pub mod soundness_mul;
 pub mod transcendental;
 
 pub use convert::{

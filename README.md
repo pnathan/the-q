@@ -108,6 +108,19 @@ R3 is scoped below the ceiling to keep one clean boundary, and results above it
 saturate. `Rat::new` also returns `None` for an `i64` pair that is already
 reduced but over budget; `Rat::new_rounded` is total in the numerator.
 
+**`Q` is not a semiring.** `Q::add` and `Q::mul` are commutative
+unconditionally, but associative, distributive, and monotone only on the
+all-`Number` exact path — the same scope as `Rat`'s laws above, extended to
+`Q`'s special values, not a wider one. Once a `PosSat`/`NegSat` is reachable,
+all three fail; `mul` additionally fails to associate on values that never
+touch `Sat`, because rounding a product to zero can manufacture a `0 · ∞`
+indeterminate exact multiplication never would; `Q::div(a, b) ==
+Q::mul(a, Q::recip(b))` fails in six cells, `{NegInf, PosInf, Number(0)} ×
+{PosSat, NegSat}`. Every one of these has a counterexample in
+`tests/q_laws.rs`. `VERIFICATION.md`'s V11 has the full scope and what is
+proven instead: containment of the special-value propagation tables against
+an independent ghost model, not restated laws.
+
 ## API
 
 Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
@@ -237,7 +250,7 @@ test that the two are bit-identical.
 
 ## What is proven
 
-`1088 verified, 0 errors` in CI; no `assume`, no `admit`; three
+`1200 verified, 0 errors` in CI; no `assume`, no `admit`; three
 `external_body` functions, enumerated in `TRUSTED.md`.
 
 * **V1** Every public operation preserves canonical form and the budget.
@@ -256,13 +269,24 @@ test that the two are bit-identical.
 * **V9** `Q`: totality, classification, total order, `Nan` absorption.
 * **V10** Transcendentals: totality and termination. `isqrt` is exactly the
   integer square root.
+* **V11** `Q`'s algebraic laws (commutative unconditionally; associative,
+  distributive and monotone on the all-`Number` exact path, and nowhere
+  further — every failure has a test in `tests/q_laws.rs`, not just a
+  claim), and the containment obligation `{x ⊕ y : x ∈ ⟦a⟧, y ∈ ⟦b⟧} ⊆
+  ⟦op(a, b)⟧` for `add`/`sub`/`mul`/`div`'s special-value propagation,
+  proven against an independent ghost model (`denote.rs`) rather than
+  tested against the table alone.
 * The associativity bounds under Limits, interval enclosure, and the value
   pinning of every constructor including the `f64` decomposition's integer
   core.
 
 **Not proven**: the `f64` decode/encode (trusted, tested); transcendental
 accuracy (measured, above); `pow_u32`'s value (only its well-formedness);
-`mul` associativity outside `[0, 1]`.
+`mul` associativity outside `[0, 1]`; `Q`'s fold operations (`sum`,
+`product`, `weighted_mean`) against the containment model (a harder,
+set-valued induction, tracked as follow-on work, not attempted here); `Nan`
+necessity for every `mul`/`div` cell (shown for one `add` cell as the
+pattern, `theorem_add_nan_necessary_sat_sat_opposite`).
 
 ## Testing
 
