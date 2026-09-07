@@ -138,6 +138,14 @@ impl Q {
     ///
     /// The four classification predicates are mutually exclusive and jointly
     /// exhaustive. See `theorem_classification_partitions`.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert!(Q::number(Rat::one()).is_number());
+    /// assert!(!Q::PosSat.is_number());
+    /// assert!(!Q::Nan.is_number());
+    /// ```
     pub fn is_number(self) -> (r: bool)
         ensures
             r == self.spec_is_number(),
@@ -150,6 +158,14 @@ impl Q {
     /// This predicate is not the negation of `is_number`. It separates an
     /// overflow from a division by zero. That distinction is the purpose of the
     /// saturation states.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::PosSat.is_saturated());
+    /// assert!(Q::NegSat.is_saturated());
+    /// assert!(!Q::PosInf.is_saturated());
+    /// ```
     pub fn is_saturated(self) -> (r: bool)
         ensures
             r == self.spec_is_saturated(),
@@ -158,6 +174,14 @@ impl Q {
     }
 
     /// Whether this is exactly `±∞`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::PosInf.is_infinite());
+    /// assert!(Q::NegInf.is_infinite());
+    /// assert!(!Q::PosSat.is_infinite());
+    /// ```
     pub fn is_infinite(self) -> (r: bool)
         ensures
             r == self.spec_is_infinite(),
@@ -166,6 +190,13 @@ impl Q {
     }
 
     /// Whether this carries no information about the value.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::Nan.is_nan());
+    /// assert!(!Q::zero().is_nan());
+    /// ```
     pub fn is_nan(self) -> (r: bool)
         ensures
             r == self.spec_is_nan(),
@@ -182,6 +213,13 @@ impl Q {
     // -----------------------------------------------------------------------
 
     /// Lift a kernel rational into the extended type.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let half = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Q::number(half), Q::Number(half));
+    /// ```
     pub fn number(x: Rat) -> (r: Q)
         requires
             x.wf(),
@@ -194,6 +232,13 @@ impl Q {
     }
 
     /// `0`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::zero().is_zero());
+    /// assert!(Q::zero().is_number());
+    /// ```
     pub fn zero() -> (r: Q)
         ensures
             r.wf(),
@@ -205,6 +250,12 @@ impl Q {
     }
 
     /// `1`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::one().is_one());
+    /// ```
     pub fn one() -> (r: Q)
         ensures
             r.wf(),
@@ -216,6 +267,12 @@ impl Q {
     }
 
     /// `-1`.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::neg_one(), Q::Number(Rat::new(-1, 1).unwrap()));
+    /// ```
     pub fn neg_one() -> (r: Q)
         ensures
             r.wf(),
@@ -229,6 +286,14 @@ impl Q {
     /// Saturation is decided on the *value* (`magnitude_fits`), not on the
     /// components: `1 / i64::MIN` is small and rounds, it does not saturate.
     /// Where [`Rat::new`] succeeds this returns the same value.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::new(1, 2), Q::Number(Rat::new(1, 2).unwrap()));
+    /// assert_eq!(Q::new(1, 0), Q::PosInf);
+    /// assert_eq!(Q::new(0, 0), Q::Nan);
+    /// ```
     pub fn new(num: i64, den: i64) -> (r: Q)
         ensures
             r.wf(),
@@ -361,6 +426,14 @@ impl Q {
     /// The result is false for each special value. `PosSat` denotes
     /// `(MAX_MAG, +∞)`, which does not contain zero, thus false is the true
     /// answer there. For `Nan` the result is a convention from the design.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::zero().is_zero());
+    /// assert!(!Q::PosSat.is_zero());
+    /// assert!(!Q::Nan.is_zero());
+    /// ```
     pub fn is_zero(self) -> (r: bool)
         requires
             self.wf(),
@@ -374,6 +447,13 @@ impl Q {
     }
 
     /// `self == 1`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::one().is_one());
+    /// assert!(!Q::PosSat.is_one());
+    /// ```
     pub fn is_one(self) -> (r: bool)
         requires
             self.wf(),
@@ -390,6 +470,13 @@ impl Q {
     ///
     /// The result is false for each special value. For the saturations false is
     /// the true answer, because both saturation ranges are outside `[0, 1]`.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert!(Q::number(Rat::new(1, 2).unwrap()).in_unit_interval());
+    /// assert!(!Q::PosSat.in_unit_interval());
+    /// ```
     pub fn in_unit_interval(self) -> (r: bool)
         requires
             self.wf(),
@@ -407,6 +494,15 @@ impl Q {
     /// The result is `None` for `Nan` only. Both saturations and both
     /// infinities have a definite sign and give `Some`. The discriminant
     /// carries that sign for this purpose.
+    ///
+    /// ```
+    /// use the_q::{Q, Sign};
+    ///
+    /// assert_eq!(Q::one().signum(), Some(Sign::Positive));
+    /// assert_eq!(Q::zero().signum(), Some(Sign::Zero));
+    /// assert_eq!(Q::PosSat.signum(), Some(Sign::Positive));
+    /// assert_eq!(Q::Nan.signum(), None);
+    /// ```
     pub fn signum(self) -> (r: Option<Sign>)
         requires
             self.wf(),
@@ -485,6 +581,14 @@ impl Q {
     /// The left-to-right order is part of the contract and not an
     /// implementation detail. With rounding, addition is not associative, thus
     /// the order fixes the answer and makes the result reproducible.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let xs = [Q::one(), Q::one(), Q::one()];
+    /// assert_eq!(Q::sum(&xs), Q::number(the_q::Rat::new(3, 1).unwrap()));
+    /// assert!(Q::sum(&[]).is_zero());
+    /// ```
     pub fn sum(xs: &[Q]) -> (r: Q)
         requires
             all_wf_q(xs@),
@@ -509,6 +613,14 @@ impl Q {
     }
 
     /// `xs[0] * xs[1] * ...`, left to right. An empty slice gives `1`.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let xs = [Q::number(Rat::new(2, 1).unwrap()), Q::number(Rat::new(3, 1).unwrap())];
+    /// assert_eq!(Q::product(&xs), Q::number(Rat::new(6, 1).unwrap()));
+    /// assert!(Q::product(&[]).is_one());
+    /// ```
     pub fn product(xs: &[Q]) -> (r: Q)
         requires
             all_wf_q(xs@),
@@ -534,6 +646,18 @@ impl Q {
 
     /// `sum(w_i · x_i) / sum(w_i)`, total: a zero weight sum gives `Nan` (`0/0`)
     /// or a signed infinity, and an empty slice gives `Nan` the same way.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let one = Q::one();
+    /// let two = Q::number(Rat::new(2, 1).unwrap());
+    /// // weight 1 on `1`, weight 3 on `2`: (1*1 + 3*2) / (1 + 3) == 7/4
+    /// let three = Q::number(Rat::new(3, 1).unwrap());
+    /// let pairs = [(one, one), (three, two)];
+    /// assert_eq!(Q::weighted_mean(&pairs), Q::number(Rat::new(7, 4).unwrap()));
+    /// assert!(Q::weighted_mean(&[]).is_nan());
+    /// ```
     pub fn weighted_mean(pairs: &[(Q, Q)]) -> (r: Q)
         requires
             all_wf_q_pairs(pairs@),
@@ -681,6 +805,17 @@ impl Q {
     }
 
     /// `a + b`, total. Replaces the kernel `add`, which clamps silently.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat, MAX_MAG};
+    ///
+    /// assert_eq!(Q::add(Q::one(), Q::one()), Q::number(Rat::new(2, 1).unwrap()));
+    /// // Two representable rationals overflowing the budget saturate, they do
+    /// // not become infinite.
+    /// let m = Q::number(Rat::new(MAX_MAG, 1).unwrap());
+    /// assert_eq!(Q::add(m, m), Q::PosSat);
+    /// assert!(Q::add(Q::Nan, Q::one()).is_nan());
+    /// ```
     pub fn add(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -729,6 +864,13 @@ impl Q {
     ///
     /// The definition is `a + (-b)`, as §5 specifies. The two operations thus
     /// agree for an overflowing difference.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::sub(Q::one(), Q::one()), Q::zero());
+    /// assert!(Q::sub(Q::Nan, Q::zero()).is_nan());
+    /// ```
     pub fn sub(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -742,6 +884,15 @@ impl Q {
     }
 
     /// `a * b`, total.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// // Saturation denotes a finite real, so zero times it is exactly zero...
+    /// assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
+    /// // ...but zero times a true infinity is the classic indeterminate.
+    /// assert!(Q::mul(Q::zero(), Q::PosInf).is_nan());
+    /// ```
     pub fn mul(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -793,6 +944,14 @@ impl Q {
 
     /// `self^e`, total. `pow_u32(a, 0)` is `1` for every `a` including `Nan`, as
     /// IEEE `NaN^0`. A left fold of [`Q::mul`], associating like the kernel.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let two = Q::number(Rat::new(2, 1).unwrap());
+    /// assert_eq!(two.pow_u32(3), Q::number(Rat::new(8, 1).unwrap()));
+    /// assert!(Q::Nan.pow_u32(0).is_one());
+    /// ```
     pub fn pow_u32(self, e: u32) -> (r: Q)
         requires
             self.wf(),
@@ -817,6 +976,13 @@ impl Q {
     }
 
     /// `a + b` as a `Rat`, `None` otherwise. A view over [`Q::add`]; cannot panic.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::checked_add(Q::one(), Q::one()), Some(Rat::new(2, 1).unwrap()));
+    /// assert_eq!(Q::checked_add(Q::PosInf, Q::one()), None);
+    /// ```
     pub fn checked_add(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -834,6 +1000,13 @@ impl Q {
 
     /// `a - b` when the result is a representable rational. See
     /// [`Q::checked_add`].
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::checked_sub(Q::one(), Q::one()), Some(Rat::zero()));
+    /// assert_eq!(Q::checked_sub(Q::Nan, Q::one()), None);
+    /// ```
     pub fn checked_sub(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -850,6 +1023,13 @@ impl Q {
 
     /// `a * b` as a `Rat`, `None` otherwise. Can succeed on a saturated operand:
     /// `Number(0) * PosSat` is `0`.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::checked_mul(Q::zero(), Q::PosSat), Some(Rat::zero()));
+    /// assert_eq!(Q::checked_mul(Q::one(), Q::PosSat), None);
+    /// ```
     pub fn checked_mul(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -895,6 +1075,15 @@ impl Q {
 
 impl Q {
     /// `-self`, exact and total; saturations and infinities negate onto each other.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::one().neg(), Q::neg_one());
+    /// assert_eq!(Q::PosSat.neg(), Q::NegSat);
+    /// assert_eq!(Q::PosInf.neg(), Q::NegInf);
+    /// assert!(Q::Nan.neg().is_nan());
+    /// ```
     pub fn neg(self) -> (r: Q)
         requires
             self.wf(),
@@ -919,6 +1108,14 @@ impl Q {
 
     /// `|self|`, exact and total. Not injective on the specials, which is why
     /// `neg` carries class-preservation postconditions and this does not.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::neg_one().abs(), Q::one());
+    /// assert_eq!(Q::NegSat.abs(), Q::PosSat);
+    /// assert_eq!(Q::NegInf.abs(), Q::PosInf);
+    /// ```
     pub fn abs(self) -> (r: Q)
         requires
             self.wf(),
@@ -958,6 +1155,14 @@ impl Q {
 
 impl Q {
     /// The smaller of `a` and `b`, propagating `Nan`; not `Ord`-based selection.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::min(Q::zero(), Q::one()), Q::zero());
+    /// // Unlike `Ord::min`, a `Nan` operand makes the result `Nan`.
+    /// assert!(Q::min(Q::Nan, Q::one()).is_nan());
+    /// ```
     pub fn min(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -991,6 +1196,13 @@ impl Q {
     }
 
     /// The larger of `a` and `b`, propagating `Nan`. See [`Q::min`].
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::max(Q::zero(), Q::one()), Q::one());
+    /// assert!(Q::max(Q::Nan, Q::one()).is_nan());
+    /// ```
     pub fn max(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1018,6 +1230,17 @@ impl Q {
 
     /// `a` clamped into `[lo, hi]`; `Nan` in any argument, or an inverted range,
     /// gives `Nan` rather than an endpoint that asserts a false value.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let half = Q::number(Rat::new(1, 2).unwrap());
+    /// assert_eq!(Q::clamp(half, Q::zero(), Q::one()), half);
+    /// let two = Q::number(Rat::new(2, 1).unwrap());
+    /// assert_eq!(Q::clamp(two, Q::zero(), Q::one()), Q::one());
+    /// // An inverted range has no consistent answer.
+    /// assert!(Q::clamp(half, Q::one(), Q::zero()).is_nan());
+    /// ```
     pub fn clamp(a: Q, lo: Q, hi: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1163,6 +1386,15 @@ impl Q {
     /// `a / b`, total. Division by zero follows IEEE 754 uniformly, so that
     /// `recip(x) == div(one, x)` holds at zero. `Sat / Inf` is exactly `0` and
     /// `Inf / Sat` a signed infinity, because saturation denotes finite reals.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::div(Q::one(), Q::one()), Q::one());
+    /// // Division by zero follows IEEE 754: a signed infinity, and `0/0` is `Nan`.
+    /// assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
+    /// assert!(Q::div(Q::zero(), Q::zero()).is_nan());
+    /// ```
     pub fn div(a: Q, b: Q) -> (r: Q)
         requires
             a.wf(),
@@ -1261,6 +1493,14 @@ impl Q {
 
     /// `1 / self`, total, defined as `div(one, self)` (`theorem_recip_is_div_one`).
     /// Exact on a nonzero `Number`: swapping a canonical pair cannot round.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// let two = Q::number(Rat::new(2, 1).unwrap());
+    /// assert_eq!(two.recip(), Q::number(Rat::new(1, 2).unwrap()));
+    /// assert_eq!(Q::zero().recip(), Q::PosInf);
+    /// ```
     pub fn recip(self) -> (r: Q)
         requires
             self.wf(),
@@ -1274,6 +1514,13 @@ impl Q {
     }
 
     /// `a / b` as a `Rat`, `None` otherwise, including a zero divisor.
+    ///
+    /// ```
+    /// use the_q::{Q, Rat};
+    ///
+    /// assert_eq!(Q::checked_div(Q::one(), Q::one()), Some(Rat::one()));
+    /// assert_eq!(Q::checked_div(Q::one(), Q::zero()), None);
+    /// ```
     pub fn checked_div(a: Q, b: Q) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -1397,6 +1644,15 @@ impl Q {
     ///
     /// The comparison is total. There is no incomparable pair, because `Nan`
     /// has a definite position.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::compare(Q::zero(), Q::one()), -1);
+    /// assert_eq!(Q::compare(Q::one(), Q::one()), 0);
+    /// // `Nan` sorts last, above every other state.
+    /// assert_eq!(Q::compare(Q::PosInf, Q::Nan), -1);
+    /// ```
     pub fn compare(a: Q, b: Q) -> (r: i32)
         requires
             a.wf(),
@@ -1440,6 +1696,13 @@ impl Q {
     }
 
     /// `a < b`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::lt(Q::zero(), Q::one()));
+    /// assert!(!Q::lt(Q::one(), Q::one()));
+    /// ```
     pub fn lt(a: Q, b: Q) -> (r: bool)
         requires
             a.wf(),
@@ -1451,6 +1714,13 @@ impl Q {
     }
 
     /// `a <= b`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::le(Q::one(), Q::one()));
+    /// assert!(!Q::le(Q::one(), Q::zero()));
+    /// ```
     pub fn le(a: Q, b: Q) -> (r: bool)
         requires
             a.wf(),
@@ -1462,6 +1732,13 @@ impl Q {
     }
 
     /// `a > b`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::gt(Q::one(), Q::zero()));
+    /// assert!(!Q::gt(Q::zero(), Q::zero()));
+    /// ```
     pub fn gt(a: Q, b: Q) -> (r: bool)
         requires
             a.wf(),
@@ -1473,6 +1750,13 @@ impl Q {
     }
 
     /// `a >= b`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert!(Q::ge(Q::one(), Q::one()));
+    /// assert!(!Q::ge(Q::zero(), Q::one()));
+    /// ```
     pub fn ge(a: Q, b: Q) -> (r: bool)
         requires
             a.wf(),

@@ -46,6 +46,15 @@ pub proof fn lemma_fx_one()
 /// The product on the grid: `|r · 2^63 − a · b| <= 2^62`, nearest with ties
 /// away from zero (symmetric under negation). The precondition on the product
 /// discharges the overflow check.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::{fx_mul, FX_ONE};
+///
+/// // 1.0 * 0.5 == 0.5, exactly, on the grid.
+/// assert_eq!(fx_mul(FX_ONE, FX_ONE / 2), FX_ONE / 2);
+/// ```
 pub fn fx_mul(a: i128, b: i128) -> (r: i128)
     requires
         abs_int((a as int) * (b as int)) < pow2(126),
@@ -108,6 +117,15 @@ pub fn fx_mul(a: i128, b: i128) -> (r: i128)
 }
 
 /// `v / k` on the grid for a small integer `k`: `|r · k − v| <= k / 2`.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::{fx_div_int, FX_ONE};
+///
+/// // 1.0 / 2 == 0.5, exactly.
+/// assert_eq!(fx_div_int(FX_ONE, 2), FX_ONE / 2);
+/// ```
 pub fn fx_div_int(v: i128, k: u32) -> (r: i128)
     requires
         k > 0,
@@ -209,6 +227,15 @@ pub const FX_EXP_TERMS: u32 = 16;
 /// `e^z` for a reduced `z`, by Horner: `T := 1 + (z/k)·T` for `k` from
 /// [`FX_EXP_TERMS`] down to 1. The postcondition is the accumulator bound that
 /// discharges the overflow checks; distance to `e^z` is measured, not stated.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::{fx_exp_series, FX_ONE};
+///
+/// // e^0 == 1.0, exactly.
+/// assert_eq!(fx_exp_series(0), FX_ONE);
+/// ```
 pub fn fx_exp_series(z: i128) -> (t: i128)
     requires
         abs_int(z as int) <= FX_R_MAX as int,
@@ -275,6 +302,15 @@ pub const FX_LN2_LO: i128 = -974768846722515540i128;
 /// `e^x` on the grid as `(t, m)` denoting `t · 2^(m − 63)`. Cody-Waite:
 /// `m = nearest(x / ln2)`, `r = x − m·ln2` with `ln 2` in two words (exact to
 /// `2^-128`), series on `|r| <= ln2/2`, and `2^m` is an exponent adjustment.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::{fx_exp_reduced, FX_ONE};
+///
+/// // e^0 == 1.0 * 2^(0 - 63), i.e. m == 0 and t == FX_ONE.
+/// assert_eq!(fx_exp_reduced(0), (FX_ONE, 0));
+/// ```
 pub fn fx_exp_reduced(x: i128) -> (r: (i128, i32))
     requires
         abs_int(x as int) <= 406000000000000000000i128 as int,
@@ -366,6 +402,15 @@ pub const FX_Z_MAX: i128 = 3150000000000000000i128;
 
 /// `atanh(z)` for `|z| <= 1/3`. The postcondition bounds the accumulator only,
 /// to discharge the range checks.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::fx_atanh_series;
+///
+/// // atanh(0) == 0.
+/// assert_eq!(fx_atanh_series(0), 0);
+/// ```
 pub fn fx_atanh_series(z: i128) -> (t: i128)
     requires
         abs_int(z as int) <= FX_Z_MAX as int,
@@ -450,6 +495,15 @@ pub fn fx_atanh_series(z: i128) -> (t: i128)
 /// caller's integers so that `N − D` is exact (the `log1p` reason: quantising
 /// first loses the cancelled bits). Inputs below `2^62`; the ratio is clamped
 /// rather than required.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::fx::fx_ratio_z;
+///
+/// // N == D gives z == 0.
+/// assert_eq!(fx_ratio_z(5, 5), 0);
+/// ```
 // `rem` is consumed by the proof block, which plain rustc erases.
 #[allow(unused_variables)]
 pub fn fx_ratio_z(bign: i128, bigd: i128) -> (z: i128)

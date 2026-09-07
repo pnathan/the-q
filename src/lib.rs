@@ -62,8 +62,8 @@
 //! checks them, `cargo build` erases them. `VERIFICATION.md` maps the
 //! obligations, `TRUSTED.md` lists the three trusted functions.
 //!
-//! [`Rat`], [`Q`], [`Dir`], [`interval::QI`], their operations and constructors,
-//! and [`nary`] follow semver. Other public items (`gcd`, `model`, `round`,
+//! [`Rat`], [`Q`], [`Dir`], [`interval::QI`], [`Exact`], their operations and
+//! constructors, and [`nary`] follow semver. Other public items (`gcd`, `model`, `round`,
 //! `lipschitz`, `fx`, and executable helpers such as
 //! `round::round_frac_exec_with_gcd`) are public because Verus's visibility
 //! rules require it and may change shape in patch releases.

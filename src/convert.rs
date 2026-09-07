@@ -24,6 +24,15 @@ verus! {
 
 /// The IEEE-754 fields of a finite float, `(negative, mantissa, exponent)`;
 /// `None` for NaN and infinities. TRUSTED: Verus has no model of `to_bits`.
+///
+/// Public only because Verus's visibility rules require it; not semver-stable.
+///
+/// ```
+/// use the_q::convert::f64_decompose;
+///
+/// assert_eq!(f64_decompose(1.0f64), Some((false, 4503599627370496u64, -52)));
+/// assert_eq!(f64_decompose(f64::NAN), None);
+/// ```
 #[verifier::external_body]
 pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
     ensures
@@ -56,6 +65,14 @@ pub fn f64_decompose(v: f64) -> (r: Option<(bool, u64, i32)>)
 ///
 /// No postcondition can mention `v`: Verus has no model of `f64`. The contract
 /// lives on [`from_parts_dir`]; this is its composition with [`f64_decompose`].
+///
+/// ```
+/// use the_q::{Rat, Dir, from_f64_dir};
+///
+/// assert_eq!(from_f64_dir(0.5, Dir::Nearest), Some(Rat::new(1, 2).unwrap()));
+/// assert_eq!(from_f64_dir(f64::NAN, Dir::Nearest), None);
+/// assert_eq!(from_f64_dir(f64::INFINITY, Dir::Nearest), None);
+/// ```
 pub fn from_f64_dir(v: f64, dir: Dir) -> (r: Option<Rat>)
     ensures
         r.is_some() ==> r.unwrap().wf(),
@@ -97,6 +114,16 @@ pub open spec fn parts_den(e: i32) -> int {
 /// is covered by `round::lemma_round_frac_subgrid`. The `requires` is ghost and
 /// this function is `pub`, so the body re-checks the bounds and returns `None`
 /// outside them rather than overflow for an unverified caller.
+///
+/// Public only because Verus's visibility rules require it; not semver-stable.
+///
+/// ```
+/// use the_q::Dir;
+/// use the_q::convert::from_parts_dir;
+///
+/// // 1 * 2^0 == 1.
+/// assert_eq!(from_parts_dir(false, 1, 0, Dir::Nearest).unwrap().to_string(), "1/1");
+/// ```
 pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>)
     requires
         mant <= 9007199254740992u64,
@@ -334,6 +361,16 @@ pub fn from_parts_dir(neg: bool, mant: u64, e: i32, dir: Dir) -> (r: Option<Rat>
 /// The endpoint of the first dyadic cell, for a magnitude below `2^-62`.
 /// Pinned to `round::subgrid_endpoint`, which `round::lemma_round_frac_subgrid`
 /// identifies with `round_frac`.
+///
+/// Public only because Verus's visibility rules require it; not semver-stable.
+///
+/// ```
+/// use the_q::Dir;
+/// use the_q::convert::tiny;
+///
+/// let up = tiny(false, Dir::Up);
+/// assert_eq!(up.to_string(), "1/2305843009213693952");
+/// ```
 pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
     ensures
         r.wf(),
@@ -375,6 +412,12 @@ pub fn tiny(neg: bool, dir: Dir) -> (r: Rat)
 
 /// A `Rat` as an `f64`, for display only. TRUSTED. Three roundings, so about
 /// `3·2^-53` relative; do not feed the result back into `Rat`.
+///
+/// ```
+/// use the_q::{Rat, to_f64};
+///
+/// assert_eq!(to_f64(Rat::new(1, 2).unwrap()), 0.5);
+/// ```
 #[verifier::external_body]
 pub fn to_f64(q: Rat) -> f64 {
     (q.numerator() as f64) / (q.denominator() as f64)
@@ -639,6 +682,14 @@ impl<'de> serde::Deserialize<'de> for crate::ext::Q {
 /// float honestly denotes `PosSat`. Outside the verified region because it
 /// uses `is_nan`/`is_infinite`/`is_sign_negative`; the value path is
 /// [`from_f64_dir`].
+///
+/// ```
+/// use the_q::{Q, Rat, q_from_f64};
+///
+/// assert_eq!(q_from_f64(0.5), Q::Number(Rat::new(1, 2).unwrap()));
+/// assert_eq!(q_from_f64(f64::NAN), Q::Nan);
+/// assert_eq!(q_from_f64(f64::INFINITY), Q::PosInf);
+/// ```
 #[cfg_attr(verus_keep_ghost, verifier::external)]
 pub fn q_from_f64(v: f64) -> crate::ext::Q {
     use crate::ext::Q;

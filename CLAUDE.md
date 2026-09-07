@@ -133,8 +133,8 @@ independent gcd on every produced value.
 
 ## API stability
 
-`Rat`, `Q`, `Dir`, `QI`, their operations and constructors, and `nary` follow
-semver. `gcd`, `model`, `round`, `lipschitz`, `fx` and executable helpers such
+`Rat`, `Q`, `Dir`, `QI`, `Exact`, their operations and constructors, and `nary`
+follow semver. `gcd`, `model`, `round`, `lipschitz`, `fx` and executable helpers such
 as `round::round_frac_exec_with_gcd` are public only because Verus's visibility
 rules demand it and may change shape in patch releases.
 

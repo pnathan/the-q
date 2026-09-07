@@ -1267,6 +1267,16 @@ pub proof fn lemma_floor_div_monotone(a1: int, d1: int, a2: int, d2: int)
 
 /// Whether `m / d` exceeds `MAX_MAG`, without dividing when `m <= MAX_MAG`.
 /// Both arms return the same predicate so the caller sees no case split.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::MAX_MAG;
+/// use the_q::round::magnitude_saturates;
+///
+/// assert!(!magnitude_saturates(10, 3));
+/// assert!(magnitude_saturates((MAX_MAG as i128) + 1, 1));
+/// ```
 pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
     requires
         d > 0,
@@ -1297,6 +1307,15 @@ pub fn magnitude_saturates(m: i128, d: i128) -> (r: bool)
 
 /// `gcd(|m|, 2^s) == 2^min(v2(m), s)`, by at most `s` halvings;
 /// `crate::gcd::lemma_gcd_odd_pow2` closes the exit case.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::round::gcd_pow2_i128;
+///
+/// assert_eq!(gcd_pow2_i128(12, 3), 4); // gcd(12, 8)
+/// assert_eq!(gcd_pow2_i128(-6, 4), 2); // gcd(6, 16)
+/// ```
 pub fn gcd_pow2_i128(m: i128, s: u32) -> (r: i128)
     requires
         s <= 61,
@@ -1392,6 +1411,15 @@ pub fn gcd_pow2_i128(m: i128, s: u32) -> (r: i128)
 }
 
 /// `2^s` as an `i128`.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::round::pow2_i128;
+///
+/// assert_eq!(pow2_i128(0), 1);
+/// assert_eq!(pow2_i128(10), 1024);
+/// ```
 pub fn pow2_i128(s: u32) -> (r: i128)
     requires
         s <= 126,
@@ -1431,6 +1459,15 @@ pub fn pow2_i128(s: u32) -> (r: i128)
 }
 
 /// Bit length of a non-negative `i128`: the least `k` with `x < 2^k`.
+/// `bitlen_i128(0) == 0`. Public only because Verus's visibility rules
+/// require it; not part of the crate's semver-stable API.
+///
+/// ```
+/// use the_q::round::bitlen_i128;
+///
+/// assert_eq!(bitlen_i128(0), 0);
+/// assert_eq!(bitlen_i128(8), 4);
+/// ```
 pub fn bitlen_i128(x: i128) -> (k: u32)
     requires
         0 <= x,
@@ -1508,6 +1545,15 @@ pub proof fn lemma_bitlen_unique(x: int, k: nat)
 
 /// `floor(n · 2^s / d)` and its remainder without forming `n · 2^s`: `s`
 /// doubling steps carrying `q < 2^62` and `rem < d`, so nothing exceeds `2^125`.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::round::shift_div;
+///
+/// // floor(7 * 2^2 / 3) == 9, remainder 1.
+/// assert_eq!(shift_div(7, 3, 2), (9, 1));
+/// ```
 pub fn shift_div(n: i128, d: i128, s: u32) -> (res: (i128, i128))
     requires
         0 <= n,
@@ -1659,6 +1705,15 @@ pub open spec fn den_input_bound() -> int {
 ///
 /// This function is the single place where an exact `i128` intermediate
 /// becomes a `Rat`. Every arithmetic operation in [`crate::q`] ends here.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API — use the operations on [`crate::q`] instead.
+///
+/// ```
+/// use the_q::{Dir, Rat};
+/// use the_q::round::round_frac_exec;
+///
+/// assert_eq!(round_frac_exec(6, 8, Dir::Nearest), Rat::new(3, 4).unwrap());
+/// ```
 pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
     requires
         d > 0,
@@ -1681,6 +1736,16 @@ pub fn round_frac_exec(n: i128, d: i128, dir: Dir) -> (r: Rat)
 /// budget, so [`round_frac_exec`] returns it unchanged in every direction.
 /// Reduction and the budget test mirror [`round_frac_exec_with_gcd`]'s own
 /// exact-path arm exactly, minus the snap branch this function never reaches.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::MAX_MAG;
+/// use the_q::round::exact_path_exec;
+///
+/// assert!(exact_path_exec(3, 4));
+/// assert!(!exact_path_exec((MAX_MAG as i128) + 1, 1));
+/// ```
 pub fn exact_path_exec(n: i128, d: i128) -> (r: bool)
     requires
         d > 0,
@@ -1729,6 +1794,16 @@ pub fn exact_path_exec(n: i128, d: i128) -> (r: bool)
 
 /// [`round_frac_exec`] with the gcd supplied. The precondition pins `g` to the
 /// value the general entry point computes, so the postcondition is identical.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::{Dir, Rat};
+/// use the_q::round::round_frac_exec_with_gcd;
+///
+/// // gcd(6, 8) == 2.
+/// assert_eq!(round_frac_exec_with_gcd(6, 8, 2, Dir::Nearest), Rat::new(3, 4).unwrap());
+/// ```
 // Carries the whole rounding contract and sits at the edge of the default
 // resource budget; the two fast paths each add a branch the solver carries.
 #[verifier::rlimit(30)]

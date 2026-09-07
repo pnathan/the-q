@@ -31,6 +31,17 @@ verus! {
 /// Panic with `msg` unless `condition` holds. Verified callers discharge the
 /// precondition and never reach it; for unverified callers it is the
 /// division-by-zero panic. `external_body` for its message only (`TRUSTED.md`).
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// the_q::q::require_condition(true, "unreachable");
+/// ```
+///
+/// ```should_panic
+/// the_q::q::require_condition(false, "the-q: condition failed");
+/// ```
 #[verifier::external_body]
 pub fn require_condition(condition: bool, msg: &str)
     requires
@@ -98,6 +109,15 @@ pub open spec fn signed_den_num(num: int, den: int) -> int {
 
 impl Rat {
     /// `0`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let z = Rat::zero();
+    /// assert_eq!(z.numerator(), 0);
+    /// assert_eq!(z.denominator(), 1);
+    /// assert!(z.is_zero());
+    /// ```
     pub fn zero() -> (r: Rat)
         ensures
             r.wf(),
@@ -113,6 +133,15 @@ impl Rat {
     }
 
     /// `1`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let o = Rat::one();
+    /// assert_eq!(o.numerator(), 1);
+    /// assert_eq!(o.denominator(), 1);
+    /// assert!(o.is_one());
+    /// ```
     pub fn one() -> (r: Rat)
         ensures
             r.wf(),
@@ -128,6 +157,15 @@ impl Rat {
     }
 
     /// `-1`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let n = Rat::neg_one();
+    /// assert_eq!(n.numerator(), -1);
+    /// assert_eq!(n.denominator(), 1);
+    /// assert_eq!(n, Rat::one().neg());
+    /// ```
     pub fn neg_one() -> (r: Rat)
         ensures
             r.wf(),
@@ -141,6 +179,17 @@ impl Rat {
     ///
     /// `None` when `|i| > MAX_MAG` — in particular for `i64::MIN`, whose
     /// absolute value is not an `i64` at all.
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_MAG};
+    ///
+    /// let three = Rat::from_int(3).unwrap();
+    /// assert_eq!(three.numerator(), 3);
+    /// assert_eq!(three.denominator(), 1);
+    ///
+    /// assert_eq!(Rat::from_int(MAX_MAG + 1), None);
+    /// assert_eq!(Rat::from_int(i64::MIN), None);
+    /// ```
     pub fn from_int(i: i64) -> (r: Option<Rat>)
         ensures
             r.is_some() ==> {
@@ -164,6 +213,17 @@ impl Rat {
     /// The exact rational `num / den`, canonicalised. `None` when `den == 0` or
     /// the reduced form exceeds the budget (`Rat::new(i64::MAX, 1)`);
     /// [`Rat::new_rounded`] rounds instead.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let half = Rat::new(2, 4).unwrap();
+    /// assert_eq!(half.numerator(), 1);
+    /// assert_eq!(half.denominator(), 2);
+    ///
+    /// assert_eq!(Rat::new(1, 0), None);
+    /// assert_eq!(Rat::new(i64::MAX, 1), None);
+    /// ```
     pub fn new(num: i64, den: i64) -> (r: Option<Rat>)
         ensures
             den == 0 ==> r.is_none(),
@@ -263,6 +323,15 @@ impl Rat {
 
     /// `num / den`, rounded to the budget if it does not fit; `None` iff
     /// `den == 0`. The sign is normalised onto the numerator before rounding.
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat};
+    ///
+    /// assert_eq!(Rat::new_rounded(6, 4, Dir::Nearest), Rat::new(3, 2));
+    /// // Sign normalisation: a negative denominator folds onto the numerator.
+    /// assert_eq!(Rat::new_rounded(-3, -4, Dir::Down), Rat::new(3, 4));
+    /// assert_eq!(Rat::new_rounded(1, 0, Dir::Nearest), None);
+    /// ```
     pub fn new_rounded(num: i64, den: i64, dir: Dir) -> (r: Option<Rat>)
         ensures
             r.is_none() <==> den == 0,
@@ -325,6 +394,13 @@ impl Rat {
 
     /// The exact decimal `mantissa · 10^-dec_places`; `(85, 2)` is `0.85`. `None`
     /// when `dec_places > 18` or `|mantissa| > MAX_MAG`.
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_DEC_PLACES};
+    ///
+    /// assert_eq!(Rat::from_decimal(85, 2), Rat::new(17, 20));
+    /// assert_eq!(Rat::from_decimal(1, MAX_DEC_PLACES + 1), None);
+    /// ```
     pub fn from_decimal(mantissa: i64, dec_places: u8) -> (r: Option<Rat>)
         ensures
             r.is_some() ==> r.unwrap().wf(),
@@ -360,6 +436,15 @@ impl Rat {
 
 /// `10^n` for `n <= 18`, as a literal table (a loop needs an invariant and an
 /// overflow lemma for the same result).
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// assert_eq!(the_q::q::pow10_i64(0), 1);
+/// assert_eq!(the_q::q::pow10_i64(2), 100);
+/// assert_eq!(the_q::q::pow10_i64(18), 1_000_000_000_000_000_000);
+/// ```
 pub fn pow10_i64(n: u8) -> (r: i64)
     requires
         n <= MAX_DEC_PLACES,
@@ -402,6 +487,21 @@ pub fn pow10_i64(n: u8) -> (r: i64)
 
 impl Rat {
     /// `a + b`, rounded in direction `dir`.
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat};
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 6).unwrap();
+    /// assert_eq!(Rat::add_dir(a, b, Dir::Down), Rat::new(1, 2).unwrap());
+    ///
+    /// // `Down` and `Up` bracket the exact value; they agree on the exact path.
+    /// let a = Rat::new(1, 3_037_000_493).unwrap();
+    /// let b = Rat::new(1, 3_037_000_499).unwrap();
+    /// let lo = Rat::add_dir(a, b, Dir::Down);
+    /// let hi = Rat::add_dir(a, b, Dir::Up);
+    /// assert!(Rat::lt(lo, hi));
+    /// ```
     pub fn add_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -435,6 +535,19 @@ impl Rat {
     }
 
     /// `a - b`, rounded in direction `dir`.
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat};
+    ///
+    /// let a = Rat::new(3, 4).unwrap();
+    /// let b = Rat::new(1, 4).unwrap();
+    /// assert_eq!(Rat::sub_dir(a, b, Dir::Up), Rat::new(1, 2).unwrap());
+    ///
+    /// // `Down` and `Up` bracket the exact value.
+    /// let lo = Rat::sub_dir(a, b, Dir::Down);
+    /// let hi = Rat::sub_dir(a, b, Dir::Up);
+    /// assert!(Rat::le(lo, hi));
+    /// ```
     pub fn sub_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -468,6 +581,19 @@ impl Rat {
     }
 
     /// `a * b`, rounded in direction `dir`.
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat};
+    ///
+    /// let a = Rat::new(2, 3).unwrap();
+    /// let b = Rat::new(3, 4).unwrap();
+    /// assert_eq!(Rat::mul_dir(a, b, Dir::Down), Rat::new(1, 2).unwrap());
+    ///
+    /// // `Down` and `Up` bracket the exact value.
+    /// let lo = Rat::mul_dir(a, b, Dir::Down);
+    /// let hi = Rat::mul_dir(a, b, Dir::Up);
+    /// assert!(Rat::le(lo, hi));
+    /// ```
     pub fn mul_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -501,6 +627,21 @@ impl Rat {
 
     /// `a / b` in direction `dir`. `b != 0` is a precondition; an unverified caller
     /// with a zero divisor panics here. Use [`Rat::checked_div`] or [`crate::Q::div`].
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat};
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(1, 3).unwrap();
+    /// assert_eq!(Rat::div_dir(a, b, Dir::Down), Rat::new(3, 2).unwrap());
+    /// ```
+    ///
+    /// ```should_panic
+    /// use the_q::{Dir, Rat};
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let _ = Rat::div_dir(a, Rat::zero(), Dir::Down);
+    /// ```
     pub fn div_dir(a: Rat, b: Rat, dir: Dir) -> (r: Rat)
         requires
             a.wf(),
@@ -563,6 +704,15 @@ impl Rat {
     /// The error is a half grid step and not a whole one, thus this operation
     /// achieves `B = 62`. That is one bit better than the `B = 61` of the
     /// directed modes. See `round::lemma_r3_error_nearest`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 6).unwrap();
+    /// assert_eq!(Rat::add(a, b), Rat::new(1, 2).unwrap());
+    /// assert_eq!(Rat::add(a, Rat::zero()), a);
+    /// ```
     pub fn add(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -589,6 +739,15 @@ impl Rat {
 
     /// `a - b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
     /// does.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(3, 4).unwrap();
+    /// let b = Rat::new(1, 4).unwrap();
+    /// assert_eq!(Rat::sub(a, b), Rat::new(1, 2).unwrap());
+    /// assert_eq!(Rat::sub(a, a), Rat::zero());
+    /// ```
     pub fn sub(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -615,6 +774,15 @@ impl Rat {
 
     /// `a * b`, round to nearest (ties to even). Achieves `B = 62`, as `add`
     /// does.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(2, 3).unwrap();
+    /// let b = Rat::new(3, 4).unwrap();
+    /// assert_eq!(Rat::mul(a, b), Rat::new(1, 2).unwrap());
+    /// assert_eq!(Rat::mul(a, Rat::one()), a);
+    /// ```
     pub fn mul(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -641,6 +809,21 @@ impl Rat {
 
     /// `a / b`, round to nearest (ties to even). Requires `!b.is_zero()`.
     /// Achieves `B = 62`, as `add` does.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(1, 3).unwrap();
+    /// assert_eq!(Rat::div(a, b), Rat::new(3, 2).unwrap());
+    /// ```
+    ///
+    /// ```should_panic
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let _ = Rat::div(a, Rat::zero());
+    /// ```
     pub fn div(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -676,6 +859,18 @@ impl Rat {
 
     /// `a + b`, or `None` if the exact sum is too large in magnitude to be
     /// represented at all (`|a + b| > MAX_MAG`).
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_MAG};
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 6).unwrap();
+    /// assert_eq!(Rat::checked_add(a, b), Some(Rat::new(1, 2).unwrap()));
+    ///
+    /// // `MAX_MAG + 1` is past the budget, not merely rounded.
+    /// let max = Rat::from_int(MAX_MAG).unwrap();
+    /// assert_eq!(Rat::checked_add(max, Rat::one()), None);
+    /// ```
     pub fn checked_add(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -697,6 +892,18 @@ impl Rat {
     }
 
     /// `a * b`, or `None` if the exact product is too large in magnitude.
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_MAG};
+    ///
+    /// let a = Rat::new(2, 3).unwrap();
+    /// let b = Rat::new(3, 4).unwrap();
+    /// assert_eq!(Rat::checked_mul(a, b), Some(Rat::new(1, 2).unwrap()));
+    ///
+    /// let max = Rat::from_int(MAX_MAG).unwrap();
+    /// let two = Rat::from_int(2).unwrap();
+    /// assert_eq!(Rat::checked_mul(max, two), None);
+    /// ```
     pub fn checked_mul(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -718,6 +925,17 @@ impl Rat {
     }
 
     /// `a - b`, or `None` if the exact difference is too large in magnitude.
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_MAG};
+    ///
+    /// let a = Rat::new(3, 4).unwrap();
+    /// let b = Rat::new(1, 4).unwrap();
+    /// assert_eq!(Rat::checked_sub(a, b), Some(Rat::new(1, 2).unwrap()));
+    ///
+    /// let neg_max = Rat::from_int(-MAX_MAG).unwrap();
+    /// assert_eq!(Rat::checked_sub(neg_max, Rat::one()), None);
+    /// ```
     pub fn checked_sub(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -741,6 +959,17 @@ impl Rat {
     /// `a - b`, rounded in `dir`, or `None` if the exact difference is too
     /// large in magnitude. Unlike [`Rat::checked_sub`], this preserves the
     /// requested rounding direction when the result is not exact.
+    ///
+    /// ```
+    /// use the_q::{Dir, Rat, MAX_MAG};
+    ///
+    /// let a = Rat::new(3, 4).unwrap();
+    /// let b = Rat::new(1, 4).unwrap();
+    /// assert_eq!(Rat::checked_sub_dir(a, b, Dir::Down), Some(Rat::new(1, 2).unwrap()));
+    ///
+    /// let neg_max = Rat::from_int(-MAX_MAG).unwrap();
+    /// assert_eq!(Rat::checked_sub_dir(neg_max, Rat::one(), Dir::Down), None);
+    /// ```
     pub fn checked_sub_dir(a: Rat, b: Rat, dir: Dir) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -778,6 +1007,20 @@ impl Rat {
     }
 
     /// `a / b`, or `None` on a zero divisor or a quotient past the budget.
+    ///
+    /// ```
+    /// use the_q::{Rat, MAX_MAG};
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(1, 3).unwrap();
+    /// assert_eq!(Rat::checked_div(a, b), Some(Rat::new(3, 2).unwrap()));
+    ///
+    /// assert_eq!(Rat::checked_div(a, Rat::zero()), None);
+    ///
+    /// let max = Rat::from_int(MAX_MAG).unwrap();
+    /// let half = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Rat::checked_div(max, half), None);
+    /// ```
     pub fn checked_div(a: Rat, b: Rat) -> (r: Option<Rat>)
         requires
             a.wf(),
@@ -804,6 +1047,14 @@ impl Rat {
     }
 
     /// `-a`. Always exact: the budget is symmetric in sign.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(3, 4).unwrap();
+    /// assert_eq!(a.neg(), Rat::new(-3, 4).unwrap());
+    /// assert_eq!(a.neg().neg(), a);
+    /// ```
     pub fn neg(self) -> (r: Rat)
         requires
             self.wf(),
@@ -820,6 +1071,14 @@ impl Rat {
     }
 
     /// `|a|`. Always exact.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(-3, 4).unwrap();
+    /// assert_eq!(a.abs(), Rat::new(3, 4).unwrap());
+    /// assert_eq!(a.abs().abs(), a.abs());
+    /// ```
     pub fn abs(self) -> (r: Rat)
         requires
             self.wf(),
@@ -837,6 +1096,20 @@ impl Rat {
 
     /// `1 / a`, exact (a swap of a canonical pair). Zero is a precondition and
     /// panics for an unverified caller; [`crate::Q::recip`] gives `PosInf`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(-2, 3).unwrap();
+    /// assert_eq!(a.recip(), Rat::new(-3, 2).unwrap());
+    /// assert_eq!(Rat::mul(a, a.recip()), Rat::one());
+    /// ```
+    ///
+    /// ```should_panic
+    /// use the_q::Rat;
+    ///
+    /// let _ = Rat::zero().recip();
+    /// ```
     pub fn recip(self) -> (r: Rat)
         requires
             self.wf(),
@@ -887,6 +1160,14 @@ impl Rat {
 
     /// `a^e` by repeated multiplication, as a left fold. This module has no
     /// rational-exponent power.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(2, 3).unwrap();
+    /// assert_eq!(a.pow_u32(3), Rat::new(8, 27).unwrap());
+    /// assert_eq!(a.pow_u32(0), Rat::one());
+    /// ```
     pub fn pow_u32(self, e: u32) -> (r: Rat)
         requires
             self.wf(),
@@ -1029,6 +1310,17 @@ pub proof fn lemma_new_value(
 }
 
 /// Exec mirrors of the ghost numerators, used by the `checked_*` variants.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(1, 3).unwrap();
+/// assert_eq!(the_q::q::add_n_exec(a, b), 5);
+/// ```
 pub fn add_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1045,6 +1337,17 @@ pub fn add_n_exec(a: Rat, b: Rat) -> (r: i128)
 }
 
 /// Exec mirror of `sub_n`.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(1, 3).unwrap();
+/// assert_eq!(the_q::q::sub_n_exec(a, b), 1);
+/// ```
 pub fn sub_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1061,6 +1364,17 @@ pub fn sub_n_exec(a: Rat, b: Rat) -> (r: i128)
 }
 
 /// Exec mirror of `mul_n`.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(1, 3).unwrap();
+/// assert_eq!(the_q::q::mul_n_exec(a, b), 1);
+/// ```
 pub fn mul_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1076,6 +1390,17 @@ pub fn mul_n_exec(a: Rat, b: Rat) -> (r: i128)
 }
 
 /// Exec mirror of `prod_d`.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(1, 3).unwrap();
+/// assert_eq!(the_q::q::prod_d_exec(a, b), 6);
+/// ```
 pub fn prod_d_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1093,6 +1418,18 @@ pub fn prod_d_exec(a: Rat, b: Rat) -> (r: i128)
 
 /// Exec mirror of `div_n`: sign-normalised the same way [`Rat::div_dir`]
 /// computes it, so it pairs with [`div_d_exec`].
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(-1, 3).unwrap();
+/// assert_eq!(the_q::q::div_n_exec(a, b), -3);
+/// assert_eq!(the_q::q::div_d_exec(a, b), 2);
+/// ```
 pub fn div_n_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1123,6 +1460,17 @@ pub fn div_n_exec(a: Rat, b: Rat) -> (r: i128)
 
 /// Exec mirror of `div_d`: always positive, the denominator [`div_n_exec`]
 /// pairs with.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::Rat;
+///
+/// let a = Rat::new(1, 2).unwrap();
+/// let b = Rat::new(-1, 3).unwrap();
+/// assert_eq!(the_q::q::div_d_exec(a, b), 2);
+/// ```
 pub fn div_d_exec(a: Rat, b: Rat) -> (r: i128)
     requires
         a.wf(),
@@ -1152,6 +1500,17 @@ pub fn div_d_exec(a: Rat, b: Rat) -> (r: i128)
 }
 
 /// The magnitude test, without ever forming `MAX_MAG · d`.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API (see the "API stability" note in `CLAUDE.md`).
+///
+/// ```
+/// use the_q::MAX_MAG;
+///
+/// assert!(the_q::q::magnitude_fits_exec(MAX_MAG as i128, 1));
+/// assert!(!the_q::q::magnitude_fits_exec(MAX_MAG as i128 + 1, 1));
+/// assert!(the_q::q::magnitude_fits_exec(1, 2));
+/// ```
 pub fn magnitude_fits_exec(n: i128, d: i128) -> (r: bool)
     requires
         d > 0,
@@ -1183,6 +1542,16 @@ pub fn magnitude_fits_exec(n: i128, d: i128) -> (r: bool)
 
 impl Rat {
     /// Three-way comparison, `-1`/`0`/`1`, exact by `i128` cross-multiplication.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Rat::compare(a, b), -1);
+    /// assert_eq!(Rat::compare(b, a), 1);
+    /// assert_eq!(Rat::compare(a, a), 0);
+    /// ```
     pub fn compare(a: Rat, b: Rat) -> (r: i32)
         requires
             a.wf(),
@@ -1207,6 +1576,15 @@ impl Rat {
     }
 
     /// `a == b`. Because `Rat` is canonical this is also structural equality.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(2, 4).unwrap();
+    /// assert!(Rat::eq_q(a, b));
+    /// assert!(!Rat::eq_q(a, Rat::one()));
+    /// ```
     pub fn eq_q(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
@@ -1218,6 +1596,15 @@ impl Rat {
     }
 
     /// `a < b`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 2).unwrap();
+    /// assert!(Rat::lt(a, b));
+    /// assert!(!Rat::lt(a, a));
+    /// ```
     pub fn lt(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
@@ -1229,6 +1616,16 @@ impl Rat {
     }
 
     /// `a <= b`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 2).unwrap();
+    /// assert!(Rat::le(a, b));
+    /// assert!(Rat::le(a, a));
+    /// assert!(!Rat::le(b, a));
+    /// ```
     pub fn le(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
@@ -1240,6 +1637,15 @@ impl Rat {
     }
 
     /// `a > b`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(1, 3).unwrap();
+    /// assert!(Rat::gt(a, b));
+    /// assert!(!Rat::gt(a, a));
+    /// ```
     pub fn gt(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
@@ -1251,6 +1657,16 @@ impl Rat {
     }
 
     /// `a >= b`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 2).unwrap();
+    /// let b = Rat::new(1, 3).unwrap();
+    /// assert!(Rat::ge(a, b));
+    /// assert!(Rat::ge(a, a));
+    /// assert!(!Rat::ge(b, a));
+    /// ```
     pub fn ge(a: Rat, b: Rat) -> (r: bool)
         requires
             a.wf(),
@@ -1262,6 +1678,13 @@ impl Rat {
     }
 
     /// `a == 0`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// assert!(Rat::zero().is_zero());
+    /// assert!(!Rat::one().is_zero());
+    /// ```
     pub fn is_zero(&self) -> (r: bool)
         requires
             self.wf(),
@@ -1272,6 +1695,13 @@ impl Rat {
     }
 
     /// `a == 1`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// assert!(Rat::one().is_one());
+    /// assert!(!Rat::zero().is_one());
+    /// ```
     pub fn is_one(&self) -> (r: bool)
         requires
             self.wf(),
@@ -1295,6 +1725,14 @@ impl Rat {
     }
 
     /// `-1`, `0` or `1` according to the sign.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// assert_eq!(Rat::new(-3, 4).unwrap().signum(), -1);
+    /// assert_eq!(Rat::zero().signum(), 0);
+    /// assert_eq!(Rat::new(3, 4).unwrap().signum(), 1);
+    /// ```
     pub fn signum(&self) -> (r: i32)
         requires
             self.wf(),
@@ -1317,6 +1755,15 @@ impl Rat {
     /// The consuming engine checks this constantly on beliefs, disbeliefs and
     /// uncertainties, so it is a first-class predicate rather than two
     /// comparisons.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// assert!(Rat::new(1, 2).unwrap().in_unit_interval());
+    /// assert!(Rat::one().in_unit_interval());
+    /// assert!(!Rat::new(-1, 2).unwrap().in_unit_interval());
+    /// assert!(!Rat::new(3, 2).unwrap().in_unit_interval());
+    /// ```
     pub fn in_unit_interval(&self) -> (r: bool)
         requires
             self.wf(),
@@ -1327,6 +1774,15 @@ impl Rat {
     }
 
     /// The smaller of `a` and `b`. Exact.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Rat::min(a, b), a);
+    /// assert_eq!(Rat::min(b, a), a);
+    /// ```
     pub fn min(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -1351,6 +1807,15 @@ impl Rat {
     }
 
     /// The larger of `a` and `b`. Exact.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let a = Rat::new(1, 3).unwrap();
+    /// let b = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Rat::max(a, b), b);
+    /// assert_eq!(Rat::max(b, a), b);
+    /// ```
     pub fn max(a: Rat, b: Rat) -> (r: Rat)
         requires
             a.wf(),
@@ -1372,6 +1837,17 @@ impl Rat {
     }
 
     /// `a` clamped into `[lo, hi]`. Exact. Requires `lo <= hi`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let lo = Rat::zero();
+    /// let hi = Rat::one();
+    /// let mid = Rat::new(1, 2).unwrap();
+    /// assert_eq!(Rat::clamp(mid, lo, hi), mid);
+    /// assert_eq!(Rat::clamp(Rat::new(-1, 2).unwrap(), lo, hi), lo);
+    /// assert_eq!(Rat::clamp(Rat::new(3, 2).unwrap(), lo, hi), hi);
+    /// ```
     pub fn clamp(a: Rat, lo: Rat, hi: Rat) -> (r: Rat)
         requires
             a.wf(),

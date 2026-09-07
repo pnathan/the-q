@@ -1,62 +1,600 @@
 # the-q
 
-Bounded rational arithmetic with verified directed rounding, in Rust, proven in
-[Verus](https://github.com/verus-lang/verus).
+[![CI](https://github.com/pnathan/the-q/actions/workflows/ci.yml/badge.svg)](https://github.com/pnathan/the-q/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/the-q.svg)](https://crates.io/crates/the-q)
+[![docs.rs](https://img.shields.io/docsrs/the-q)](https://docs.rs/the-q)
+[![licence](https://img.shields.io/badge/licence-AGPL--3.0--or--later-blue.svg)](#licence)
+
+Bounded rational arithmetic for Rust, with a rounding contract that is
+machine-checked in [Verus](https://github.com/verus-lang/verus).
+
+A value is two `i64` words. Arithmetic is exact whenever the exact result fits
+that budget, and when it does not, the result is rounded to a proven error
+bound in a direction you choose. Nothing overflows, nothing allocates, and
+every operation on the total type `Q` returns a value, never a panic.
 
 ```rust
-use the_q::Rat;
+let price = Rat::from_decimal(1999, 2).unwrap(); // 19.99, exactly
+let rate = Rat::from_decimal(825, 4).unwrap(); //  0.0825, exactly
+let tax = Rat::mul(price, rate); //  1.649175, exactly
+assert_eq!(tax.to_string(), "65967/40000");
 
-let reliability = Rat::from_decimal(85, 2).unwrap();   // 0.85, exactly — 17/20
-let weight      = Rat::from_decimal(3, 1).unwrap();    // 0.3,  exactly — 3/10
-let combined    = Rat::mul(reliability, weight);       // 51/200, exactly
-assert_eq!(combined.to_string(), "51/200");
+let third = Rat::new(1, 3).unwrap();
+assert_eq!(third + third + third, Rat::one()); // no drift
+
+// Division by zero is not a panic on `Q`; it is a value.
+assert_eq!(Q::new(1, 0), Q::PosInf);
+assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
 ```
 
-## `Rat` and `Q`
+## Why
 
-`Rat` is `num / den` in two `i64` fields, always canonical (`den > 0`,
-`gcd(|num|, den) == 1`) and always bounded (`|num|, den <= 2^62 − 1`). It is
-`Copy`, 128 bits, no heap, `Send + Sync`. The fields are private; every `Rat` a
-caller can hold came from a constructor and satisfies the invariant.
+Every representation of a real number in a machine makes a compromise, and
+the usual ones make it silently.
 
-`Rat` is exact whenever the exact result fits the budget and rounded when it
-does not. It is **partial**: `Rat::new(_, 0)` is `None`; `Rat::div(x, 0)` and
-`Rat::zero().recip()` panic (a precondition under Verus, a runtime check with a
-message for everyone else); and an exact result above the budget **saturates**
-to `±(2^62 − 1)`, which the `checked_*` variants report as `None` and the plain
-operations do not.
+* **`f64`** rounds on almost every operation, to a bound that is relative, so
+  `0.1 + 0.2 != 0.3` and a long sum drifts by an amount no one has written
+  down.
+* **`Ratio<i64>`** is exact until the moment it overflows, and then it panics,
+  or wraps, depending on the build profile.
+* **Arbitrary-precision rationals** are exact forever, and their denominators
+  grow without bound: a chain of a few thousand operations holds megabytes and
+  each step gets slower than the last.
 
-`Q` makes every one of those cases a value:
+`the-q` takes the fourth position. A `Rat` is a canonical fraction whose
+numerator and denominator are each bounded by `2^62 − 1`, chosen so that every
+cross-multiplied `i128` intermediate provably fits. When an exact result would
+leave that budget, it is rounded, once, to a dyadic grid, and the rounding
+satisfies four properties (R1–R4 below) that are theorems about the code, not
+documentation of it. Rounding is rare in practice, because the budget is large,
+and when it happens you can ask for it to be upward, downward, or to nearest.
+
+The proofs are written in Verus inside the source files. `cargo build` erases
+them and compiles ordinary Rust; `cargo verus verify` checks them. The verified
+count in CI is `1088 verified, 0 errors`, with no `assume`, no `admit`, and
+three trusted functions, all at the `f64` boundary or a panic message, none on
+an arithmetic path.
+
+This is the right tool when memory must be flat, chains are long or unbounded,
+results must be bit-identical across machines, or the per-step error must be a
+proven number. For short exact computations use an exact rational; for raw
+speed use `f64`.
+
+## Install
+
+```toml
+[dependencies]
+the-q = "0.2.1"
+
+# Optional: serde impls for `Rat` and `Q`.
+# the-q = { version = "0.2.1", features = ["serde"] }
+```
+
+MSRV is Rust 1.85, edition 2024. Verus is not needed to build or use the
+crate; it is needed only to re-check the proofs.
+
+## The types
+
+| type | what it is | failure mode |
+|---|---|---|
+| [`Rat`](#rat) | a canonical bounded fraction, `Copy`, 128 bits | partial: `None` on a bad constructor argument, panic on a zero divisor, saturation on overflow |
+| [`Q`](#q) | `Rat` plus explicit `±Sat`, `±Inf`, `Nan` | total: every operation returns a `Q` |
+| [`QI`](#qi) | an interval `[lo, hi]` of `Rat` with proven enclosure | panic on `lo > hi` in `new`; `checked_new` |
+| [`Exact`](#exact) | a `Rat` whose operations refuse to round | `Result<Exact, ExactError>` |
+| `Dir` | `Down`, `Up`, `Nearest`: the rounding direction | |
+| `Sign` | `Negative`, `Zero`, `Positive`: what `Q::signum` returns | |
+| `ExactError`, `ParseQError` | the error enums of `Exact` and `Q: FromStr` | |
+| `MAX_MAG`, `MAX_DEC_PLACES` | `2^62 − 1`, and `18`, the largest decimal exponent `from_decimal` accepts | |
+
+Plus the module [`nary`](#n-ary-folds) (reproducible folds over `Rat`), the
+[roots and transcendentals](#roots-and-transcendentals) on `Q`, and the
+[conversions](#conversions-and-serialisation) `from_f64_dir`, `q_from_f64`,
+`to_f64`, `Display`, `FromStr` and serde.
+
+Everything named in this section follows semver. Modules such as `gcd`,
+`model`, `round`, `lipschitz`, `fx` and helpers such as `q::add_n_exec` are
+public only because Verus's visibility rules demand it, and may change shape in
+a patch release.
+
+## `Rat`
+
+`Rat` is `num / den` in two private `i64` fields. It is always canonical
+(`den > 0`, `gcd(|num|, den) == 1`, and `0` is `0/1`) and always bounded
+(`|num|, den ≤ 2^62 − 1`). Because the fields are private, every `Rat` a
+caller can hold came from a constructor and satisfies the invariant, and
+because the form is canonical, the derived `Eq` and `Hash` are value equality.
+It is `Copy`, `Send + Sync`, and does not touch the heap.
+
+### Constructing
 
 ```rust
+// Every constructor canonicalises: sign on the numerator, gcd removed.
+assert_eq!(Rat::new(6, 8), Rat::new(3, 4));
+assert_eq!(Rat::new(3, -6).unwrap().to_string(), "-1/2");
+assert_eq!(Rat::new(0, -7), Some(Rat::zero()));
+
+// `None` for a zero denominator, or a pair that does not fit the budget.
+assert_eq!(Rat::new(1, 0), None);
+assert_eq!(Rat::new(i64::MAX, 1), None);
+
+// Decimal literals are exact; `(1999, 2)` is 19.99.
+assert_eq!(Rat::from_decimal(1999, 2).unwrap().to_string(), "1999/100");
+assert_eq!(Rat::from_decimal(1, MAX_DEC_PLACES + 1), None);
+
+// `new_rounded` is total in the numerator: it rounds instead of refusing.
+let big = Rat::new_rounded(i64::MAX, 1, Dir::Down).unwrap();
+assert_eq!(big.numerator(), MAX_MAG);
+assert_eq!(Rat::new_rounded(1, 0, Dir::Down), None);
+
+assert_eq!(Rat::from_int(-5).unwrap(), Rat::new(-5, 1).unwrap());
+```
+
+### Arithmetic
+
+The plain operations round to nearest, ties to even. The `*_dir` variants take
+a `Dir`. The `checked_*` variants return `None` when the result saturates (and
+`checked_div` also when the divisor is zero). `neg`, `abs`, `recip`, `min`,
+`max` and `clamp` are exact. `pow_u32` is a fold of `mul`.
+
+```rust
+let a = Rat::new(1, 3).unwrap();
+let b = Rat::new(1, 6).unwrap();
+
+// Exact when the exact result fits, which is nearly always.
+assert_eq!(Rat::add(a, b), Rat::new(1, 2).unwrap());
+assert_eq!(a + b, Rat::new(1, 2).unwrap()); // operators delegate
+assert_eq!(a - b, Rat::new(1, 6).unwrap());
+assert_eq!(a * b, Rat::new(1, 18).unwrap());
+assert_eq!(-a, Rat::new(-1, 3).unwrap());
+assert_eq!(Rat::div(a, b), Rat::new(2, 1).unwrap());
+
+// No `/` operator on `Rat`: `div` has a precondition the operator cannot
+// express. Use `Rat::div`, `Rat::checked_div`, or move to `Q`.
+assert_eq!(Rat::checked_div(a, Rat::zero()), None);
+
+assert_eq!(a.recip(), Rat::new(3, 1).unwrap());
+assert_eq!(a.pow_u32(3), Rat::new(1, 27).unwrap());
+assert_eq!(Rat::new(-2, 5).unwrap().abs(), Rat::new(2, 5).unwrap());
+```
+
+### When rounding happens
+
+Most sums and products of everyday fractions are exact. Rounding occurs only
+when the reduced result has a numerator or denominator above `2^62 − 1`. Here
+is one that does:
+
+```rust
+// Reduced denominator of the sum is about 9.2e18, past the 2^62 budget.
+let a = Rat::new(1, 3_037_000_493).unwrap();
+let b = Rat::new(1, 3_037_000_499).unwrap();
+
+let nearest = Rat::add(a, b); // rounded, ties to even
+let down = Rat::add_dir(a, b, Dir::Down);
+let up = Rat::add_dir(a, b, Dir::Up);
+assert!(down <= nearest && nearest <= up); // R2: the exact sum lies in [down, up]
+assert!(down < up); // so rounding did happen
+
+// `checked_*` on `Rat` reports saturation only, not rounding.
+assert!(Rat::checked_add(a, b).is_some());
+let m = Rat::new(MAX_MAG, 1).unwrap();
+assert_eq!(Rat::checked_add(m, m), None); // over the budget
+assert_eq!(Rat::add(m, m), m); // the plain op saturates
+```
+
+`Rat` is deliberately **partial**: `Rat::new(_, 0)` is `None`; `Rat::div(x, 0)`
+and `Rat::zero().recip()` panic (a precondition under Verus, a runtime check
+with a message for everyone else); an exact result above the budget saturates
+to `±(2^62 − 1)`, which the `checked_*` variants report as `None` and the
+plain operations do not. `Q` turns each of those into a value.
+
+### Comparing
+
+```rust
+let a = Rat::new(1, 3).unwrap();
+let b = Rat::new(1, 2).unwrap();
+
+// Exact and total: cross-multiplication, never a float.
+assert!(a < b);
+assert_eq!(Rat::compare(a, b), -1);
+assert_eq!(Rat::min(a, b), a);
+assert_eq!(Rat::clamp(Rat::new(7, 1).unwrap(), a, b), b);
+
+// `Eq` and `Hash` are structural, and canonical form makes that value
+// equality, so `Rat` is a map key.
+let mut table = BTreeMap::new();
+table.insert(Rat::new(2, 4).unwrap(), "half");
+assert_eq!(table.get(&b), Some(&"half"));
+
+assert_eq!(Rat::new(-3, 4).unwrap().signum(), -1);
+assert!(Rat::new(3, 4).unwrap().in_unit_interval());
+assert!(Rat::zero().is_zero() && Rat::one().is_one());
+```
+
+### Reading it out
+
+```rust
+let x = Rat::new(1, 3).unwrap();
+assert_eq!(x.to_string(), "1/3"); // always `num/den`, always canonical
+assert_eq!(x.numerator(), 1);
+assert_eq!(x.denominator(), 3);
+assert!((to_f64(x) - 0.333_333_333_333_333_3).abs() < 1e-15); // display only
+```
+
+## `Q`
+
+`Q` is the total layer. It is a wrapper around `Rat`, not a rewrite: the
+kernel's invariant and proofs are untouched, and `Q` adds five payload-free
+states for the values a `Rat` cannot hold.
+
+```rust,ignore
 pub enum Q {
     Number(Rat),
-    PosSat, NegSat,   // magnitude exceeds the budget; sign known
+    PosSat, NegSat,   // a finite real whose magnitude exceeds the budget
     PosInf, NegInf,   // exactly infinite
     Nan,              // no information
 }
 ```
 
-Every operation on `Q` — arithmetic, comparison, the folds, every root and
-transcendental — is total: it returns a value in the type and never panics.
+Every operation on `Q`, including arithmetic, comparison, the folds, and every
+root and transcendental, returns a `Q` and never panics.
 
 ```rust
-use the_q::{Q, Rat, MAX_MAG};
+// Every `Rat` failure mode is a `Q` value.
+assert_eq!(Q::new(1, 0), Q::PosInf);
+assert_eq!(Q::new(-1, 0), Q::NegInf);
+assert_eq!(Q::new(0, 0), Q::Nan);
+assert_eq!(Q::new(6, 8), Q::Number(Rat::new(3, 4).unwrap()));
 
 assert_eq!(Q::div(Q::one(), Q::zero()), Q::PosInf);
-assert_eq!(Q::div(Q::zero(), Q::zero()), Q::Nan);
+assert_eq!(Q::one() / Q::zero(), Q::PosInf); // `Q` has a `/` operator
+assert_eq!(Q::zero().recip(), Q::PosInf);
+
+// Overflow is reported as saturation, distinct from infinity.
 let m = Q::Number(Rat::new(MAX_MAG, 1).unwrap());
-assert!(Q::add(m, m).is_saturated());
+let over = m + m;
+assert_eq!(over, Q::PosSat);
+assert!(over.is_saturated() && !over.is_infinite());
+assert_eq!(over.to_string(), ">max");
+
+// `checked_*` on `Q` returns `Option<Rat>`: `Some` only for a number.
+assert_eq!(Q::checked_add(m, m), None);
+assert_eq!(Q::checked_div(Q::one(), Q::zero()), None);
+assert_eq!(Q::checked_mul(Q::one(), Q::one()), Some(Rat::one()));
 ```
 
-Three deliberate choices, each different from IEEE 754:
+Three choices differ deliberately from IEEE 754, and each is proven:
 
-* `PosSat` denotes the finite reals above the budget, not infinity. So
-  `Number(0) * PosSat == Number(0)`, and there is no `is_finite()`.
-* The order is total: `Nan == Nan`, and `Nan` sorts last. `Q` can be a map key.
-  Outside `Number` the order is on representations, not values.
-* `min`/`max`/`clamp` propagate `Nan`, so a fold of `Q::min` is not
-  `iter().min()`.
+* **Saturation is finite.** `PosSat` denotes the reals above `2^62 − 1`, not
+  infinity. So `0 * PosSat == 0`, and there is no `is_finite()`, because a
+  saturated value *is* finite.
+* **The order is total.** `Nan == Nan`, and `Nan` sorts last, so `Q` is `Eq`,
+  `Hash`, `Ord`, and a valid map key. Outside `Number` the order is on
+  representations, not values.
+* **Selection propagates `Nan`.** `Q::min`, `Q::max` and `Q::clamp` return
+  `Nan` if either input is `Nan`. `Ord::min` cannot do that, so a fold of
+  `Q::min` is not `iter().min()`.
+
+```rust
+// Saturation denotes a finite real, so this is exact where `0 * inf` is not.
+assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
+assert_eq!(Q::mul(Q::zero(), Q::PosInf), Q::Nan);
+assert_eq!(Q::PosInf - Q::PosInf, Q::Nan);
+assert_eq!(Q::PosSat.abs(), Q::PosSat);
+assert_eq!(-Q::NegSat, Q::PosSat);
+
+// The order is total and `Nan == Nan`, so `Q` is a map key too.
+let mut v = vec![Q::Nan, Q::PosInf, Q::zero(), Q::NegSat, Q::NegInf];
+v.sort();
+assert_eq!(v, vec![Q::NegInf, Q::NegSat, Q::zero(), Q::PosInf, Q::Nan]);
+
+// Selection propagates `Nan`; `Ord::min` cannot, so do not fold with it.
+assert_eq!(Q::min(Q::Nan, Q::one()), Q::Nan);
+assert_eq!([Q::Nan, Q::one()].into_iter().min(), Some(Q::one()));
+
+// Every non-`Nan` value has a sign.
+assert_eq!(Q::PosSat.signum(), Some(Sign::Positive));
+assert_eq!(Q::zero().signum(), Some(Sign::Zero));
+assert_eq!(Q::Nan.signum(), None);
+```
+
+### Folds
+
+`Q::sum`, `Q::product` and `Q::weighted_mean` are fixed left folds. The order
+is part of the contract: with rounding, addition is not associative, so fixing
+the order is what makes the result bit-identical across machines and threads.
+
+```rust
+let third = Q::new(1, 3);
+assert_eq!(Q::sum(&[third, third, third]), Q::one());
+assert_eq!(Q::product(&[Q::new(2, 1), Q::new(1, 4)]), Q::new(1, 2));
+
+// `(weight, value)` pairs. Total: a zero weight sum is `Nan` or `±Inf`.
+let mean = Q::weighted_mean(&[(Q::new(1, 2), Q::one()), (Q::new(1, 2), Q::zero())]);
+assert_eq!(mean, Q::new(1, 2));
+assert_eq!(Q::weighted_mean(&[]), Q::Nan);
+
+// A `Nan` anywhere in the fold is a `Nan` result.
+assert_eq!(Q::sum(&[Q::one(), Q::Nan]), Q::Nan);
+```
+
+### Text
+
+```rust
+// `Display` and `FromStr` round-trip every state.
+for q in [
+    Q::new(-3, 4),
+    Q::PosSat,
+    Q::NegSat,
+    Q::PosInf,
+    Q::NegInf,
+    Q::Nan,
+] {
+    assert_eq!(Q::from_str(&q.to_string()), Ok(q));
+}
+assert_eq!(Q::Nan.to_string(), "nan");
+assert_eq!(Q::NegSat.to_string(), "<-max");
+
+// Input is canonicalised; a bare integer is accepted; a zero denominator
+// in *text* is a malformed numeral, not a computation.
+assert_eq!("2/4".parse::<Q>(), Ok(Q::new(1, 2)));
+assert_eq!("7".parse::<Q>(), Ok(Q::new(7, 1)));
+assert_eq!("1/0".parse::<Q>(), Err(ParseQError::ZeroDenominator));
+assert_eq!("0.5".parse::<Q>(), Err(ParseQError::Malformed));
+```
+
+## `QI`
+
+`QI` is a closed interval `[lo, hi]` of `Rat`. Its lower endpoint is always
+computed with `Dir::Down` and its upper with `Dir::Up`, so enclosure follows
+from R2 with no new rounding proofs. It is proven for `add`, `sub`, `neg` and
+`mul` across every sign pattern.
+
+```rust
+let a = QI::new(Rat::new(1, 3).unwrap(), Rat::new(1, 2).unwrap()); // [1/3, 1/2]
+let b = QI::exact(Rat::new(3, 1).unwrap()); // [3, 3]
+
+// Endpoints round outward (`lo` down, `hi` up), so enclosure is proven:
+// if `x ∈ a` and `y ∈ b` then `x ∘ y ∈ a ∘ b` for `+`, `-`, `*`.
+let s = QI::add(a, b);
+assert_eq!(s.lower(), Rat::new(10, 3).unwrap());
+assert_eq!(s.upper(), Rat::new(7, 2).unwrap());
+assert!(s.contains(Rat::add(Rat::new(2, 5).unwrap(), Rat::new(3, 1).unwrap())));
+
+let p = QI::mul(a, QI::neg(b)); // sign patterns are all handled
+assert_eq!(p.lower(), Rat::new(-3, 2).unwrap());
+assert_eq!(p.upper(), Rat::new(-1, 1).unwrap());
+
+// `width` is rounded up and returned as a `Q`: `PosSat` if too wide.
+assert_eq!(a.width(), Q::new(1, 6));
+assert_eq!(a.checked_width(), Some(Rat::new(1, 6).unwrap()));
+let whole = QI::new(
+    Rat::new(-MAX_MAG, 1).unwrap(),
+    Rat::new(MAX_MAG, 1).unwrap(),
+);
+assert_eq!(whole.width(), Q::PosSat);
+assert_eq!(whole.checked_width(), None);
+
+// `hull` is the smallest interval containing both.
+assert_eq!(
+    QI::hull(a, b),
+    QI::new(Rat::new(1, 3).unwrap(), Rat::new(3, 1).unwrap())
+);
+
+// `lo > hi` is a precondition: `new` panics, `checked_new` is `None`.
+assert_eq!(QI::checked_new(Rat::one(), Rat::zero()), None);
+```
+
+## `Exact`
+
+`Exact` is a `Rat` wrapper for callers who would rather fail than round. Its
+`add`, `sub`, `mul` and `div` succeed only when the result needs no rounding,
+and return `Result<Exact, ExactError>` (`Inexact`, or `DivisionByZero` for
+`div`) the moment they would leave the exact path. The `checked_*` variants
+return `Option` instead.
+
+The difference from `Rat::checked_*` matters: `Rat::checked_add` is `None`
+only on saturation, and silently rounds otherwise. `Exact::checked_add` is
+`None` on *any* rounding.
+
+```rust
+let half = Exact::new(Rat::new(1, 2).unwrap());
+assert_eq!(Exact::add(half, half).unwrap().value(), Rat::one());
+assert_eq!(
+    Exact::mul(half, half).unwrap().value(),
+    Rat::new(1, 4).unwrap()
+);
+
+// The same two operands `Rat::add` rounds above: here they are an error.
+let a = Exact::new(Rat::new(1, 3_037_000_493).unwrap());
+let b = Exact::new(Rat::new(1, 3_037_000_499).unwrap());
+assert_eq!(Exact::add(a, b), Err(ExactError::Inexact));
+assert_eq!(Exact::checked_add(a, b), None);
+assert!(Rat::checked_add(a.value(), b.value()).is_some()); // `Rat` only refuses saturation
+
+// Division by zero is a separate error, not a panic.
+assert_eq!(
+    Exact::div(half, Exact::new(Rat::zero())),
+    Err(ExactError::DivisionByZero)
+);
+assert_eq!(Exact::checked_div(half, Exact::new(Rat::zero())), None);
+
+// `Exact` has no `Ord`; compare with `Exact::le`.
+assert!(Exact::le(half, Exact::new(Rat::one())));
+assert!(half.is_nonneg());
+```
+
+What you buy with the refusal: associativity, distributivity and monotonicity,
+absent in general once rounding happens (see [Limits](#limits)), hold for any
+chain of `Exact` operations in which every step succeeded. That is sufficient,
+not claimed necessary, and it is proven (`theorem_exact_add_associative`,
+`theorem_exact_mul_associative`, `theorem_exact_distributive`,
+`theorem_exact_add_monotone`, `theorem_exact_mul_monotone_nonneg`).
+
+## Roots and transcendentals
+
+`sqrt`, `cbrt`, `hypot`; `exp`, `exp2`, `powf`, `pow_i32`, `ln`, `log2`,
+`log10`, `log`; `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`; `sinh`,
+`cosh`, `tanh`; and the constants `pi`, `e`, `ln2`, `ln10`, `half_pi` in the
+`transcendental` module. They live on `Q` because none of them is
+rational-closed. All are total, and all are fixed-length series, so termination
+is structural and cost is constant.
+
+```rust
+// Exact where the answer is rational.
+assert_eq!(Q::new(4, 1).sqrt(), Q::new(2, 1));
+assert_eq!(Q::new(9, 4).sqrt(), Q::new(3, 2));
+assert_eq!(Q::zero().exp(), Q::one());
+assert_eq!(Q::one().ln(), Q::zero());
+assert_eq!(Q::new(2, 1).pow_i32(-3), Q::new(1, 8)); // a fold of `mul`
+
+// Otherwise a bounded rational near the true value; accuracy is measured,
+// not proven (see the table below).
+let Q::Number(pi) = transcendental::pi() else {
+    panic!()
+};
+assert!((to_f64(pi) - std::f64::consts::PI).abs() < 1e-15);
+let Q::Number(e) = Q::one().exp() else {
+    panic!()
+};
+assert!((to_f64(e) - std::f64::consts::E).abs() < 1e-15);
+// `log2(8)` is *not* exactly 3: `ln` is a series, and the quotient of two
+// rounded logarithms is a nearby rational, not the integer.
+let Q::Number(three) = Q::new(8, 1).log2() else {
+    panic!()
+};
+assert_ne!(three, Rat::new(3, 1).unwrap());
+assert!((to_f64(three) - 3.0).abs() < 1e-15);
+
+// Total: every domain edge is a value, never a panic.
+assert_eq!(Q::new(-1, 1).sqrt(), Q::Nan);
+assert_eq!(Q::zero().ln(), Q::NegInf);
+assert_eq!(Q::new(50, 1).exp(), Q::PosSat); // above the budget
+assert_eq!(Q::new(-50, 1).exp(), Q::zero()); // below the grid
+assert_eq!(Q::PosSat.sqrt(), Q::Nan); // the image reaches back inside
+assert_eq!(Q::PosInf.atan(), transcendental::half_pi());
+assert_eq!(Q::Nan.sin(), Q::Nan);
+```
+
+Domains: `exp` returns `PosSat` above `x = 43.67` and `0` below `−44`; `sin`,
+`cos`, `tan` return `Nan` for `|x| > 2^20`; `sqrt(PosSat)` and `ln(PosSat)` are
+`Nan` because the image of the saturated region reaches back inside the budget.
+
+**Accuracy is measured, not proven.** Totality and termination are theorems;
+the error figures are observations. Two independent oracles were used, mpmath
+at 120 decimal digits and exact rational series in Common Lisp carried to
+`2^-160`, and they agree with each other to better than `2^-98` on every
+function. Worst observed error over the sweeps (`tests/transcendental.rs` and
+`scripts/accuracy/`), in R3's own metric `|got − true| / max(1, |true|)`:
+
+| function | worst error | note |
+|---|---|---|
+| `exp`, `cosh`, `sinh`, `tanh` | `2^-61` | |
+| `e` | `2^-63` | |
+| `sqrt` | `2^-61` | |
+| `hypot` | `2^-62` | |
+| `cbrt`, `powf` | `2^-60` | via `exp(ln)` |
+| `pi`, `ln2`, `atan2` | `2^-60` | |
+| `ln`, `log2` | `2^-59` | |
+| `log10` | `2^-61` | |
+| `atan`, `asin`, `acos` | `2^-58` | |
+| `sin`, `cos`, `tan` | `2^-59` at `\|x\| ≤ 1`, `2^-57` at `≤ 8`, `2^-50` at `≤ 2^10`, `2^-40` at `≤ 2^20` | reduction error grows as `\|x\| · 2^-60` |
+| `exp2` | `\|x\| · 2^-61` (`2^-55` at `x = 40`) | argument scaled by a rounded `ln 2` |
+
+Read the table with the R3 caveat below: these are absolute bounds below 1.
+`asin(0.002)` is `2^-53` *relative*; `exp(−40)` is `2^-3`; `exp(−44)` is `0`.
+`tan` near a pole inherits `cos`'s absolute error divided by `cos²`, so it is
+unbounded there. `ln` within `2^-8` of 1 keeps a small-denominator rational and
+is often far better than `2^-61` absolute, but not uniformly: `2^-52` relative
+at `1 ± 2^-24`, `2^-124` at `1 ± 2^-60`.
+
+`pi`, `e`, `ln2`, `ln10` are literals; each has a `*_series` derivation and a
+test that the two are bit-identical.
+
+## N-ary folds
+
+The `nary` module has the same three folds as `Q` for callers who stay on
+`Rat`. `sum` and `product` are total. `weighted_mean` takes `(weight, value)`
+pairs and is `None` when the rounded weight sum is zero, whether the weights
+cancel or their sum is below the grid.
+
+```rust
+let third = Rat::new(1, 3).unwrap();
+assert_eq!(nary::sum(&[third, third, third]), Rat::one());
+assert_eq!(nary::sum(&[]), Rat::zero());
+assert_eq!(
+    nary::product(&[Rat::new(2, 3).unwrap(), Rat::new(3, 4).unwrap()]),
+    Rat::new(1, 2).unwrap()
+);
+
+// `(weight, value)` pairs; `None` when the rounded weight sum is zero.
+let pairs = [
+    (Rat::new(1, 4).unwrap(), Rat::one()),
+    (Rat::new(3, 4).unwrap(), Rat::zero()),
+];
+assert_eq!(nary::weighted_mean(&pairs), Some(Rat::new(1, 4).unwrap()));
+assert_eq!(nary::weighted_mean(&[]), None);
+```
+
+The accumulation bounds are proven (V8 below): `sum` and `product` are within
+`k · m · 2^-61` after `k` steps, with `|factor| ≤ 1` for `product`, and
+`weighted_mean` is within `8k · 2^-61 / δ` when weights and values lie in
+`[0, 1]` and the exact weight sum is at least `δ`.
+
+## Conversions and serialisation
+
+`f64` in, by `from_f64_dir` (partial, directed) or `q_from_f64` (total).
+`f64` out, by `to_f64`, which is for display: it makes three roundings and is
+one of the three trusted functions (`TRUSTED.md`). There is deliberately no
+`Q → f64`, because no float honestly denotes `PosSat`.
+
+```rust
+// `0.1f64` is not one tenth; the conversion is exact about the double.
+let tenth = from_f64_dir(0.1, Dir::Nearest).unwrap();
+assert_eq!(
+    tenth,
+    Rat::new(3_602_879_701_896_397, 36_028_797_018_963_968).unwrap()
+);
+assert_ne!(tenth, Rat::from_decimal(1, 1).unwrap());
+
+// Directed conversion brackets the double when it does not fit exactly.
+let lo = from_f64_dir(1e-300, Dir::Down).unwrap();
+let hi = from_f64_dir(1e-300, Dir::Up).unwrap();
+assert!(lo <= hi);
+
+// `None` for NaN, infinity, and magnitudes above 2^61.
+assert_eq!(from_f64_dir(f64::NAN, Dir::Nearest), None);
+assert_eq!(from_f64_dir(1e300, Dir::Nearest), None);
+
+// `q_from_f64` is total. There is no `Q -> f64`: nothing denotes `PosSat`.
+assert_eq!(q_from_f64(f64::INFINITY), Q::PosInf);
+assert_eq!(q_from_f64(f64::NAN), Q::Nan);
+assert_eq!(q_from_f64(1e300), Q::PosSat);
+assert_eq!(q_from_f64(0.5), Q::new(1, 2));
+
+// `to_f64` is for display; three roundings, do not feed it back in.
+assert_eq!(to_f64(Rat::new(1, 4).unwrap()), 0.25);
+```
+
+With the `serde` feature, `Rat` encodes as the exact `[num, den]` pair and `Q`
+as that pair or the special's string. The encoding is untagged, so it decodes
+only in self-describing formats. Decoding re-canonicalises through `Rat::new`
+and rejects a malformed payload rather than constructing an invalid value.
+
+```rust
+// `Rat` is the exact `[num, den]` pair; `Q` specials are strings.
+let x = Rat::new(17, 20).unwrap();
+assert_eq!(serde_json::to_string(&x).unwrap(), "[17,20]");
+assert_eq!(serde_json::from_str::<Rat>("[17,20]").unwrap(), x);
+assert_eq!(serde_json::to_string(&Q::PosSat).unwrap(), "\">max\"");
+assert_eq!(serde_json::from_str::<Q>("\"nan\"").unwrap(), Q::Nan);
+
+// Decoding re-canonicalises and rejects a malformed pair.
+assert_eq!(
+    serde_json::from_str::<Rat>("[6,8]").unwrap(),
+    Rat::new(3, 4).unwrap()
+);
+assert!(serde_json::from_str::<Rat>("[1,0]").is_err());
+```
 
 ## The rounding contract
 
@@ -64,18 +602,18 @@ When an exact result does not fit, it snaps to a dyadic grid chosen per
 magnitude: with `k = bitlen(floor(|x|))`, the grid step is `2^-(62-k)`, capped
 at `2^-61`. Ties go to even. Proven, for every operation:
 
-| | |
+| rule | statement |
 |---|---|
 | R1 | a representable exact result is returned unchanged |
 | R2 | `Dir::Down` ≤ exact ≤ `Dir::Up` |
-| R3 | error ≤ `2^-61 · max(1, |exact|)` in every direction; `2^-62` for `Dir::Nearest`, which `add`/`sub`/`mul`/`div` use |
+| R3 | error ≤ `2^-61 · max(1, \|exact\|)` in every direction; `2^-62` for `Dir::Nearest`, which `add`/`sub`/`mul`/`div` use |
 | R4 | rounding is monotone on a fixed grid |
 
-R3 is **absolute below 1**. A result near 1 carries ~61 significant bits; a
-result near `2^-40` carries ~21; below `2^-62` a value rounds to zero. This is
-the single most important thing to know before using the crate for small
-quantities, and it governs every accuracy figure below. If small values matter,
-scale the problem.
+R3 is **absolute below 1**. A result near 1 carries about 61 significant bits;
+a result near `2^-40` carries about 21; below `2^-62` a value rounds to zero.
+This is the single most important thing to know before using the crate for
+small quantities, and it governs every accuracy figure above. If small values
+matter, scale the problem.
 
 ## Limits
 
@@ -83,7 +621,8 @@ scale the problem.
 associative and distributive only on the exact path (no intermediate rounds),
 and that is proven. The general failure is bounded:
 `|((a+b)+c) − (a+(b+c))| ≤ 4 · 2^-61 · m` for any bound `m ≥ 1` on the partial
-sums, and `|((a·b)·c) − (a·(b·c))| ≤ 6 · 2^-61` on `[0, 1]`.
+sums, and `|((a·b)·c) − (a·(b·c))| ≤ 6 · 2^-61` on `[0, 1]`. `Exact` gives the
+laws back in exchange for refusing to round.
 
 **Not globally monotone.** R4 holds on each grid, not across the
 representable/rounded boundary. Counterexample (`tests/adversarial.rs`):
@@ -108,84 +647,11 @@ R3 is scoped below the ceiling to keep one clean boundary, and results above it
 saturate. `Rat::new` also returns `None` for an `i64` pair that is already
 reduced but over budget; `Rat::new_rounded` is total in the numerator.
 
-## API
-
-Constructors: `zero`, `one`, `neg_one`, `from_int`, `new`, `new_rounded`,
-`from_decimal`, `convert::from_f64_dir`.
-
-Arithmetic: `add`, `sub`, `mul`, `div` (nearest, ties to even); `*_dir`
-(explicit direction); `checked_*` (`None` on saturation, and on a zero divisor
-for `checked_div`); `neg`, `abs`, `recip`, `min`, `max`, `clamp` (exact);
-`pow_u32` (a fold of `mul`).
-
-Comparison: `compare`, `eq_q`, `lt`, `le`, `gt`, `ge`, `Ord`/`PartialOrd` —
-exact, total. Predicates: `is_zero`, `is_one`, `signum`, `in_unit_interval`.
-
-N-ary (`nary`): `sum`, `product`, `weighted_mean` — fixed left folds, so results
-are bit-reproducible across machines and threads.
-
-Intervals (`interval::QI`): `new` (panics on `lo > hi`), `checked_new`, `add`,
-`sub`, `mul`, `neg`, `hull`, `contains`, `width` (rounded up; `Q::PosSat` when
-too wide to represent), `checked_width`. Enclosure is proven for every sign
-pattern.
-
-`Exact` (`exact::Exact`): a `Rat` wrapper whose `add`, `sub`, `mul`, `div`
-succeed only when the result needs no rounding, returning
-`Result<Exact, ExactError>` (`Inexact`, or `DivisionByZero` for `div`) the
-moment it would leave that path — `checked_*` variants return `Option`
-instead. Unlike `Rat::checked_*`, which is `None` only on saturation, `Exact`'s
-`checked_*` is `None` on *any* rounding, saturating or not. Associativity,
-distributivity, and monotonicity, absent in general once rounding happens
-(see Limits above), hold for a chain of `Exact` operations whenever every
-operation in the chain succeeded — sufficient, not claimed necessary
-(`theorem_exact_add_associative`, `theorem_exact_mul_associative`,
-`theorem_exact_distributive`, `theorem_exact_add_monotone`,
-`theorem_exact_mul_monotone_nonneg`).
-
-Out: `to_f64` (display only; see `TRUSTED.md`), `Display` (`num/den`), serde
-(feature-gated; encodes the exact pair).
-
-### Roots and transcendentals, on `Q`
-
-`sqrt`, `cbrt`, `hypot`; `exp`, `exp2`, `powf`, `pow_i32`, `ln`, `log2`,
-`log10`, `log`; `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`; `sinh`,
-`cosh`, `tanh`; constants `pi`, `e`, `ln2`, `ln10`, `half_pi`. All total, all
-fixed-length series (termination is structural, cost is constant). They live on
-`Q` because none is rational-closed.
-
-Domains: `exp` returns `PosSat` above `x = 43.67` and `0` below `−44`; `sin`,
-`cos`, `tan` return `Nan` for `|x| > 2^20`; `sqrt(PosSat)` and `ln(PosSat)` are
-`Nan` because the image of the saturated region reaches back inside the budget.
-
-**Accuracy is measured, not proven.** Two independent oracles were used — mpmath
-at 120 decimal digits, and exact rational series in Common Lisp carried to
-`2^-160` — and they agree with each other to better than `2^-98` on every
-function. Worst observed error over the sweeps (`tests/transcendental.rs` and
-`scripts/accuracy/`), in R3's own metric `|got − true| / max(1, |true|)`:
-
-| function | worst error | note |
-|---|---|---|
-| `exp`, `cosh`, `sinh`, `tanh` | `2^-61` | |
-| `e` | `2^-63` | |
-| `sqrt` | `2^-61` | |
-| `hypot` | `2^-62` | |
-| `cbrt`, `powf` | `2^-60` | via `exp(ln)` |
-| `pi`, `ln2`, `atan2` | `2^-60` | |
-| `ln`, `log2` | `2^-59` | |
-| `log10` | `2^-61` | |
-| `atan`, `asin`, `acos` | `2^-58` | |
-| `sin`, `cos`, `tan` | `2^-59` at `|x| ≤ 1`, `2^-57` at `≤ 8`, `2^-50` at `≤ 2^10`, `2^-40` at `≤ 2^20` | reduction error grows as `|x| · 2^-60` |
-| `exp2` | `|x| · 2^-61` (`2^-55` at `x = 40`) | argument scaled by a rounded `ln 2` |
-
-Read the table with the R3 caveat above: these are absolute bounds below 1.
-`asin(0.002)` is `2^-53` *relative*; `exp(−40)` is `2^-3`; `exp(−44)` is `0`.
-`tan` near a pole inherits `cos`'s absolute error divided by `cos²`, so it is
-unbounded there. `ln` within `2^-8` of 1 keeps a small-denominator rational and
-is often far better than `2^-61` absolute, but not uniformly: `2^-52` relative
-at `1 ± 2^-24`, `2^-124` at `1 ± 2^-60`.
-
-`pi`, `e`, `ln2`, `ln10` are literals; each has a `*_series` derivation and a
-test that the two are bit-identical.
+**Transcendentals are not exact at rational points.** `log2(8)` is a rational
+within `2^-59` of 3, not 3, because `ln` is a series and `log2` is a quotient
+of two rounded logarithms. Where the algorithm happens to land on the exact
+answer (`sqrt` of a perfect square, `exp(0)`, `ln(1)`) it does so by
+construction, not by contract.
 
 ## What is proven
 
@@ -208,9 +674,9 @@ test that the two are bit-identical.
 * **V9** `Q`: totality, classification, total order, `Nan` absorption.
 * **V10** Transcendentals: totality and termination. `isqrt` is exactly the
   integer square root.
-* The associativity bounds under Limits, interval enclosure, and the value
-  pinning of every constructor including the `f64` decomposition's integer
-  core.
+* The associativity bounds under Limits, interval enclosure, the `Exact` laws,
+  and the value pinning of every constructor including the `f64`
+  decomposition's integer core.
 
 **Not proven**: the `f64` decode/encode (trusted, tested); transcendental
 accuracy (measured, above); `pow_u32`'s value (only its well-formedness);
@@ -225,7 +691,9 @@ checks R3's nearest bound, the weighted-mean bound and interval enclosure on
 random operands; `tests/props.rs` covers the invariant, the laws, and
 byte-identical results across eight threads; `tests/adversarial.rs` holds the
 budget edges and both counterexamples; `tests/transcendental.rs` carries the
-accuracy oracles. Overflow checks stay on in release.
+accuracy oracles; `tests/readme_examples.rs` compiles and runs every code block
+on this page and fails if one drifts from this file. Every public function has
+a doctest. Overflow checks stay on in release.
 
 ## Performance
 
@@ -262,10 +730,6 @@ bound and is cheaper between roughly `k = 8` and `k = 2000`. An 8-pair
 `weighted_mean` is 8.0 µs against 5.3 µs exact. Transcendentals: `exp` 0.6 µs,
 `ln` 1.5 µs, `sqrt` 11 µs, `sin`/`cos` 17–19 µs, `atan` 32 µs.
 
-`the-q` is the right tool when memory must be flat, chains are long or
-unbounded, or the per-step error must be a proven number. For short exact
-computations use an exact rational; for speed use `f64`.
-
 ## Verification
 
 Specifications and proofs live in the source inside `verus!` blocks. `cargo
@@ -274,14 +738,19 @@ build` compiles them with plain rustc; `cargo verus verify` checks them.
 the three trusted functions; `docs/SPEC.md` the original specification with its
 six recorded departures.
 
+```sh
+cargo test --locked --all-features
+cargo verus verify --locked --all-features -- --multiple-errors 8
+```
+
 ## Licence
 
 Dual-licensed. Free under AGPL-3.0-or-later: use, modify, and redistribute
 freely, including as a network service, as long as you release your source
-under the same terms (`AGPL-3.0-or-later` section 13 — the network-use
-clause — applies to any service built on this crate, not only to
-redistributed binaries). If that obligation does not work for your use —
-most commercial and closed-source use — a separate commercial licence is
+under the same terms (`AGPL-3.0-or-later` section 13, the network-use
+clause, applies to any service built on this crate, not only to
+redistributed binaries). If that obligation does not work for your use, which
+covers most commercial and closed-source use, a separate commercial licence is
 available; contact the author for terms.
 
 The LGPL-3.0-only oracle `malachite-q` is a dev-dependency only and never
