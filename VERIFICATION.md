@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1093 verified, 0 errors     <- the-q
+verification results:: 1097 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -28,9 +28,8 @@ calls into foreign crate types Verus has no model of, the same way
 `q_from_f64`/`q_from_rust_decimal` already are. `from_decimal128_dir`/
 `from_decimal128_exact` were left as originally verified rather than
 retrofitted onto this shared core, since there was no local Verus binary
-available to re-confirm a refactor of already-merged, CI-verified code; a CI
-run of `cargo verus verify` after this change is the source of the refreshed
-count above.
+available to re-confirm a refactor of already-merged, CI-verified code. CI's
+`verus verify` confirmed the four new obligations (1097, up from 1093).
 
 ## Independent of the proofs
 
