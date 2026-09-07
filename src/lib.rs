@@ -106,6 +106,7 @@ pub mod laws;
 pub mod laws_q;
 pub mod lipschitz;
 pub mod soundness;
+pub mod soundness_mul;
 pub mod nary;
 pub mod transcendental;
 
