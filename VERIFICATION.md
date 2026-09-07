@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1200 verified, 0 errors     <- the-q
+verification results:: 1209 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -11,6 +11,28 @@ callee context. `verus verify` is a required CI check. No `assume(...)` or
 `admit()` appears in `src/`. Three functions are `external_body`, all in
 `TRUSTED.md`: `from_f64_dir` and `to_f64` at the `f64` edge, and
 `q::require_condition`, a runtime guard trusted for its panic message only.
+
+`convert::pow10_i128`, `convert::from_decimal128_dir`, and
+`convert::from_decimal128_exact` (issue #33, the `mantissa · 10^-scale`
+boundary a `rust_decimal::Decimal` needs, and the refuse-rather-than-round
+path into `Exact`) account for the five added since the count above was last
+quoted.
+
+`convert::from_ratio128_dir`/`from_ratio128_exact` (issue #33 follow-up) are
+new verified functions beyond that: the shared `(n, d) -> Rat` core every
+other external-library adapter (`fixed`, `num-rational`, `num-bigint`,
+`bigdecimal`) is built on. Everything past that core (the per-library
+adapters themselves, and the `Q`/`Exact` fallbacks that use it) is outside
+`verus!` — `#[cfg_attr(verus_keep_ghost, verifier::external)]` — since it
+calls into foreign crate types Verus has no model of, the same way
+`q_from_f64`/`q_from_rust_decimal` already are. `from_decimal128_dir`/
+`from_decimal128_exact` were left as originally verified rather than
+retrofitted onto this shared core, since there was no local Verus binary
+available to re-confirm a refactor of already-merged, CI-verified code. CI's
+`verus verify` confirmed the four new obligations (1097, up from 1093).
+
+V11 (below) accounts for the rest of the count above: `Q`'s algebraic laws and
+the containment obligation for its propagation tables (issues #26, #28).
 
 ## Independent of the proofs
 
