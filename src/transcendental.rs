@@ -30,6 +30,14 @@ verus! {
 /// integers, then a bounded correction whose exit conditions establish the
 /// postcondition directly (Newton alone would need AM-GM over integer
 /// division).
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// semver-stable API.
+///
+/// ```
+/// assert_eq!(the_q::transcendental::isqrt_i64(10), 3);
+/// assert_eq!(the_q::transcendental::isqrt_i64(16), 4);
+/// ```
 pub fn isqrt_i64(n: i64) -> (r: i64)
     requires
         // Every caller passes a `Rat` component, which the type invariant
@@ -268,6 +276,13 @@ impl Q {
     /// The square root. Negative → `Nan`; `PosSat` → `Nan` (its image reaches
     /// below `MAX_MAG`); `PosInf` → `PosInf`. Seven Newton steps from the
     /// integer-root seed.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::new(4, 1).sqrt(), Q::new(2, 1));
+    /// assert_eq!(Q::PosSat.sqrt(), Q::Nan);
+    /// ```
     pub fn sqrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -932,6 +947,20 @@ impl Q {
     /// not contain zero, whereas underflow of a `Number` is inside R3.
     /// Evaluated by [`crate::fx::fx_exp_reduced`] and reassembled here; the
     /// `m >= 62` branch keeps results between `2^61` and `MAX_MAG` numeric.
+    ///
+    /// Accuracy is measured, not proven.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let e2 = Q::new(2, 1).exp();
+    /// if let Q::Number(x) = e2 {
+    ///     assert!((the_q::to_f64(x) - 7.38905609893065).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// assert_eq!(Q::new(100, 1).exp(), Q::PosSat);
+    /// ```
     pub fn exp(self) -> (r: Q)
         requires
             self.wf(),
@@ -1066,6 +1095,15 @@ fn atanh_series(z: Q) -> (r: Q)
 }
 
 /// `e` by `Σ 1/n!`, independently of `exp`; the derivation of [`e`].
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// semver-stable API. Bit-identical to [`e`] (see `e_is_the_series_value`).
+///
+/// ```
+/// use the_q::transcendental::{e, e_series};
+///
+/// assert_eq!(e_series(), e());
+/// ```
 pub fn e_series() -> (r: Q)
     ensures
         r.wf(),
@@ -1092,6 +1130,17 @@ pub fn e_series() -> (r: Q)
 /// The literal is the value that [`e_series`] computes. The test
 /// `e_is_the_series_value` asserts that the two are bit-identical. See [`ln2`]
 /// for the reason to use a checked literal instead of a series call.
+///
+/// ```
+/// use the_q::Q;
+/// use the_q::transcendental::e;
+///
+/// if let Q::Number(x) = e() {
+///     assert!((the_q::to_f64(x) - std::f64::consts::E).abs() < 1e-9);
+/// } else {
+///     panic!("expected a number");
+/// }
+/// ```
 pub fn e() -> (r: Q)
     ensures
         r.wf(),
@@ -1104,6 +1153,15 @@ pub fn e() -> (r: Q)
 /// This function is the derivation of [`ln2`], which returns the same value as
 /// a literal. Twenty series terms on each call dominate the cost of each
 /// caller, thus [`ln2`] uses the literal.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// semver-stable API. Bit-identical to [`ln2`] (see `ln2_is_the_series_value`).
+///
+/// ```
+/// use the_q::transcendental::{ln2, ln2_series};
+///
+/// assert_eq!(ln2_series(), ln2());
+/// ```
 pub fn ln2_series() -> (r: Q)
     ensures
         r.wf(),
@@ -1113,6 +1171,17 @@ pub fn ln2_series() -> (r: Q)
 
 /// `ln 2` as a literal; `ln2_is_the_series_value` checks it against
 /// [`ln2_series`] bit for bit.
+///
+/// ```
+/// use the_q::Q;
+/// use the_q::transcendental::ln2;
+///
+/// if let Q::Number(x) = ln2() {
+///     assert!((the_q::to_f64(x) - std::f64::consts::LN_2).abs() < 1e-9);
+/// } else {
+///     panic!("expected a number");
+/// }
+/// ```
 pub fn ln2() -> (r: Q)
     ensures
         r.wf(),
@@ -1124,6 +1193,14 @@ impl Q {
     /// The natural logarithm. `ln(0)` is `NegInf`; negative and `PosSat` are
     /// `Nan`. Binary reduction to `m ∈ [1/2, 2]`, then
     /// `ln(m) = 2·atanh((m-1)/(m+1))` with `|argument| <= 1/3`, plus `k·ln 2`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::one().ln(), Q::zero());
+    /// assert_eq!(Q::zero().ln(), Q::NegInf);
+    /// assert_eq!(Q::new(-1, 1).ln(), Q::Nan);
+    /// ```
     pub fn ln(self) -> (r: Q)
         requires
             self.wf(),
@@ -1225,6 +1302,13 @@ impl Q {
 
     /// `self^e`; `pow_i32(a, -n)` is `recip(pow_u32(a, n))`, so `pow_i32(0, -1)`
     /// is `PosInf`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::new(2, 1).pow_i32(3), Q::new(8, 1));
+    /// assert_eq!(Q::zero().pow_i32(-1), Q::PosInf);
+    /// ```
     pub fn pow_i32(self, e: i32) -> (r: Q)
         requires
             self.wf(),
@@ -1285,6 +1369,15 @@ fn atan_series(z: Q) -> (r: Q)
 }
 
 /// `π` by Machin, `16·atan(1/5) − 4·atan(1/239)`; the derivation of [`pi`].
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// semver-stable API. Bit-identical to [`pi`] (see `pi_is_the_series_value`).
+///
+/// ```
+/// use the_q::transcendental::{pi, pi_series};
+///
+/// assert_eq!(pi_series(), pi());
+/// ```
 pub fn pi_series() -> (r: Q)
     ensures
         r.wf(),
@@ -1299,6 +1392,17 @@ pub fn pi_series() -> (r: Q)
 /// The literal is the value that [`pi_series`] computes. The test
 /// `pi_is_the_series_value` asserts that the two are bit-identical. See [`ln2`]
 /// for the reason to use a checked literal.
+///
+/// ```
+/// use the_q::Q;
+/// use the_q::transcendental::pi;
+///
+/// if let Q::Number(x) = pi() {
+///     assert!((the_q::to_f64(x) - std::f64::consts::PI).abs() < 1e-9);
+/// } else {
+///     panic!("expected a number");
+/// }
+/// ```
 pub fn pi() -> (r: Q)
     ensures
         r.wf(),
@@ -1307,6 +1411,13 @@ pub fn pi() -> (r: Q)
 }
 
 /// `π/2`.
+///
+/// ```
+/// use the_q::Q;
+/// use the_q::transcendental::{half_pi, pi};
+///
+/// assert_eq!(half_pi(), Q::div(pi(), Q::new(2, 1)));
+/// ```
 pub fn half_pi() -> (r: Q)
     ensures
         r.wf(),
@@ -1419,6 +1530,14 @@ impl Q {
     /// The arctangent in `(-π/2, π/2)`; `atan(±∞) = ±π/2`, `atan(PosSat)` is
     /// `Nan`. Reduced by `|x| > 1 → π/2 − atan(1/x)` and
     /// `|x| > 1/2 → π/4 + atan((x−1)/(x+1))` to `|x| <= 1/2` before the series.
+    ///
+    /// ```
+    /// use the_q::Q;
+    /// use the_q::transcendental::half_pi;
+    ///
+    /// assert_eq!(Q::PosInf.atan(), half_pi());
+    /// assert_eq!(Q::PosSat.atan(), Q::Nan);
+    /// ```
     pub fn atan(self) -> (r: Q)
         requires
             self.wf(),
@@ -1473,6 +1592,13 @@ impl Q {
 
     /// The sine. `Nan` for `|x| > 2^20` and for every special. Reduction
     /// `r = x − round(x / (π/2)) · π/2`, then the series selected by `n mod 4`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().sin(), Q::zero());
+    /// assert_eq!(Q::new((1i64 << 20) + 1, 1).sin(), Q::Nan);
+    /// ```
     pub fn sin(self) -> (r: Q)
         requires
             self.wf(),
@@ -1483,6 +1609,13 @@ impl Q {
     }
 
     /// The cosine. Same domain and method as [`Q::sin`].
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().cos(), Q::one());
+    /// assert_eq!(Q::new((1i64 << 20) + 1, 1).cos(), Q::Nan);
+    /// ```
     pub fn cos(self) -> (r: Q)
         requires
             self.wf(),
@@ -1543,6 +1676,13 @@ impl Q {
     /// At an odd multiple of `π/2` the cosine is near zero. The quotient then
     /// saturates or gives an infinity, and does not trap. `tan` has a pole at
     /// those points.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().tan(), Q::zero());
+    /// assert_eq!(Q::new((1i64 << 20) + 1, 1).tan(), Q::Nan);
+    /// ```
     pub fn tan(self) -> (r: Q)
         requires
             self.wf(),
@@ -1557,6 +1697,15 @@ impl Q {
 /// `ln(10)`, by applying [`Q::ln`] to ten.
 ///
 /// The derivation of [`ln10`]; see [`ln2`] for why the value is pinned.
+///
+/// Public only because Verus's visibility rules require it; not part of the
+/// semver-stable API. Bit-identical to [`ln10`] (see `ln10_is_the_series_value`).
+///
+/// ```
+/// use the_q::transcendental::{ln10, ln10_series};
+///
+/// assert_eq!(ln10_series(), ln10());
+/// ```
 pub fn ln10_series() -> (r: Q)
     ensures
         r.wf(),
@@ -1565,6 +1714,17 @@ pub fn ln10_series() -> (r: Q)
 }
 
 /// `ln 10` as a literal, checked against [`ln10_series`] by test.
+///
+/// ```
+/// use the_q::Q;
+/// use the_q::transcendental::ln10;
+///
+/// if let Q::Number(x) = ln10() {
+///     assert!((the_q::to_f64(x) - std::f64::consts::LN_10).abs() < 1e-9);
+/// } else {
+///     panic!("expected a number");
+/// }
+/// ```
 pub fn ln10() -> (r: Q)
     ensures
         r.wf(),
@@ -1574,6 +1734,17 @@ pub fn ln10() -> (r: Q)
 
 impl Q {
     /// The base-2 logarithm, as `ln(self) / ln(2)`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let l = Q::new(8, 1).log2();
+    /// if let Q::Number(x) = l {
+    ///     assert!((the_q::to_f64(x) - 3.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// ```
     pub fn log2(self) -> (r: Q)
         requires
             self.wf(),
@@ -1584,6 +1755,17 @@ impl Q {
     }
 
     /// The base-10 logarithm, as `ln(self) / ln(10)`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let l = Q::new(100, 1).log10();
+    /// if let Q::Number(x) = l {
+    ///     assert!((the_q::to_f64(x) - 2.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// ```
     pub fn log10(self) -> (r: Q)
         requires
             self.wf(),
@@ -1597,6 +1779,18 @@ impl Q {
     ///
     /// A base of `1` gives a zero denominator, thus an infinity or `Nan`. The
     /// function `log_1` is undefined.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let l = Q::new(8, 1).log(Q::new(2, 1));
+    /// if let Q::Number(x) = l {
+    ///     assert!((the_q::to_f64(x) - 3.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// assert_eq!(Q::new(8, 1).log(Q::one()), Q::PosInf);
+    /// ```
     pub fn log(self, base: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1608,6 +1802,20 @@ impl Q {
     }
 
     /// `2^self`, as `exp(self · ln 2)`.
+    ///
+    /// Accuracy is measured, not proven; the result need not be the exact
+    /// rational power.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let r = Q::new(3, 1).exp2();
+    /// if let Q::Number(x) = r {
+    ///     assert!((the_q::to_f64(x) - 8.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// ```
     pub fn exp2(self) -> (r: Q)
         requires
             self.wf(),
@@ -1619,6 +1827,18 @@ impl Q {
 
     /// `self^exponent` as `exp(exponent · ln(self))`: `Nan` for a negative base
     /// (use [`Q::pow_i32`] for integer exponents); `0^0` is `1`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let r = Q::new(2, 1).powf(Q::new(3, 1));
+    /// if let Q::Number(x) = r {
+    ///     assert!((the_q::to_f64(x) - 8.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// assert_eq!(Q::new(-1, 1).powf(Q::new(2, 1)), Q::Nan);
+    /// ```
     pub fn powf(self, exponent: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1647,6 +1867,20 @@ impl Q {
     }
 
     /// The cube root on the whole real line, as `±exp(ln|x| / 3)`.
+    ///
+    /// Accuracy is measured, not proven.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// let r = Q::new(8, 1).cbrt();
+    /// if let Q::Number(x) = r {
+    ///     assert!((the_q::to_f64(x) - 2.0).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// assert_eq!(Q::PosSat.cbrt(), Q::Nan);
+    /// ```
     pub fn cbrt(self) -> (r: Q)
         requires
             self.wf(),
@@ -1680,6 +1914,13 @@ impl Q {
 
     /// `sqrt(self² + other²)` as `|a|·sqrt(1 + (b/a)²)` with `a` the larger, so
     /// the square stays representable when `a² + b²` does not.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::new(3, 1).hypot(Q::new(4, 1)), Q::new(5, 1));
+    /// assert_eq!(Q::zero().hypot(Q::zero()), Q::zero());
+    /// ```
     pub fn hypot(self, other: Q) -> (r: Q)
         requires
             self.wf(),
@@ -1703,6 +1944,13 @@ impl Q {
 
     /// `(e^x − e^-x) / 2`; beyond `|x| > 22` it is `±e^(|x| − ln 2)` to within the
     /// grid, which saturates cleanly instead of dividing a `PosSat` by two.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().sinh(), Q::zero());
+    /// assert_eq!(Q::new(100, 1).sinh(), Q::PosSat);
+    /// ```
     pub fn sinh(self) -> (r: Q)
         requires
             self.wf(),
@@ -1730,6 +1978,13 @@ impl Q {
 
     /// The hyperbolic cosine, `(e^x + e^-x) / 2`, with the same large-argument
     /// path as [`Q::sinh`].
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().cosh(), Q::one());
+    /// assert_eq!(Q::new(100, 1).cosh(), Q::PosSat);
+    /// ```
     pub fn cosh(self) -> (r: Q)
         requires
             self.wf(),
@@ -1753,6 +2008,14 @@ impl Q {
 
     /// `sinh / cosh`; `±1` beyond `|x| >= 22` (where `1 − |tanh x| < 2^-62`) and
     /// for the infinite and saturated states.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().tanh(), Q::zero());
+    /// assert_eq!(Q::new(100, 1).tanh(), Q::one());
+    /// assert_eq!(Q::PosInf.tanh(), Q::one());
+    /// ```
     pub fn tanh(self) -> (r: Q)
         requires
             self.wf(),
@@ -1781,6 +2044,14 @@ impl Q {
     /// The result is `Nan` outside `[-1, 1]`, where there is no real answer.
     /// The function computes the endpoints directly. The identity below divides
     /// by zero at those two points.
+    ///
+    /// ```
+    /// use the_q::Q;
+    /// use the_q::transcendental::half_pi;
+    ///
+    /// assert_eq!(Q::one().asin(), half_pi());
+    /// assert_eq!(Q::new(2, 1).asin(), Q::Nan);
+    /// ```
     pub fn asin(self) -> (r: Q)
         requires
             self.wf(),
@@ -1812,6 +2083,18 @@ impl Q {
     }
 
     /// The arccosine, in `[0, π]`, as `π/2 - asin(self)`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::one().acos(), Q::zero());
+    /// let r = Q::zero().acos();
+    /// if let Q::Number(x) = r {
+    ///     assert!((the_q::to_f64(x) - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+    /// } else {
+    ///     panic!("expected a number");
+    /// }
+    /// ```
     pub fn acos(self) -> (r: Q)
         requires
             self.wf(),
@@ -1822,6 +2105,13 @@ impl Q {
     }
 
     /// The angle of `(x, y)` in `(-π, π]`; `atan2(0, 0)` is `Nan`.
+    ///
+    /// ```
+    /// use the_q::Q;
+    ///
+    /// assert_eq!(Q::zero().atan2(Q::one()), Q::zero());
+    /// assert_eq!(Q::zero().atan2(Q::zero()), Q::Nan);
+    /// ```
     pub fn atan2(self, x: Q) -> (r: Q)
         requires
             self.wf(),

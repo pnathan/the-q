@@ -36,9 +36,12 @@ the containment obligation for its propagation tables (issues #26, #28).
 
 ## Independent of the proofs
 
-* 207 default-feature and 217 all-feature tests, debug and release, plus six
-  doctests, four of them `compile_fail` checks that `Rat` and `QI` cannot be
-  built or mutated from outside the crate.
+* 253 default-feature and 308 all-feature tests, debug and release, plus 210
+  doctests with all features (187 with none): every executable public
+  function has one, and six are `compile_fail` checks that `Rat`, `QI` and
+  `Exact` cannot be built or mutated from outside the crate.
+  `tests/readme_examples.rs` runs every code block in `README.md` and fails
+  if a block is not reproduced there verbatim.
 * Differential tests against `malachite-q`: 20,000 random cases per operation
   per direction against R1–R3, plus every `p/q` with `|p|, q ≤ 12`.
 * Overflow checks on in both profiles; byte-identical results across eight

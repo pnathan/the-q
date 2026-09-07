@@ -130,6 +130,14 @@ impl Rat {
 
     /// The numerator of the canonical representation. Always coprime to
     /// [`Rat::denominator`].
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let r = Rat::new(-3, 6).unwrap();
+    /// assert_eq!(r.numerator(), -1);
+    /// assert_eq!(r.denominator(), 2);
+    /// ```
     pub fn numerator(&self) -> (r: i64)
         ensures r as int == self.n(),
     {
@@ -137,6 +145,14 @@ impl Rat {
     }
 
     /// The denominator of the canonical representation. Always `>= 1`.
+    ///
+    /// ```
+    /// use the_q::Rat;
+    ///
+    /// let r = Rat::new(3, 6).unwrap();
+    /// assert_eq!(r.denominator(), 2);
+    /// assert_eq!(Rat::one().denominator(), 1);
+    /// ```
     pub fn denominator(&self) -> (r: i64)
         ensures r as int == self.d(),
     {

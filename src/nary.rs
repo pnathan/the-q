@@ -97,6 +97,15 @@ pub open spec fn all_unit(s: Seq<Rat>) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `xs[0] + xs[1] + ... `, left to right. Empty slice gives `0`.
+///
+/// ```
+/// use the_q::Rat;
+/// use the_q::nary;
+///
+/// let xs = [Rat::one(), Rat::one(), Rat::new(1, 2).unwrap()];
+/// assert_eq!(nary::sum(&xs), Rat::new(5, 2).unwrap());
+/// assert_eq!(nary::sum(&[]), Rat::zero());
+/// ```
 pub fn sum(xs: &[Rat]) -> (r: Rat)
     requires
         all_wf(xs@),
@@ -150,6 +159,15 @@ pub proof fn lemma_fold_snoc(s: Seq<Rat>, i: int)
 }
 
 /// `xs[0] * xs[1] * ... `, left to right. Empty slice gives `1`.
+///
+/// ```
+/// use the_q::Rat;
+/// use the_q::nary;
+///
+/// let xs = [Rat::new(1, 2).unwrap(), Rat::new(2, 3).unwrap()];
+/// assert_eq!(nary::product(&xs), Rat::new(1, 3).unwrap());
+/// assert_eq!(nary::product(&[]), Rat::one());
+/// ```
 pub fn product(xs: &[Rat]) -> (r: Rat)
     requires
         all_wf(xs@),
@@ -223,6 +241,18 @@ pub open spec fn all_unit_pairs(s: Seq<(Rat, Rat)>) -> bool {
 
 /// `sum(w_i · x_i) / sum(w_i)`; `None` when the *rounded* weight sum is zero,
 /// whether the weights cancel or their sum is below the grid.
+///
+/// ```
+/// use the_q::Rat;
+/// use the_q::nary;
+///
+/// let pairs = [
+///     (Rat::one(), Rat::zero()),
+///     (Rat::one(), Rat::new(2, 1).unwrap()),
+/// ];
+/// assert_eq!(nary::weighted_mean(&pairs), Some(Rat::one()));
+/// assert_eq!(nary::weighted_mean(&[]), None);
+/// ```
 pub fn weighted_mean(pairs: &[(Rat, Rat)]) -> (r: Option<Rat>)
     requires
         all_wf_pairs(pairs@),

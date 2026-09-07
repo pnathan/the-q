@@ -56,6 +56,13 @@ impl QI {
     }
 
     /// The lower endpoint.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::new(1, 2).unwrap(), Rat::new(3, 2).unwrap());
+    /// assert_eq!(i.lower(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn lower(&self) -> (r: Rat)
         ensures r == self.spec_lower(),
     {
@@ -64,6 +71,13 @@ impl QI {
     }
 
     /// The upper endpoint.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::new(1, 2).unwrap(), Rat::new(3, 2).unwrap());
+    /// assert_eq!(i.upper(), Rat::new(3, 2).unwrap());
+    /// ```
     pub fn upper(&self) -> (r: Rat)
         ensures r == self.spec_upper(),
     {
@@ -80,6 +94,14 @@ impl QI {
     }
 
     /// The degenerate interval `[a, a]`.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::exact(Rat::new(1, 2).unwrap());
+    /// assert_eq!(i.lower(), Rat::new(1, 2).unwrap());
+    /// assert_eq!(i.upper(), Rat::new(1, 2).unwrap());
+    /// ```
     pub fn exact(a: Rat) -> (r: QI)
         requires
             a.wf(),
@@ -92,6 +114,22 @@ impl QI {
     }
 
     /// `[lo, hi]`, requiring the endpoints to be ordered.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::zero(), Rat::one());
+    /// assert_eq!(i.lower(), Rat::zero());
+    /// assert_eq!(i.upper(), Rat::one());
+    /// ```
+    ///
+    /// Panics when `lo > hi`. Use [`QI::checked_new`] for untrusted input:
+    ///
+    /// ```should_panic
+    /// use the_q::{QI, Rat};
+    ///
+    /// let _ = QI::new(Rat::one(), Rat::zero());
+    /// ```
     pub fn new(lo: Rat, hi: Rat) -> (r: QI)
         requires
             lo.wf(),
@@ -110,6 +148,13 @@ impl QI {
     }
 
     /// Constructs `[lo, hi]`, returning `None` when the endpoints are reversed.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// assert!(QI::checked_new(Rat::zero(), Rat::one()).is_some());
+    /// assert!(QI::checked_new(Rat::one(), Rat::zero()).is_none());
+    /// ```
     pub fn checked_new(lo: Rat, hi: Rat) -> (r: Option<QI>)
         requires
             lo.wf(),
@@ -128,6 +173,14 @@ impl QI {
     }
 
     /// Whether `x` lies inside the interval.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::zero(), Rat::one());
+    /// assert!(i.contains(Rat::new(1, 2).unwrap()));
+    /// assert!(!i.contains(Rat::new(3, 2).unwrap()));
+    /// ```
     pub fn contains(&self, x: Rat) -> (r: bool)
         requires
             self.wf(),
@@ -140,6 +193,13 @@ impl QI {
 
     /// An upward-rounded `hi - lo`, or `None` when its magnitude exceeds the
     /// representable range.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::zero(), Rat::one());
+    /// assert_eq!(i.checked_width(), Some(Rat::one()));
+    /// ```
     pub fn checked_width(&self) -> (r: Option<Rat>)
         requires
             self.wf(),
@@ -195,6 +255,13 @@ impl QI {
 
     /// The upward-rounded width, with magnitude overflow reported as
     /// [`Q::PosSat`]. Zero means the computation stayed on the exact path.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat, Q};
+    ///
+    /// let i = QI::new(Rat::zero(), Rat::one());
+    /// assert_eq!(i.width(), Q::Number(Rat::one()));
+    /// ```
     pub fn width(&self) -> (r: Q)
         requires
             self.wf(),
@@ -220,6 +287,20 @@ impl QI {
 
     /// `[a.lo + b.lo, a.hi + b.hi]`, outward rounded; `wf` by
     /// `lemma_directed_round_order`.
+    ///
+    /// Enclosure: if `a` contains `x` and `b` contains `y`, `QI::add(a, b)`
+    /// contains `x + y`.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let a = QI::new(Rat::zero(), Rat::one());
+    /// let b = QI::new(Rat::new(1, 2).unwrap(), Rat::new(3, 2).unwrap());
+    /// let sum = QI::add(a, b);
+    /// let (x, y) = (Rat::new(1, 4).unwrap(), Rat::one());
+    /// assert!(a.contains(x) && b.contains(y));
+    /// assert!(sum.contains(Rat::add(x, y)));
+    /// ```
     pub fn add(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -271,6 +352,17 @@ impl QI {
     }
 
     /// `[a.lo - b.hi, a.hi - b.lo]`, outward rounded.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let a = QI::new(Rat::zero(), Rat::one());
+    /// let b = QI::new(Rat::new(1, 2).unwrap(), Rat::new(3, 2).unwrap());
+    /// let diff = QI::sub(a, b);
+    /// let (x, y) = (Rat::new(1, 4).unwrap(), Rat::one());
+    /// assert!(a.contains(x) && b.contains(y));
+    /// assert!(diff.contains(Rat::sub(x, y)));
+    /// ```
     pub fn sub(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -337,6 +429,15 @@ impl QI {
     }
 
     /// Interval negation: `[-hi, -lo]`. Exact.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let i = QI::new(Rat::zero(), Rat::one());
+    /// let n = QI::neg(i);
+    /// assert_eq!(n.lower(), Rat::new(-1, 1).unwrap());
+    /// assert_eq!(n.upper(), Rat::zero());
+    /// ```
     pub fn neg(a: QI) -> (r: QI)
         requires
             a.wf(),
@@ -362,6 +463,16 @@ impl QI {
 
     /// Min and max of the four outward-rounded corner products;
     /// `theorem_interval_mul_contains` is the corner rule.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let a = QI::new(Rat::zero(), Rat::new(2, 1).unwrap());
+    /// let b = QI::new(Rat::new(-1, 1).unwrap(), Rat::one());
+    /// let p = QI::mul(a, b);
+    /// assert_eq!(p.lower(), Rat::new(-2, 1).unwrap());
+    /// assert_eq!(p.upper(), Rat::new(2, 1).unwrap());
+    /// ```
     pub fn mul(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),
@@ -401,6 +512,16 @@ impl QI {
 
     /// The union hull of two intervals: the smallest interval containing
     /// both.
+    ///
+    /// ```
+    /// use the_q::{QI, Rat};
+    ///
+    /// let a = QI::new(Rat::zero(), Rat::one());
+    /// let b = QI::new(Rat::new(2, 1).unwrap(), Rat::new(3, 1).unwrap());
+    /// let h = QI::hull(a, b);
+    /// assert_eq!(h.lower(), Rat::zero());
+    /// assert_eq!(h.upper(), Rat::new(3, 1).unwrap());
+    /// ```
     pub fn hull(a: QI, b: QI) -> (r: QI)
         requires
             a.wf(),

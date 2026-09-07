@@ -396,6 +396,16 @@ pub proof fn lemma_pow2_agrees(n: nat)
 
 /// Strip all trailing zeros at once with `trailing_zeros`; proved through
 /// `vstd`'s axioms for it.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::gcd::strip_twos;
+///
+/// // 12 == 3 * 2^2.
+/// assert_eq!(strip_twos(12), (3, 2));
+/// assert_eq!(strip_twos(5), (5, 0));
+/// ```
 pub fn strip_twos(x: u64) -> (r: (u64, u32))
     requires
         x > 0,
@@ -775,6 +785,15 @@ pub proof fn lemma_gcd_cross(x1: nat, y1: nat, x2: nat, y2: nat)
 /// one even → halve it (`lemma_gcd_half_odd`, `_right`); both odd → subtract
 /// (`lemma_gcd_sub`). Result is `gcd_nat`. Termination measure is `x + y`,
 /// since the swap can raise `y`.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::gcd::gcd_bin_u64;
+///
+/// assert_eq!(gcd_bin_u64(12, 18), 6);
+/// assert_eq!(gcd_bin_u64(0, 7), 7);
+/// ```
 // `kx` and `ky` below are consumed by the proof blocks, which plain rustc
 // erases. They are live in the verified build and dead in the compiled one.
 #[allow(unused_variables)]
@@ -909,6 +928,15 @@ pub fn gcd_bin_u64(a: u64, b: u64) -> (r: u64)
 
 /// Euclid on `u128` until both operands fit `u64` (at most two steps for this
 /// crate's shapes), then [`gcd_bin_u64`]. `y` strictly decreases.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::gcd::gcd_u128;
+///
+/// assert_eq!(gcd_u128(12, 18), 6);
+/// assert_eq!(gcd_u128(0, 7), 7);
+/// ```
 pub fn gcd_u128(a: u128, b: u128) -> (r: u128)
     ensures
         r == gcd_nat(a as nat, b as nat),
@@ -950,6 +978,14 @@ pub fn gcd_u128(a: u128, b: u128) -> (r: u128)
 }
 
 /// The gcd on `u64`, by [`gcd_bin_u64`].
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::gcd::gcd_u64;
+///
+/// assert_eq!(gcd_u64(12, 18), 6);
+/// ```
 pub fn gcd_u64(a: u64, b: u64) -> (r: u64)
     ensures
         r == gcd_nat(a as nat, b as nat),
@@ -1000,6 +1036,14 @@ pub proof fn lemma_gcd_int_facts(n: int, d: int)
 
 /// `gcd(|n|, d)` for a signed numerator and a positive denominator, the exact
 /// shape canonicalisation needs.
+/// Public only because Verus's visibility rules require it; not part of the
+/// crate's semver-stable API.
+///
+/// ```
+/// use the_q::gcd::gcd_abs_i128;
+///
+/// assert_eq!(gcd_abs_i128(-12, 18), 6);
+/// ```
 pub fn gcd_abs_i128(n: i128, d: i128) -> (r: i128)
     requires
         d > 0,
