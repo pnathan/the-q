@@ -47,6 +47,28 @@ verus_builtin_macros = "0.0.0-2026-07-27-0206"
 vstd = "0.0.0-2026-07-27-0206"
 
 serde = { version = "1", optional = true, default-features = false }
+# `rust_decimal`'s own `Decimal` is exact (mantissa · 10^-scale, scale <= 28,
+# no floating-point rounding), which is what makes `convert::from_decimal128_dir`
+# total on it. `default-features = false` drops its optional serde/db
+# integrations; only the numeric core is needed.
+rust_decimal = { version = "1", optional = true, default-features = false }
+# The fixed-point sibling of the decimal boundary: `convert::from_fixed_dir`
+# is generic over `fixed::traits::Fixed<Bits = i128>`, covering the whole
+# 128-bit-backed type family (`I0F128`..`I127F1`, e.g. `I64F64`) in one shot.
+fixed = { version = "1", optional = true, default-features = false }
+# A real (non-dev) dependency in addition to the oracle use of the same crate
+# in [dev-dependencies] below; `num-bigint` is pinned to the `0.4` line (not
+# the newer `0.5`) so that `num-rational`'s and `bigdecimal`'s own internal
+# `BigInt` is the *same* type as the one this crate converts directly --
+# otherwise `BigRational::numer()` would hand back a type this crate never
+# heard of.
+num-rational = { version = "0.4.2", optional = true }
+num-bigint = { version = "0.4", optional = true }
+bigdecimal = { version = "0.4", optional = true }
+# Only for the `to_f64` fallback `q_from_big_rational`/`q_from_bigdecimal`
+# take when a value's reduced terms don't fit an `i128` despite the value
+# itself being unremarkable (see their doc comments).
+num-traits = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # ORACLE ONLY. malachite-q is LGPL-3.0-only; it must never appear in the
@@ -69,6 +91,14 @@ harness = false
 [features]
 default = []
 serde = ["dep:serde"]
+rust_decimal = ["dep:rust_decimal"]
+fixed = ["dep:fixed"]
+num-rational = ["dep:num-rational", "dep:num-traits", "dep:num-bigint"]
+num-bigint = ["dep:num-bigint"]
+bigdecimal = ["dep:bigdecimal", "dep:num-traits", "dep:num-bigint"]
+# Every external-library integration at once, so a test binary can exercise
+# all of them without the caller enumerating each one by name.
+all-integrations = ["rust_decimal", "fixed", "num-rational", "num-bigint", "bigdecimal"]
 
 [lints.rust]
 # `verus_keep_ghost` is set by the Verus driver, not by cargo.

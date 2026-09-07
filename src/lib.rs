@@ -55,6 +55,12 @@
 //!   associativity holds on the exact path and the defect is bounded.
 //! * Rounding is monotone on each grid, not across the representable/rounded
 //!   boundary. `README.md` has the counterexample.
+//! * `Q` is not a semiring: `add`/`mul` are commutative unconditionally, but
+//!   associative, distributive and monotone only on the all-`Number` exact
+//!   path — every failure past it has a counterexample in `tests/q_laws.rs`.
+//!   `Q::div(a, b) == Q::mul(a, Q::recip(b))` fails in six cells. See
+//!   `VERIFICATION.md`'s V11 for what is proven instead: containment of the
+//!   special-value propagation tables against an independent ghost model.
 //!
 //! ## Verification and API stability
 //!
@@ -98,16 +104,40 @@ pub mod saturation;
 pub mod q;
 
 pub mod convert;
+pub mod denote;
 pub mod exact;
 pub mod ext;
 pub mod interval;
 pub mod laws;
+pub mod laws_q;
 pub mod lipschitz;
 pub mod nary;
+pub mod soundness;
+pub mod soundness_div;
+pub mod soundness_mul;
 pub mod transcendental;
 
-pub use convert::{ParseQError, from_f64_dir, q_from_f64, to_f64};
+pub use convert::{
+    ParseQError, from_decimal128_dir, from_decimal128_exact, from_f64_dir, from_ratio128_dir,
+    from_ratio128_exact, q_from_f64, to_f64,
+};
+#[cfg(feature = "num-rational")]
+pub use convert::{
+    exact_from_big_rational, exact_from_num_rational_i64, from_big_rational_dir,
+    from_big_rational_exact, from_num_rational_i64_dir, from_num_rational_i64_exact,
+    q_from_big_rational, q_from_num_rational_i64,
+};
+#[cfg(feature = "bigdecimal")]
+pub use convert::{
+    exact_from_bigdecimal, from_bigdecimal_dir, from_bigdecimal_exact, q_from_bigdecimal,
+};
+#[cfg(feature = "num-bigint")]
+pub use convert::{exact_from_bigint, from_bigint_dir, from_bigint_exact, q_from_bigint};
+#[cfg(feature = "fixed")]
+pub use convert::{exact_from_fixed, from_fixed_dir, from_fixed_exact, q_from_fixed};
+#[cfg(feature = "rust_decimal")]
+pub use convert::{exact_from_rust_decimal, from_rust_decimal_dir, q_from_rust_decimal};
 pub use exact::{Exact, ExactError};
 pub use ext::{Q, Sign};
 pub use interval::QI;
-pub use types::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
+pub use types::{Dir, MAX_DEC_PLACES, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE, MAX_MAG, Rat};

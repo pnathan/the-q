@@ -14,6 +14,8 @@ bound in a direction you choose. Nothing overflows, nothing allocates, and
 every operation on the total type `Q` returns a value, never a panic.
 
 ```rust
+use the_q::{Q, Rat};
+
 let price = Rat::from_decimal(1999, 2).unwrap(); // 19.99, exactly
 let rate = Rat::from_decimal(825, 4).unwrap(); //  0.0825, exactly
 let tax = Rat::mul(price, rate); //  1.649175, exactly
@@ -46,12 +48,13 @@ numerator and denominator are each bounded by `2^62 − 1`, chosen so that every
 cross-multiplied `i128` intermediate provably fits. When an exact result would
 leave that budget, it is rounded, once, to a dyadic grid, and the rounding
 satisfies four properties (R1–R4 below) that are theorems about the code, not
-documentation of it. Rounding is rare in practice, because the budget is large,
-and when it happens you can ask for it to be upward, downward, or to nearest.
+documentation of it. A short computation on everyday fractions never rounds; a
+long chain fills the budget within a few dozen steps and then rounds at every
+step, each time by a proven amount, in the direction you asked for.
 
 The proofs are written in Verus inside the source files. `cargo build` erases
 them and compiles ordinary Rust; `cargo verus verify` checks them. The verified
-count in CI is `1088 verified, 0 errors`, with no `assume`, no `admit`, and
+count in CI is `1209 verified, 0 errors`, with no `assume`, no `admit`, and
 three trusted functions, all at the `f64` boundary or a panic message, none on
 an arithmetic path.
 
@@ -66,9 +69,19 @@ speed use `f64`.
 [dependencies]
 the-q = "0.2.1"
 
-# Optional: serde impls for `Rat` and `Q`.
-# the-q = { version = "0.2.1", features = ["serde"] }
+# Optional features, all off by default:
+# the-q = { version = "0.2.1", features = ["serde", "rust_decimal"] }
 ```
+
+| feature | adds |
+|---|---|
+| `serde` | `Serialize`/`Deserialize` for `Rat` and `Q` |
+| `rust_decimal` | conversions from `rust_decimal::Decimal` |
+| `fixed` | conversions from every 128-bit `fixed` type |
+| `num-rational` | conversions from `Ratio<i64>` and `BigRational` |
+| `num-bigint` | conversions from `BigInt` |
+| `bigdecimal` | conversions from `BigDecimal` |
+| `all-integrations` | the five library conversions at once |
 
 MSRV is Rust 1.85, edition 2024. Verus is not needed to build or use the
 crate; it is needed only to re-check the proofs.
@@ -85,16 +98,18 @@ crate; it is needed only to re-check the proofs.
 | `Sign` | `Negative`, `Zero`, `Positive`: what `Q::signum` returns | |
 | `ExactError`, `ParseQError` | the error enums of `Exact` and `Q: FromStr` | |
 | `MAX_MAG`, `MAX_DEC_PLACES` | `2^62 − 1`, and `18`, the largest decimal exponent `from_decimal` accepts | |
+| `MAX_DECIMAL_SCALE`, `MAX_DECIMAL_MANTISSA` | `28` and `2^96 − 1`: the domain of a `rust_decimal::Decimal`, which `from_decimal128_dir` accepts in full | |
 
 Plus the module [`nary`](#n-ary-folds) (reproducible folds over `Rat`), the
 [roots and transcendentals](#roots-and-transcendentals) on `Q`, and the
-[conversions](#conversions-and-serialisation) `from_f64_dir`, `q_from_f64`,
-`to_f64`, `Display`, `FromStr` and serde.
+[conversions](#conversions-and-serialisation): `from_f64_dir`, `q_from_f64`,
+`to_f64`, the `i128` cores `from_decimal128_*` and `from_ratio128_*`, the
+feature-gated library adapters, `Display`, `FromStr` and serde.
 
 Everything named in this section follows semver. Modules such as `gcd`,
-`model`, `round`, `lipschitz`, `fx` and helpers such as `q::add_n_exec` are
-public only because Verus's visibility rules demand it, and may change shape in
-a patch release.
+`model`, `round`, `lipschitz`, `fx`, `denote`, `laws_q`, `soundness*` and
+helpers such as `q::add_n_exec` are public only because Verus's visibility
+rules demand it, and may change shape in a patch release.
 
 ## `Rat`
 
@@ -108,6 +123,8 @@ It is `Copy`, `Send + Sync`, and does not touch the heap.
 ### Constructing
 
 ```rust
+use the_q::{Dir, MAX_DEC_PLACES, MAX_MAG, Rat};
+
 // Every constructor canonicalises: sign on the numerator, gcd removed.
 assert_eq!(Rat::new(6, 8), Rat::new(3, 4));
 assert_eq!(Rat::new(3, -6).unwrap().to_string(), "-1/2");
@@ -137,6 +154,8 @@ a `Dir`. The `checked_*` variants return `None` when the result saturates (and
 `max` and `clamp` are exact. `pow_u32` is a fold of `mul`.
 
 ```rust
+use the_q::Rat;
+
 let a = Rat::new(1, 3).unwrap();
 let b = Rat::new(1, 6).unwrap();
 
@@ -164,6 +183,8 @@ when the reduced result has a numerator or denominator above `2^62 − 1`. Here
 is one that does:
 
 ```rust
+use the_q::{Dir, MAX_MAG, Rat};
+
 // Reduced denominator of the sum is about 9.2e18, past the 2^62 budget.
 let a = Rat::new(1, 3_037_000_493).unwrap();
 let b = Rat::new(1, 3_037_000_499).unwrap();
@@ -190,6 +211,9 @@ plain operations do not. `Q` turns each of those into a value.
 ### Comparing
 
 ```rust
+use std::collections::BTreeMap;
+use the_q::Rat;
+
 let a = Rat::new(1, 3).unwrap();
 let b = Rat::new(1, 2).unwrap();
 
@@ -213,6 +237,8 @@ assert!(Rat::zero().is_zero() && Rat::one().is_one());
 ### Reading it out
 
 ```rust
+use the_q::{Rat, to_f64};
+
 let x = Rat::new(1, 3).unwrap();
 assert_eq!(x.to_string(), "1/3"); // always `num/den`, always canonical
 assert_eq!(x.numerator(), 1);
@@ -239,6 +265,8 @@ Every operation on `Q`, including arithmetic, comparison, the folds, and every
 root and transcendental, returns a `Q` and never panics.
 
 ```rust
+use the_q::{MAX_MAG, Q, Rat};
+
 // Every `Rat` failure mode is a `Q` value.
 assert_eq!(Q::new(1, 0), Q::PosInf);
 assert_eq!(Q::new(-1, 0), Q::NegInf);
@@ -275,6 +303,8 @@ Three choices differ deliberately from IEEE 754, and each is proven:
   `Q::min` is not `iter().min()`.
 
 ```rust
+use the_q::{Q, Sign};
+
 // Saturation denotes a finite real, so this is exact where `0 * inf` is not.
 assert_eq!(Q::mul(Q::zero(), Q::PosSat), Q::zero());
 assert_eq!(Q::mul(Q::zero(), Q::PosInf), Q::Nan);
@@ -304,6 +334,8 @@ is part of the contract: with rounding, addition is not associative, so fixing
 the order is what makes the result bit-identical across machines and threads.
 
 ```rust
+use the_q::Q;
+
 let third = Q::new(1, 3);
 assert_eq!(Q::sum(&[third, third, third]), Q::one());
 assert_eq!(Q::product(&[Q::new(2, 1), Q::new(1, 4)]), Q::new(1, 2));
@@ -320,6 +352,9 @@ assert_eq!(Q::sum(&[Q::one(), Q::Nan]), Q::Nan);
 ### Text
 
 ```rust
+use std::str::FromStr;
+use the_q::{ParseQError, Q};
+
 // `Display` and `FromStr` round-trip every state.
 for q in [
     Q::new(-3, 4),
@@ -342,6 +377,37 @@ assert_eq!("1/0".parse::<Q>(), Err(ParseQError::ZeroDenominator));
 assert_eq!("0.5".parse::<Q>(), Err(ParseQError::Malformed));
 ```
 
+### Which laws survive
+
+`Q::add` and `Q::mul` are commutative for every input. Associativity,
+distributivity and monotonicity hold only while every operand and every
+intermediate is a `Number` on the exact path; that is the same scope as
+`Rat`'s laws, not a wider one. Once a saturation is reachable all three fail,
+and `Q::div(a, b)` differs from `Q::mul(a, Q::recip(b))` in the six cells
+`{NegInf, PosInf, Number(0)} × {PosSat, NegSat}`. Each failure has an
+executable counterexample in `tests/q_laws.rs`; the proofs (V11 below) cover
+the laws where they hold, and, separately, that every special-value cell of
+the propagation tables contains the true result.
+
+```rust
+use the_q::{MAX_MAG, Q, Rat};
+
+let m = Q::Number(Rat::new(MAX_MAG, 1).unwrap());
+let neg_m = Q::Number(Rat::new(-MAX_MAG, 1).unwrap());
+
+// Commutative always.
+assert_eq!(Q::add(m, neg_m), Q::add(neg_m, m));
+
+// Associative only while no operand saturates: (m + m) + (-m) hits `PosSat`
+// first and `PosSat + NegSat` is indeterminate, but m + (m + -m) is exact.
+assert_eq!(Q::add(Q::add(m, m), neg_m), Q::Nan);
+assert_eq!(Q::add(m, Q::add(m, neg_m)), m);
+
+// `div` is not `mul` by `recip` once saturation is involved.
+assert_eq!(Q::div(Q::zero(), Q::PosSat), Q::zero());
+assert_eq!(Q::mul(Q::zero(), Q::PosSat.recip()), Q::Nan);
+```
+
 ## `QI`
 
 `QI` is a closed interval `[lo, hi]` of `Rat`. Its lower endpoint is always
@@ -350,6 +416,8 @@ from R2 with no new rounding proofs. It is proven for `add`, `sub`, `neg` and
 `mul` across every sign pattern.
 
 ```rust
+use the_q::{MAX_MAG, Q, QI, Rat};
+
 let a = QI::new(Rat::new(1, 3).unwrap(), Rat::new(1, 2).unwrap()); // [1/3, 1/2]
 let b = QI::exact(Rat::new(3, 1).unwrap()); // [3, 3]
 
@@ -397,6 +465,8 @@ only on saturation, and silently rounds otherwise. `Exact::checked_add` is
 `None` on *any* rounding.
 
 ```rust
+use the_q::{Exact, ExactError, Rat};
+
 let half = Exact::new(Rat::new(1, 2).unwrap());
 assert_eq!(Exact::add(half, half).unwrap().value(), Rat::one());
 assert_eq!(
@@ -440,6 +510,9 @@ rational-closed. All are total, and all are fixed-length series, so termination
 is structural and cost is constant.
 
 ```rust
+use the_q::transcendental;
+use the_q::{Q, Rat, to_f64};
+
 // Exact where the answer is rational.
 assert_eq!(Q::new(4, 1).sqrt(), Q::new(2, 1));
 assert_eq!(Q::new(9, 4).sqrt(), Q::new(3, 2));
@@ -518,6 +591,9 @@ pairs and is `None` when the rounded weight sum is zero, whether the weights
 cancel or their sum is below the grid.
 
 ```rust
+use the_q::Rat;
+use the_q::nary;
+
 let third = Rat::new(1, 3).unwrap();
 assert_eq!(nary::sum(&[third, third, third]), Rat::one());
 assert_eq!(nary::sum(&[]), Rat::zero());
@@ -548,6 +624,8 @@ one of the three trusted functions (`TRUSTED.md`). There is deliberately no
 `Q → f64`, because no float honestly denotes `PosSat`.
 
 ```rust
+use the_q::{Dir, Q, Rat, from_f64_dir, q_from_f64, to_f64};
+
 // `0.1f64` is not one tenth; the conversion is exact about the double.
 let tenth = from_f64_dir(0.1, Dir::Nearest).unwrap();
 assert_eq!(
@@ -575,12 +653,168 @@ assert_eq!(q_from_f64(0.5), Q::new(1, 2));
 assert_eq!(to_f64(Rat::new(1, 4).unwrap()), 0.25);
 ```
 
+### Wider inputs: `i128` pairs and decimals
+
+Two always-available cores take anything an `i128` can express. Both have an
+exact variant that returns `None` the moment ingestion itself would have to
+round, so an `Exact` built from it denotes the original value, not merely a
+`Rat` that needs no *further* rounding.
+
+```rust
+use the_q::{Dir, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE, MAX_MAG, Rat};
+use the_q::{
+    from_decimal128_dir, from_decimal128_exact, from_ratio128_dir, from_ratio128_exact,
+};
+
+// `mantissa · 10^-scale` with an `i128` mantissa and a scale up to 28:
+// the domain of a `rust_decimal::Decimal`, exact whenever it fits.
+assert_eq!(
+    from_decimal128_dir(1999, 2, Dir::Nearest),
+    Rat::new(1999, 100)
+);
+assert_eq!(from_decimal128_exact(85, 2), Rat::new(17, 20));
+assert_eq!(
+    from_decimal128_dir(1, MAX_DECIMAL_SCALE + 1, Dir::Nearest),
+    None
+);
+
+// A 96-bit mantissa at scale 28 does not reduce into the budget: the
+// directed conversion rounds, the exact one refuses.
+let lo = from_decimal128_dir(MAX_DECIMAL_MANTISSA, 28, Dir::Down).unwrap();
+let hi = from_decimal128_dir(MAX_DECIMAL_MANTISSA, 28, Dir::Up).unwrap();
+assert!(lo < hi);
+assert_eq!(from_decimal128_exact(MAX_DECIMAL_MANTISSA, 28), None);
+
+// Any `i128` pair, sign-normalised: the core every library adapter uses.
+assert_eq!(from_ratio128_dir(-3, -4, Dir::Nearest), Rat::new(3, 4));
+assert_eq!(from_ratio128_dir(1, 0, Dir::Nearest), None);
+assert_eq!(from_ratio128_exact(1, i128::from(MAX_MAG) + 2), None);
+assert!(from_ratio128_dir(1, i128::from(MAX_MAG) + 2, Dir::Nearest).is_some());
+```
+
+### Other numeric libraries
+
+Each feature-gated adapter reduces its library's representation to an `i128`
+pair and hands it to the cores above. Each comes in the same three tiers: a
+directed `Rat` function, a total `Q` function (also `impl From`) that rounds to
+nearest and saturates by sign, and an `Exact` function (also `impl TryFrom`,
+except for `fixed`) that refuses rather than rounds.
+
+```rust
+use rust_decimal::Decimal;
+use the_q::{Dir, Exact, ExactError, Q, Rat};
+use the_q::{exact_from_rust_decimal, from_rust_decimal_dir, q_from_rust_decimal};
+
+let d = Decimal::new(85, 2); // 0.85
+assert_eq!(
+    from_rust_decimal_dir(d, Dir::Nearest),
+    Rat::new(17, 20).unwrap()
+);
+assert_eq!(Q::from(d), Q::new(17, 20));
+assert_eq!(
+    Exact::try_from(d),
+    Ok(Exact::new(Rat::new(17, 20).unwrap()))
+);
+
+// Past the budget: `Q` saturates by sign, `Exact` refuses.
+assert_eq!(q_from_rust_decimal(Decimal::MAX), Q::PosSat);
+assert_eq!(
+    exact_from_rust_decimal(Decimal::MAX),
+    Err(ExactError::Inexact)
+);
+```
+
+```rust
+use fixed::types::I64F64;
+use the_q::{Dir, Q, Rat};
+use the_q::{exact_from_fixed, from_fixed_dir, q_from_fixed};
+
+// One generic function for every 128-bit-backed `fixed` type.
+let v = I64F64::from_num(-1.25);
+assert_eq!(from_fixed_dir(v, Dir::Nearest), Rat::new(-5, 4));
+assert_eq!(q_from_fixed(v), Q::new(-5, 4));
+assert_eq!(
+    exact_from_fixed(v).map(|e| e.value()),
+    Ok(Rat::new(-5, 4).unwrap())
+);
+assert_eq!(q_from_fixed(I64F64::from_num(i64::MAX)), Q::PosSat);
+```
+
+`fixed` gets no `From`/`TryFrom` impls: a blanket impl over every `Fixed` type
+cannot coexist with the concrete impl for `Decimal`.
+
+```rust
+use num_bigint::BigInt;
+use num_rational::{BigRational, Ratio};
+use the_q::{Dir, Q, Rat};
+use the_q::{from_big_rational_dir, from_num_rational_i64_exact, q_from_big_rational};
+
+// `Ratio<i64>` is always exact: its invariant is the one `Rat` needs.
+assert_eq!(
+    from_num_rational_i64_exact(Ratio::new(3i64, 4)),
+    Rat::new(3, 4)
+);
+assert_eq!(Q::from(Ratio::new(-7i64, 3)), Q::new(-7, 3));
+
+// `BigRational` needs an `i128` extraction first; when its reduced terms
+// are too wide, the `Q` conversion falls back to `to_f64` and the `Rat`
+// conversion is `None`.
+let v = BigRational::new(BigInt::from(22), BigInt::from(7));
+assert_eq!(from_big_rational_dir(&v, Dir::Nearest), Rat::new(22, 7));
+let wide = BigRational::new(BigInt::from(10).pow(40) + 1, BigInt::from(10).pow(40));
+assert_eq!(from_big_rational_dir(&wide, Dir::Nearest), None);
+assert_eq!(q_from_big_rational(&wide), Q::one()); // via f64, lossy
+```
+
+The `to_f64` fallback exists because `Ratio` keeps its terms in lowest form and
+nothing bounds *those* by the value's magnitude: `(10^40 + 1) / 10^40` is a
+value near 1 whose terms fit no `i128`. Guessing a saturation sign would be
+wrong, so the `Q` conversion goes through a double instead and says so in its
+docs.
+
+```rust
+use num_bigint::BigInt;
+use the_q::{Dir, ExactError, Q, Rat};
+use the_q::{exact_from_bigint, from_bigint_dir, q_from_bigint};
+
+assert_eq!(
+    from_bigint_dir(&BigInt::from(-42), Dir::Nearest),
+    Rat::new(-42, 1)
+);
+// An integer's magnitude is its value, so "too wide" always means saturation.
+let huge = BigInt::from(10).pow(40);
+assert_eq!(q_from_bigint(&huge), Q::PosSat);
+assert_eq!(exact_from_bigint(&huge), Err(ExactError::Inexact));
+```
+
+```rust
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
+use the_q::{Dir, Q, Rat};
+use the_q::{from_bigdecimal_dir, from_bigdecimal_exact, q_from_bigdecimal};
+
+let v = BigDecimal::from_str("-3.14").unwrap();
+assert_eq!(from_bigdecimal_dir(&v, Dir::Nearest), Rat::new(-157, 50));
+assert_eq!(from_bigdecimal_exact(&v), Rat::new(-157, 50));
+// A negative scale is a large integer, still exact.
+assert_eq!(
+    Q::from(BigDecimal::from_str("1.2e3").unwrap()),
+    Q::new(1200, 1)
+);
+assert_eq!(
+    q_from_bigdecimal(&BigDecimal::from_str("1e30").unwrap()),
+    Q::PosSat
+);
+```
+
 With the `serde` feature, `Rat` encodes as the exact `[num, den]` pair and `Q`
 as that pair or the special's string. The encoding is untagged, so it decodes
 only in self-describing formats. Decoding re-canonicalises through `Rat::new`
 and rejects a malformed payload rather than constructing an invalid value.
 
 ```rust
+use the_q::{Q, Rat};
+
 // `Rat` is the exact `[num, den]` pair; `Q` specials are strings.
 let x = Rat::new(17, 20).unwrap();
 assert_eq!(serde_json::to_string(&x).unwrap(), "[17,20]");
@@ -647,6 +881,16 @@ R3 is scoped below the ceiling to keep one clean boundary, and results above it
 saturate. `Rat::new` also returns `None` for an `i64` pair that is already
 reduced but over budget; `Rat::new_rounded` is total in the numerator.
 
+**`Q` is not a semiring.** Its `add` and `mul` are commutative
+unconditionally, but associative, distributive and monotone only on the
+all-`Number` exact path, exactly as for `Rat`. Once a `PosSat`/`NegSat` is
+reachable all three fail; `mul` additionally fails to associate on values that
+never touch saturation, because rounding a product to zero can manufacture a
+`0 · ∞` that exact arithmetic never would. `Q::div(a, b) == Q::mul(a,
+Q::recip(b))` fails in six cells. No defect bound is stated at this level:
+`Nan` and the unbounded saturation intervals carry no metric to bound against.
+Every failure has a test in `tests/q_laws.rs`.
+
 **Transcendentals are not exact at rational points.** `log2(8)` is a rational
 within `2^-59` of 3, not 3, because `ln` is a series and `log2` is a quotient
 of two rounded logarithms. Where the algorithm happens to land on the exact
@@ -655,7 +899,7 @@ construction, not by contract.
 
 ## What is proven
 
-`1088 verified, 0 errors` in CI; no `assume`, no `admit`; three
+`1209 verified, 0 errors` in CI; no `assume`, no `admit`; three
 `external_body` functions, enumerated in `TRUSTED.md`.
 
 * **V1** Every public operation preserves canonical form and the budget.
@@ -674,13 +918,27 @@ construction, not by contract.
 * **V9** `Q`: totality, classification, total order, `Nan` absorption.
 * **V10** Transcendentals: totality and termination. `isqrt` is exactly the
   integer square root.
+* **V11** `Q`'s algebraic laws (commutative unconditionally; associative,
+  distributive and monotone on the all-`Number` exact path and nowhere
+  further), and the containment obligation `{x ⊕ y : x ∈ ⟦a⟧, y ∈ ⟦b⟧} ⊆
+  ⟦op(a, b)⟧` for the special-value propagation of `add`, `sub`, `mul` and
+  `div`, proven against an independent ghost model of true values
+  (`denote.rs`) rather than tested against the table alone. Soundness, and
+  honesty (`Nan` is returned whenever a genuine indeterminate such as `∞ − ∞`
+  or `0 · ∞` can be witnessed), for all four; necessity (`Nan` is never
+  returned where a smaller state would also be sound) for one cell as the
+  pattern.
 * The associativity bounds under Limits, interval enclosure, the `Exact` laws,
-  and the value pinning of every constructor including the `f64`
-  decomposition's integer core.
+  the `i128` conversion cores, and the value pinning of every constructor
+  including the `f64` decomposition's integer core.
 
 **Not proven**: the `f64` decode/encode (trusted, tested); transcendental
 accuracy (measured, above); `pow_u32`'s value (only its well-formedness);
-`mul` associativity outside `[0, 1]`.
+`mul` associativity outside `[0, 1]`; the `Q` folds against the containment
+model (a set-valued induction, tracked as follow-on work); `Nan` necessity for
+every `mul`/`div` cell; the feature-gated library adapters, which call into
+foreign types Verus has no model of and sit outside `verus!` as thin wrappers
+over the verified cores.
 
 ## Testing
 
@@ -691,9 +949,11 @@ checks R3's nearest bound, the weighted-mean bound and interval enclosure on
 random operands; `tests/props.rs` covers the invariant, the laws, and
 byte-identical results across eight threads; `tests/adversarial.rs` holds the
 budget edges and both counterexamples; `tests/transcendental.rs` carries the
-accuracy oracles; `tests/readme_examples.rs` compiles and runs every code block
-on this page and fails if one drifts from this file. Every public function has
-a doctest. Overflow checks stay on in release.
+accuracy oracles; `tests/q_laws.rs` the counterexamples to `Q`'s laws;
+`tests/ratio_core.rs` and one suite per library integration the conversion
+boundary; `tests/readme_examples.rs` compiles and runs every code block on this
+page and fails if one drifts from this file. Every public function has a
+doctest. Overflow checks stay on in release.
 
 ## Performance
 
@@ -739,7 +999,7 @@ the three trusted functions; `docs/SPEC.md` the original specification with its
 six recorded departures.
 
 ```sh
-cargo test --locked --all-features
+cargo test --locked --all-features          # includes every integration suite
 cargo verus verify --locked --all-features -- --multiple-errors 8
 ```
 
