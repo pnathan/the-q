@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" width="720" height="400" role="img" aria-labelledby="t d">
+<!-- the-q: Exact(Rat). Copyright Paul Nathan. AGPL-3.0-or-later, like the rest of the crate. -->
+<title id="t">An exact rat</title>
+<desc id="d">A rat bent over a desk under a green banker's lamp, pencil in paw, working a fraction sum on paper. An eraser waits beside the page.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#171b27"/>
+    <stop offset="1" stop-color="#0d0f16"/>
+  </linearGradient>
+  <linearGradient id="deskTop" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#7a5433"/>
+    <stop offset="1" stop-color="#5e3f26"/>
+  </linearGradient>
+  <linearGradient id="deskFront" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#3e2917"/>
+    <stop offset="1" stop-color="#241609"/>
+  </linearGradient>
+  <linearGradient id="cone" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffe4a0" stop-opacity="0.38"/>
+    <stop offset="1" stop-color="#ffe4a0" stop-opacity="0"/>
+  </linearGradient>
+  <radialGradient id="pool" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ffe2a6" stop-opacity="0.55"/>
+    <stop offset="0.6" stop-color="#ffd58a" stop-opacity="0.18"/>
+    <stop offset="1" stop-color="#ffd58a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vignette" cx="0.62" cy="0.55" r="0.75">
+    <stop offset="0.45" stop-color="#000" stop-opacity="0"/>
+    <stop offset="1" stop-color="#000" stop-opacity="0.6"/>
+  </radialGradient>
+  <linearGradient id="brass" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#8a6a1e"/>
+    <stop offset="0.45" stop-color="#f0cf6a"/>
+    <stop offset="0.7" stop-color="#c9a23a"/>
+    <stop offset="1" stop-color="#7d5f18"/>
+  </linearGradient>
+  <linearGradient id="brassV" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#f0cf6a"/>
+    <stop offset="1" stop-color="#8a6a1e"/>
+  </linearGradient>
+  <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#173f2a"/>
+    <stop offset="0.55" stop-color="#256b43"/>
+    <stop offset="1" stop-color="#5fc98a"/>
+  </linearGradient>
+  <linearGradient id="fur" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#585c66"/>
+    <stop offset="0.6" stop-color="#858a95"/>
+    <stop offset="1" stop-color="#a9adb7"/>
+  </linearGradient>
+  <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#e9dfc6"/>
+    <stop offset="1" stop-color="#f7f0dc"/>
+  </linearGradient>
+  <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="6"/>
+  </filter>
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="3"/>
+  </filter>
+</defs>
+
+<!-- room -->
+<rect width="720" height="400" rx="14" fill="url(#bg)"/>
+
+<!-- desk -->
+<rect x="0" y="268" width="720" height="62" fill="url(#deskTop)"/>
+<rect x="0" y="330" width="720" height="70" fill="url(#deskFront)"/>
+<rect x="0" y="330" width="720" height="3" fill="#8b6238" opacity="0.5"/>
+<rect x="400" y="346" width="290" height="42" rx="3" fill="none" stroke="#5a3d22" stroke-width="2"/>
+<rect x="402" y="348" width="286" height="38" rx="2" fill="#2f1d0e" opacity="0.35"/>
+<circle cx="545" cy="367" r="4" fill="url(#brassV)"/>
+<g stroke="#6a4728" stroke-width="1" opacity="0.5">
+  <path d="M0 286 Q 180 282 360 288 T 720 284"/>
+  <path d="M0 306 Q 200 310 400 304 T 720 310"/>
+  <path d="M0 320 Q 160 316 320 322 T 720 318"/>
+</g>
+
+<!-- light cone and pool -->
+<path d="M446 176 L604 176 L720 330 L250 330 Z" fill="url(#cone)"/>
+<ellipse cx="490" cy="300" rx="290" ry="52" fill="url(#pool)"/>
+
+<!-- dim book at the far left -->
+<g opacity="0.55">
+  <path d="M40 262 L150 258 L156 274 L46 278 Z" fill="#4a3b6a"/>
+  <path d="M46 278 L156 274 L156 280 L46 284 Z" fill="#d9d1b8"/>
+  <path d="M40 262 L46 284 L44 284 L38 262 Z" fill="#2e2445"/>
+</g>
+
+<!-- rat: tail, ears, body, head -->
+<path d="M212 268 C 176 250, 152 208, 176 190 C 190 180, 202 194, 194 206" fill="none" stroke="#c98b90" stroke-width="7" stroke-linecap="round"/>
+<path d="M212 268 C 176 250, 152 208, 176 190 C 190 180, 202 194, 194 206" fill="none" stroke="#e3a8ad" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+<circle cx="356" cy="204" r="12" fill="#6f737d"/>
+<circle cx="356" cy="204" r="7" fill="#c98b90"/>
+<path d="M200 270 C 190 220, 218 172, 270 168 C 312 165, 338 188, 350 222 L 352 270 Z" fill="url(#fur)"/>
+<!-- far arm -->
+<path d="M300 258 C 316 270, 336 288, 352 299" fill="none" stroke="#7b7f8a" stroke-width="13" stroke-linecap="round"/>
+<circle cx="354" cy="300" r="8.5" fill="#8e929c"/>
+<path d="M356 305 L 361 302 M 353 307 L 358 305" stroke="#6f737d" stroke-width="1" opacity="0.7"/>
+<!-- head -->
+<g transform="translate(345 238) rotate(28)">
+  <ellipse cx="0" cy="0" rx="38" ry="26" fill="#9297a2"/>
+  <ellipse cx="0" cy="-6" rx="30" ry="16" fill="#a7abb5" opacity="0.5"/>
+</g>
+<path d="M350 250 C 366 254, 382 262, 392 268 C 380 271, 364 268, 350 262 Z" fill="#9297a2"/>
+<circle cx="326" cy="212" r="14" fill="#8e929c"/>
+<circle cx="326" cy="212" r="9" fill="#d69ea3"/>
+<circle cx="393" cy="268" r="4.2" fill="#d46e7c"/>
+<circle cx="360" cy="237" r="3.8" fill="#1c1e26"/>
+<circle cx="361.5" cy="235.6" r="1.2" fill="#fff"/>
+<g stroke="#e9ecf1" stroke-width="1" opacity="0.7" stroke-linecap="round">
+  <path d="M388 262 L 420 250"/>
+  <path d="M390 266 L 424 262"/>
+  <path d="M390 270 L 422 276"/>
+  <path d="M372 262 L 342 256"/>
+  <path d="M372 266 L 344 270"/>
+</g>
+
+<!-- paper -->
+<path d="M340 282 L526 275 L540 332 L354 338 Z" fill="#000" opacity="0.28" transform="translate(4 4)"/>
+<path d="M340 282 L526 275 L540 332 L354 338 Z" fill="url(#paper)"/>
+<g stroke="#9fb4d8" stroke-width="0.8" opacity="0.6">
+  <path d="M343.5 296 L 529.5 289"/>
+  <path d="M347 310 L 533 303"/>
+  <path d="M350.5 324 L 536.5 317"/>
+</g>
+<path d="M362 281.2 L 376 337.2" stroke="#d98a8a" stroke-width="0.8" opacity="0.55"/>
+<!-- the sum, in pencil -->
+<g transform="translate(24 0)" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="14.5" fill="#3b3c46" text-anchor="middle">
+  <text x="392" y="300">1</text><path d="M385 303.5 L399 303" stroke="#3b3c46" stroke-width="1.1"/><text x="392" y="316.5">3</text>
+  <text x="409" y="311" font-style="normal">+</text>
+  <text x="426" y="299">1</text><path d="M419 302.5 L433 302" stroke="#3b3c46" stroke-width="1.1"/><text x="426" y="315.5">6</text>
+  <text x="443" y="310" font-style="normal">=</text>
+  <text x="460" y="298">1</text><path d="M453 301.5 L467 301" stroke="#3b3c46" stroke-width="1.1"/><text x="460" y="314.5">2</text>
+  <path d="M476 305 L 481 311 L 491 295" fill="none" stroke="#2f7a4d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="480" y="291" font-size="11.5" opacity="0.38">0.333…</text>
+  <path d="M465 288.5 L 495 287.3" stroke="#3b3c46" stroke-width="0.9" opacity="0.45"/>
+  <ellipse cx="480" cy="288" rx="18" ry="6" fill="#d7ccb2" opacity="0.35"/>
+</g>
+
+<!-- near arm, pencil, paw -->
+<path d="M330 252 C 352 256, 376 264, 395 276" fill="none" stroke="#8e929c" stroke-width="16" stroke-linecap="round"/>
+<g transform="translate(404 312) rotate(-94)">
+  <polygon points="0,0 3.6,-1.6 3.6,1.6" fill="#2a2a30"/>
+  <polygon points="0,0 12,-4.8 12,4.8" fill="#e6c48f"/>
+  <rect x="12" y="-4.8" width="62" height="9.6" fill="#f2c230"/>
+  <rect x="12" y="-4.8" width="62" height="3.1" fill="#d9a71c"/>
+  <rect x="12" y="2.3" width="62" height="2.5" fill="#f7d76a" opacity="0.8"/>
+  <rect x="74" y="-4.8" width="6.5" height="9.6" fill="#c4c8d0"/>
+  <rect x="80.5" y="-4.8" width="9.5" height="9.6" rx="2.6" fill="#e88a9c"/>
+</g>
+<circle cx="400" cy="279" r="9.5" fill="#9ea2ac"/>
+<path d="M394 275 L 406 287 M 398 272 L 410 284" stroke="#7b7f8a" stroke-width="1" opacity="0.6"/>
+
+<!-- eraser and crumbs -->
+<g transform="translate(574 322) rotate(-9)">
+  <rect x="-18" y="-7" width="36" height="14" rx="2" fill="#ec8fa0"/>
+  <rect x="-18" y="0" width="36" height="7" rx="2" fill="#cf6e80"/>
+  <rect x="-18" y="-7" width="36" height="3" rx="1" fill="#f6b3bf" opacity="0.7"/>
+</g>
+<g fill="#e28c9c" opacity="0.85">
+  <circle cx="548" cy="326" r="1.2"/><circle cx="554" cy="331" r="1"/><circle cx="600" cy="324" r="1.1"/><circle cx="562" cy="334" r="0.9"/>
+</g>
+
+<!-- lamp: stem, base, finial, arm -->
+<rect x="561" y="112" width="9" height="158" fill="url(#brass)"/>
+<ellipse cx="565.5" cy="274" rx="50" ry="11" fill="url(#brassV)"/>
+<ellipse cx="565.5" cy="270" rx="36" ry="8" fill="#e5c25a"/>
+<ellipse cx="565.5" cy="268" rx="20" ry="4.5" fill="#f5dc84"/>
+<circle cx="565.5" cy="106" r="8" fill="url(#brassV)"/>
+<path d="M565 112 C 566 126, 548 122, 538 132" fill="none" stroke="#caa23a" stroke-width="4" stroke-linecap="round"/>
+<!-- shade -->
+<ellipse cx="525" cy="178" rx="92" ry="14" fill="#fff3c2" opacity="0.9" filter="url(#soft)"/>
+<path d="M448 130 L602 130 L612 176 Q 525 190 438 176 Z" fill="url(#shade)"/>
+<path d="M448 130 L602 130 L604 138 L446 138 Z" fill="#0f2e1e" opacity="0.6"/>
+<rect x="446" y="126" width="158" height="5" rx="2" fill="url(#brassV)"/>
+<path d="M438 176 Q 525 190 612 176" fill="none" stroke="#f3d478" stroke-width="3.5" stroke-linecap="round"/>
+<path d="M444 172 Q 525 185 606 172" fill="none" stroke="#fff6cf" stroke-width="3" opacity="0.9" filter="url(#glow)"/>
+<circle cx="538" cy="132" r="5" fill="#e5c25a"/>
+<!-- pull chain -->
+<path d="M596 180 L 596 214" stroke="#d8b556" stroke-width="1.6" stroke-dasharray="2 1.6"/>
+<circle cx="596" cy="218" r="3.6" fill="url(#brassV)"/>
+
+<!-- vignette -->
+<rect width="720" height="400" rx="14" fill="url(#vignette)"/>
+</svg>
