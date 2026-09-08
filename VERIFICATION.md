@@ -246,8 +246,9 @@ fixed constant bound and `decreases`; `isqrt_i64` satisfies
 its tail bound against the `2^-61` grid and recorded beside the constant.
 
 Two value pins are proven (issue #43): `Q::log2` returns exactly `k` on
-`2^k / 1` and `-k` on `1 / 2^k` for `k ≤ 62`, and `Q::log10` likewise for
-`10^k` with `k ≤ 18`; `Q::log` inherits both when its base is exactly `2` or
+`2^k / 1` and `-k` on `1 / 2^k` for `k ≤ 62` (of which only `k ≤ 61` is
+reachable, since `2^62 > MAX_MAG`), and `Q::log10` likewise for `10^k` with
+`k ≤ 18`; `Q::log` inherits all four clauses when its base is exactly `2` or
 `10`. Both are stated on the representation (`spec_is_value(pow2(k), 1)`),
 which for a canonical `Rat` is the value. The exponent is found by comparing
 against the verified power tables (`round::pow2_i128`, `q::pow10_i64`) and

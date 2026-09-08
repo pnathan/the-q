@@ -86,9 +86,10 @@
 #![allow(clippy::unusual_byte_groupings)]
 #![allow(clippy::manual_div_ceil)]
 #![allow(clippy::implicit_saturating_sub)]
-// An exec `match` on `Option`/`Q` with a `_ => {}` arm is the shape the proof
-// blocks in `transcendental::log2`/`log10` hang off; each arm carries its own
-// `assert forall ... by` discharge, which an `if let` has nowhere to put.
+// `transcendental::log2`/`log10` match on `Option`/`Q` with a `_ => {}` arm
+// and hang a proof block off each arm. An `if let ... else` would hold the
+// same proofs; `match` is kept because it is the exec shape the rest of the
+// verified modules use, so the discharge sits where a reader expects it.
 #![allow(clippy::single_match)]
 
 // Verus's macro machinery.

@@ -1406,6 +1406,11 @@ fn log2_is_exact_at_every_power_of_two_in_the_budget() {
             Q::new(k as i64, 1),
             "log(2^{k}, 2)"
         );
+        assert_eq!(
+            Q::new(1, p).log(Q::new(2, 1)),
+            Q::new(-(k as i64), 1),
+            "log(2^-{k}, 2)"
+        );
     }
     // Neighbours of a power of two stay on the general path and are not integers.
     for x in [3i64, 5, 6, 7, 9, 12, 1023, 1025] {
@@ -1432,6 +1437,11 @@ fn log10_is_exact_at_every_power_of_ten_in_the_budget() {
             Q::new(p, 1).log(Q::new(10, 1)),
             Q::new(k, 1),
             "log(10^{k}, 10)"
+        );
+        assert_eq!(
+            Q::new(1, p).log(Q::new(10, 1)),
+            Q::new(-k, 1),
+            "log(10^-{k}, 10)"
         );
         if k < 18 {
             p *= 10;

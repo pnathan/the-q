@@ -2029,9 +2029,15 @@ impl Q {
             forall|k: nat| #![trigger crate::model::pow2(k)]
                 base.spec_is_value(2, 1) && k <= 62 && self.spec_is_value(crate::model::pow2(k), 1)
                     ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow2(k)]
+                base.spec_is_value(2, 1) && k <= 62 && self.spec_is_value(1, crate::model::pow2(k))
+                    ==> r.spec_is_value(-(k as int), 1),
             forall|k: nat| #![trigger crate::model::pow10(k)]
                 base.spec_is_value(10, 1) && k <= 18 && self.spec_is_value(crate::model::pow10(k), 1)
                     ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow10(k)]
+                base.spec_is_value(10, 1) && k <= 18 && self.spec_is_value(1, crate::model::pow10(k))
+                    ==> r.spec_is_value(-(k as int), 1),
     {
         match base {
             Q::Number(b) => {
