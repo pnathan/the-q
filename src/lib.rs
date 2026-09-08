@@ -86,6 +86,10 @@
 #![allow(clippy::unusual_byte_groupings)]
 #![allow(clippy::manual_div_ceil)]
 #![allow(clippy::implicit_saturating_sub)]
+// An exec `match` on `Option`/`Q` with a `_ => {}` arm is the shape the proof
+// blocks in `transcendental::log2`/`log10` hang off; each arm carries its own
+// `assert forall ... by` discharge, which an `if let` has nowhere to put.
+#![allow(clippy::single_match)]
 
 // Verus's macro machinery.
 #[allow(unused_imports)]

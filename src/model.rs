@@ -291,6 +291,78 @@ pub proof fn lemma_pow2_add(a: nat, b: nat)
     }
 }
 
+/// `2^n` is strictly monotone in `n`.
+pub proof fn lemma_pow2_strict_mono(a: nat, b: nat)
+    requires
+        a < b,
+    ensures
+        pow2(a) < pow2(b),
+{
+    lemma_pow2_mono(a, (b - 1) as nat);
+    lemma_pow2_pos((b - 1) as nat);
+    assert(pow2(b) == 2 * pow2((b - 1) as nat));
+}
+
+/// `2^a == 2^b` only when `a == b`. What lets `Q::log2` return the exponent
+/// it found in the table and call it *the* exponent.
+pub proof fn lemma_pow2_injective(a: nat, b: nat)
+    requires
+        pow2(a) == pow2(b),
+    ensures
+        a == b,
+{
+    if a < b {
+        lemma_pow2_strict_mono(a, b);
+    } else if b < a {
+        lemma_pow2_strict_mono(b, a);
+    }
+}
+
+/// `10^n > 0`.
+pub proof fn lemma_pow10_pos(n: nat)
+    ensures
+        pow10(n) > 0,
+    decreases n,
+{
+    if n == 0 {
+    } else {
+        lemma_pow10_pos((n - 1) as nat);
+    }
+}
+
+/// `10^n` is strictly monotone in `n`.
+pub proof fn lemma_pow10_strict_mono(a: nat, b: nat)
+    requires
+        a < b,
+    ensures
+        pow10(a) < pow10(b),
+    decreases b,
+{
+    if a + 1 == b {
+        lemma_pow10_pos(a);
+        assert(pow10(b) == 10 * pow10(a));
+    } else {
+        lemma_pow10_strict_mono(a, (b - 1) as nat);
+        lemma_pow10_pos((b - 1) as nat);
+        assert(pow10(b) == 10 * pow10((b - 1) as nat));
+    }
+}
+
+/// `10^a == 10^b` only when `a == b`; the `pow10` twin of
+/// [`lemma_pow2_injective`], for `Q::log10`.
+pub proof fn lemma_pow10_injective(a: nat, b: nat)
+    requires
+        pow10(a) == pow10(b),
+    ensures
+        a == b,
+{
+    if a < b {
+        lemma_pow10_strict_mono(a, b);
+    } else if b < a {
+        lemma_pow10_strict_mono(b, a);
+    }
+}
+
 /// The characterising property of [`bitlen`]: `2^(k-1) <= x < 2^k` for `x > 0`.
 pub proof fn lemma_bitlen_char(x: int)
     requires
