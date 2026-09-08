@@ -1,6 +1,8 @@
 //! [`Exact`], a [`Rat`] wrapper whose arithmetic only ever returns a value
 //! that equals the true, unrounded result — or reports that it cannot.
 //!
+//! The Exact(Rat) is intended to be the most helpful and easy interface.
+//!
 //! `Rat::add`/`sub`/`mul`/`div` round silently once the exact result no
 //! longer fits the budget. On the exact path (no rounding at any step),
 //! `add` and `mul` are proven associative and distributive, and `add`/`mul`

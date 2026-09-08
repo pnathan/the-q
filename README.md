@@ -455,6 +455,8 @@ assert_eq!(QI::checked_new(Rat::one(), Rat::zero()), None);
 
 ## `Exact`
 
+<p align="center"><img src="docs/exact-rat.svg" width="640" alt="An exact rat: bent over a desk under a green banker's lamp, pencil in paw, it has written 1/3 + 1/6 = 1/2 with a tick, and struck out 0.333…; an eraser waits beside the page."></p>
+
 `Exact` is a `Rat` wrapper for callers who would rather fail than round. Its
 `add`, `sub`, `mul` and `div` succeed only when the result needs no rounding,
 and return `Result<Exact, ExactError>` (`Inexact`, or `DivisionByZero` for
