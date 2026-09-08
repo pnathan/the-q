@@ -1,0 +1,35 @@
+# Configuration for release-plz (https://release-plz.dev), which drives
+# releases entirely from `.github/workflows/release-plz.yml`: it opens a PR
+# bumping `Cargo.toml`'s version and `CHANGELOG.md` from Conventional Commits,
+# and on that PR's merge, publishes to crates.io and pushes the matching
+# `vX.Y.Z` tag with a GitHub Release. No release step happens on a laptop.
+
+[workspace]
+# Publish, tag and release ONLY when a release-plz release PR is merged into
+# the default branch, not on every push. `true` (the default) would attempt
+# a release on every commit to the default branch, version bump or not.
+release_always = false
+
+# `gcd`, `model`, `round`, `lipschitz`, `fx` and
+# `round::round_frac_exec_with_gcd` are public only because Verus's
+# visibility rules demand it and are explicitly exempted from semver in
+# CLAUDE.md's "API stability" section -- they change shape in patch
+# releases by design. `cargo-semver-checks` cannot see that exemption, so it
+# would fail the release job on every patch that touches those modules.
+semver_check = false
+
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^doc", group = "Documentation" },
+  { message = "^test", group = "Testing" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "Miscellaneous" },
+  { message = "^ci", group = "CI" },
+  { message = "^build", group = "Build" },
+  { message = "^style", group = "Style" },
+  { message = "^revert", group = "Reverted" },
+]

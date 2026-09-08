@@ -1,0 +1,84 @@
+name: Release-plz
+
+# Runs release-plz (config: release-plz.toml) on every push to the default
+# branch. `release-plz-pr` keeps a standing PR that bumps Cargo.toml's
+# version and CHANGELOG.md from Conventional Commits since the last release.
+# `release-plz-release` only acts (publish, tag, GitHub Release) when that
+# PR is merged (`release_always = false` in release-plz.toml) -- no release
+# step is performed by hand, from a laptop or otherwise.
+on:
+  push:
+    branches:
+      - trunk
+
+jobs:
+  # Re-run of ci.yml's build-and-test job. ci.yml gates the pull request that
+  # merges into `trunk`; this re-establishes green on the resulting merge
+  # commit itself before release-plz can publish or tag it.
+  verify:
+    name: cargo build + test (release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - run: cargo build --locked --all-features --verbose
+      - run: cargo build --locked --release --all-features --verbose
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo fmt --check
+      - run: cargo test --locked --all-features --verbose
+      - run: cargo test --locked --release --all-features --verbose
+      - run: ./scripts/check-rat-privacy.sh
+      - run: ./scripts/check-no-lgpl.sh
+
+  release-plz-release:
+    name: Release-plz release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      # crates.io Trusted Publishing (OIDC): deliberately no
+      # CARGO_REGISTRY_TOKEN secret anywhere in this repository.
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Run release-plz release
+        uses: release-plz/action@476794ede164c5137bfc3a1dc6ed3675275690f9 # v0.5.99
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Run release-plz release-pr
+        uses: release-plz/action@476794ede164c5137bfc3a1dc6ed3675275690f9 # v0.5.99
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
