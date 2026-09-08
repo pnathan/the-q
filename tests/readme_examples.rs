@@ -342,13 +342,15 @@ fn readme_transcendental() {
         panic!()
     };
     assert!((to_f64(e) - std::f64::consts::E).abs() < 1e-15);
-    // `log2(8)` is *not* exactly 3: `ln` is a series, and the quotient of two
-    // rounded logarithms is a nearby rational, not the integer.
-    let Q::Number(three) = Q::new(8, 1).log2() else {
+    // `cbrt(8)` goes through `exp(ln)` and is a hair off 2, not 2. The
+    // logarithms at powers of their base are exact by a proven postcondition.
+    let Q::Number(two) = Q::new(8, 1).cbrt() else {
         panic!()
     };
-    assert_ne!(three, Rat::new(3, 1).unwrap());
-    assert!((to_f64(three) - 3.0).abs() < 1e-15);
+    assert_ne!(two, Rat::new(2, 1).unwrap());
+    assert!((to_f64(two) - 2.0).abs() < 1e-15);
+    assert_eq!(Q::new(8, 1).log2(), Q::new(3, 1));
+    assert_eq!(Q::new(1, 1000).log10(), Q::new(-3, 1));
 
     // Total: every domain edge is a value, never a panic.
     assert_eq!(Q::new(-1, 1).sqrt(), Q::Nan);

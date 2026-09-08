@@ -2,7 +2,7 @@
 
 ```
 verification results:: 2058 verified, 0 errors     <- vstd
-verification results:: 1209 verified, 0 errors     <- the-q
+verification results:: 1219 verified, 0 errors     <- the-q
 ```
 
 The second line is the figure to quote; take it from the `verification
@@ -36,7 +36,7 @@ the containment obligation for its propagation tables (issues #26, #28).
 
 ## Independent of the proofs
 
-* 253 default-feature and 308 all-feature tests, debug and release, plus 210
+* 256 default-feature and 311 all-feature tests, debug and release, plus 210
   doctests with all features (187 with none): every executable public
   function has one, and six are `compile_fail` checks that `Rat`, `QI` and
   `Exact` cannot be built or mutated from outside the crate.
@@ -244,6 +244,18 @@ Every function returns a well-formed `Q` for every input; every loop has a
 fixed constant bound and `decreases`; `isqrt_i64` satisfies
 `r² ≤ n < (r+1)²`. Accuracy is not proven. Each series length is derived from
 its tail bound against the `2^-61` grid and recorded beside the constant.
+
+Two value pins are proven (issue #43): `Q::log2` returns exactly `k` on
+`2^k / 1` and `-k` on `1 / 2^k` for `k ≤ 62`, and `Q::log10` likewise for
+`10^k` with `k ≤ 18`; `Q::log` inherits both when its base is exactly `2` or
+`10`. Both are stated on the representation (`spec_is_value(pow2(k), 1)`),
+which for a canonical `Rat` is the value. The exponent is found by comparing
+against the verified power tables (`round::pow2_i128`, `q::pow10_i64`) and
+called *the* exponent by `model::lemma_pow2_injective` /
+`lemma_pow10_injective`. Off those points the logarithms remain
+`ln(x) / ln(base)`, measured only; `log2(8)` was a rational within `2^-59` of
+`3` before the pin, because the runtime series value of `ln 2` and the stored
+`ln2()` literal differ by one `2^-60` grid unit.
 
 ## Verus notes
 
