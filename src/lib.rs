@@ -55,6 +55,10 @@
 //!   associativity holds on the exact path and the defect is bounded.
 //! * Rounding is monotone on each grid, not across the representable/rounded
 //!   boundary. `README.md` has the counterexample.
+//! * Transcendentals are exact at rational points only where a proof says so:
+//!   `log2` at `2^k`, `log10` at `10^k` (both signs), `sqrt` of a perfect
+//!   square, `exp(0)`, `ln(1)`. `cbrt(8)` and `exp2(3)` are a hair off the
+//!   integer, inside the measured bounds.
 //! * `Q` is not a semiring: `add`/`mul` are commutative unconditionally, but
 //!   associative, distributive and monotone only on the all-`Number` exact
 //!   path — every failure past it has a counterexample in `tests/q_laws.rs`.
@@ -86,6 +90,11 @@
 #![allow(clippy::unusual_byte_groupings)]
 #![allow(clippy::manual_div_ceil)]
 #![allow(clippy::implicit_saturating_sub)]
+// `transcendental::log2`/`log10` match on `Option`/`Q` with a `_ => {}` arm
+// and hang a proof block off each arm. An `if let ... else` would hold the
+// same proofs; `match` is kept because it is the exec shape the rest of the
+// verified modules use, so the discharge sits where a reader expects it.
+#![allow(clippy::single_match)]
 
 // Verus's macro machinery.
 #[allow(unused_imports)]

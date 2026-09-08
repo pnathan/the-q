@@ -1732,50 +1732,281 @@ pub fn ln10() -> (r: Q)
     Q::new(2654699869899991811, 1152921504606846976)
 }
 
+
+/// The `k <= 62` with `n == 2^k`, by comparison against the verified power
+/// table (`round::pow2_i128`); `None` when there is none. Sixty-three
+/// comparisons at most, so constant cost like the rest of this module.
+fn pow2_exponent_i64(n: i64) -> (r: Option<u8>)
+    ensures
+        r.is_some() ==> r.unwrap() <= 62 && n == crate::model::pow2(r.unwrap() as nat),
+        r.is_none() ==> forall|k: nat| k <= 62 ==> n != crate::model::pow2(k),
+{
+    let mut k: u32 = 0;
+    let mut found: bool = false;
+    while k <= 62 && !found
+        invariant
+            k <= 63,
+            !found ==> forall|j: nat| j < k ==> n != crate::model::pow2(j),
+            found ==> k <= 62 && n == crate::model::pow2(k as nat),
+        decreases 63 - k + (if found { 0int } else { 1int }),
+    {
+        if crate::round::pow2_i128(k) == n as i128 {
+            found = true;
+        } else {
+            k = k + 1;
+        }
+    }
+    if found {
+        Some(k as u8)
+    } else {
+        None
+    }
+}
+
+/// The `k <= 18` with `n == 10^k`, by comparison against the verified power
+/// table (`q::pow10_i64`); `None` when there is none.
+fn pow10_exponent_i64(n: i64) -> (r: Option<u8>)
+    ensures
+        r.is_some() ==> r.unwrap() <= 18 && n == crate::model::pow10(r.unwrap() as nat),
+        r.is_none() ==> forall|k: nat| k <= 18 ==> n != crate::model::pow10(k),
+{
+    let mut k: u8 = 0;
+    let mut found: bool = false;
+    while k <= 18 && !found
+        invariant
+            k <= 19,
+            !found ==> forall|j: nat| j < k ==> n != crate::model::pow10(j),
+            found ==> k <= 18 && n == crate::model::pow10(k as nat),
+        decreases 19 - k + (if found { 0int } else { 1int }),
+    {
+        if crate::q::pow10_i64(k) == n {
+            found = true;
+        } else {
+            k = k + 1;
+        }
+    }
+    if found {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+/// A small integer as a `Q`, with its value pinned. `Rat::from_int` cannot
+/// fail below the budget, which `|i| <= 62` is far inside.
+fn small_int_q(i: i64) -> (r: Q)
+    requires
+        -62 <= i <= 62,
+    ensures
+        r.wf(),
+        r.spec_is_value(i as int, 1),
+{
+    match Rat::from_int(i) {
+        Some(x) => Q::Number(x),
+        None => {
+            proof {
+                assert(false);
+            }
+            Q::Nan
+        },
+    }
+}
+
 impl Q {
-    /// The base-2 logarithm, as `ln(self) / ln(2)`.
+    /// The base-2 logarithm. Exact at `2^k` and `1 / 2^k` for every power of
+    /// two a `Rat` holds (`k <= 61`; `MAX_MAG` is `2^62 - 1`), where it
+    /// returns the integer `k` (or `-k`); otherwise
+    /// `ln(self) / ln(2)`, whose accuracy is measured, not proven.
+    ///
+    /// Without the exact path `log2(8)` is a rational within `2^-59` of `3`,
+    /// not `3`: `ln(8)` mixes the runtime series value of `ln 2` with the
+    /// stored `ln2()` literal, and the two differ by one grid unit. The
+    /// exponent is found by comparison against the verified power table, so
+    /// the exactness is a proven postcondition, not an accident of rounding.
     ///
     /// ```
     /// use the_q::Q;
     ///
-    /// let l = Q::new(8, 1).log2();
-    /// if let Q::Number(x) = l {
-    ///     assert!((the_q::to_f64(x) - 3.0).abs() < 1e-9);
-    /// } else {
-    ///     panic!("expected a number");
-    /// }
+    /// assert_eq!(Q::new(8, 1).log2(), Q::new(3, 1));
+    /// assert_eq!(Q::new(1, 1024).log2(), Q::new(-10, 1));
+    /// assert_eq!(Q::one().log2(), Q::zero());
+    ///
+    /// // Off the powers of two it is a series result near the true value.
+    /// let Q::Number(x) = Q::new(10, 1).log2() else { panic!() };
+    /// assert!((the_q::to_f64(x) - 10f64.log2()).abs() < 1e-15);
+    /// assert_eq!(Q::zero().log2(), Q::NegInf);
     /// ```
     pub fn log2(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
+            forall|k: nat| #![trigger crate::model::pow2(k)]
+                k <= 62 && self.spec_is_value(crate::model::pow2(k), 1)
+                    ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow2(k)]
+                k <= 62 && self.spec_is_value(1, crate::model::pow2(k))
+                    ==> r.spec_is_value(-(k as int), 1),
     {
+        match self {
+            Q::Number(x) => {
+                let n = x.numerator();
+                let d = x.denominator();
+                if d == 1 {
+                    if n >= 1 {
+                        match pow2_exponent_i64(n) {
+                            Some(k) => {
+                                proof {
+                                    assert forall|k2: nat| #![trigger crate::model::pow2(k2)]
+                                        k2 <= 62 && self.spec_is_value(crate::model::pow2(k2), 1)
+                                            implies k2 == k as nat by {
+                                        crate::model::lemma_pow2_injective(k2, k as nat);
+                                    }
+                                    assert forall|k2: nat| #![trigger crate::model::pow2(k2)]
+                                        k2 <= 62 && self.spec_is_value(1, crate::model::pow2(k2))
+                                            implies k2 == 0 && k == 0 by {
+                                        crate::model::lemma_pow2_injective(k2, 0);
+                                        crate::model::lemma_pow2_injective(k as nat, 0);
+                                    }
+                                }
+                                return small_int_q(k as i64);
+                            },
+                            None => {
+                                proof {
+                                    // `1 == 2^k` forces `k == 0`, and then `n == 1 == 2^0`
+                                    // would have been found.
+                                    assert forall|k2: nat| #![trigger crate::model::pow2(k2)]
+                                        k2 <= 62 implies !self.spec_is_value(1, crate::model::pow2(k2)) by {
+                                        if self.spec_is_value(1, crate::model::pow2(k2)) {
+                                            crate::model::lemma_pow2_injective(k2, 0);
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    } else {
+                        proof {
+                            assert forall|k2: nat| #![trigger crate::model::pow2(k2)]
+                                k2 <= 62 implies !self.spec_is_value(crate::model::pow2(k2), 1) by {
+                                crate::model::lemma_pow2_pos(k2);
+                            }
+                        }
+                    }
+                } else if n == 1 {
+                    match pow2_exponent_i64(d) {
+                        Some(k) => {
+                            proof {
+                                assert forall|k2: nat| #![trigger crate::model::pow2(k2)]
+                                    k2 <= 62 && self.spec_is_value(1, crate::model::pow2(k2))
+                                        implies k2 == k as nat by {
+                                    crate::model::lemma_pow2_injective(k2, k as nat);
+                                }
+                            }
+                            return small_int_q(0 - (k as i64));
+                        },
+                        None => {},
+                    }
+                }
+            },
+            _ => {},
+        }
         Q::div(self.ln(), ln2())
     }
 
-    /// The base-10 logarithm, as `ln(self) / ln(10)`.
+    /// The base-10 logarithm. Exact at `10^k` and `1 / 10^k` for `k <= 18`
+    /// (`10^18` is the largest power of ten a `Rat` holds), where it returns
+    /// the integer `k` (or `-k`); otherwise `ln(self) / ln(10)`, whose
+    /// accuracy is measured, not proven. See `log2` for why the exact path
+    /// exists.
     ///
     /// ```
     /// use the_q::Q;
     ///
-    /// let l = Q::new(100, 1).log10();
-    /// if let Q::Number(x) = l {
-    ///     assert!((the_q::to_f64(x) - 2.0).abs() < 1e-9);
-    /// } else {
-    ///     panic!("expected a number");
-    /// }
+    /// assert_eq!(Q::new(1000, 1).log10(), Q::new(3, 1));
+    /// assert_eq!(Q::new(1, 100).log10(), Q::new(-2, 1));
+    /// assert_eq!(Q::one().log10(), Q::zero());
+    ///
+    /// let Q::Number(x) = Q::new(2, 1).log10() else { panic!() };
+    /// assert!((the_q::to_f64(x) - 2f64.log10()).abs() < 1e-15);
     /// ```
     pub fn log10(self) -> (r: Q)
         requires
             self.wf(),
         ensures
             r.wf(),
+            forall|k: nat| #![trigger crate::model::pow10(k)]
+                k <= 18 && self.spec_is_value(crate::model::pow10(k), 1)
+                    ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow10(k)]
+                k <= 18 && self.spec_is_value(1, crate::model::pow10(k))
+                    ==> r.spec_is_value(-(k as int), 1),
     {
+        match self {
+            Q::Number(x) => {
+                let n = x.numerator();
+                let d = x.denominator();
+                if d == 1 {
+                    if n >= 1 {
+                        match pow10_exponent_i64(n) {
+                            Some(k) => {
+                                proof {
+                                    assert forall|k2: nat| #![trigger crate::model::pow10(k2)]
+                                        k2 <= 18 && self.spec_is_value(crate::model::pow10(k2), 1)
+                                            implies k2 == k as nat by {
+                                        crate::model::lemma_pow10_injective(k2, k as nat);
+                                    }
+                                    assert forall|k2: nat| #![trigger crate::model::pow10(k2)]
+                                        k2 <= 18 && self.spec_is_value(1, crate::model::pow10(k2))
+                                            implies k2 == 0 && k == 0 by {
+                                        crate::model::lemma_pow10_injective(k2, 0);
+                                        crate::model::lemma_pow10_injective(k as nat, 0);
+                                    }
+                                }
+                                return small_int_q(k as i64);
+                            },
+                            None => {
+                                proof {
+                                    assert forall|k2: nat| #![trigger crate::model::pow10(k2)]
+                                        k2 <= 18 implies !self.spec_is_value(1, crate::model::pow10(k2)) by {
+                                        if self.spec_is_value(1, crate::model::pow10(k2)) {
+                                            crate::model::lemma_pow10_injective(k2, 0);
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    } else {
+                        proof {
+                            assert forall|k2: nat| #![trigger crate::model::pow10(k2)]
+                                k2 <= 18 implies !self.spec_is_value(crate::model::pow10(k2), 1) by {
+                                crate::model::lemma_pow10_pos(k2);
+                            }
+                        }
+                    }
+                } else if n == 1 {
+                    match pow10_exponent_i64(d) {
+                        Some(k) => {
+                            proof {
+                                assert forall|k2: nat| #![trigger crate::model::pow10(k2)]
+                                    k2 <= 18 && self.spec_is_value(1, crate::model::pow10(k2))
+                                        implies k2 == k as nat by {
+                                    crate::model::lemma_pow10_injective(k2, k as nat);
+                                }
+                            }
+                            return small_int_q(0 - (k as i64));
+                        },
+                        None => {},
+                    }
+                }
+            },
+            _ => {},
+        }
         Q::div(self.ln(), ln10())
     }
 
-    /// The logarithm in an arbitrary base, as `ln(self) / ln(base)`.
+    /// The logarithm in an arbitrary base: `log2` when `base` is exactly `2`,
+    /// `log10` when it is exactly `10` (so their exact paths apply), and
+    /// `ln(self) / ln(base)` otherwise.
     ///
     /// A base of `1` gives a zero denominator, thus an infinity or `Nan`. The
     /// function `log_1` is undefined.
@@ -1783,12 +2014,10 @@ impl Q {
     /// ```
     /// use the_q::Q;
     ///
-    /// let l = Q::new(8, 1).log(Q::new(2, 1));
-    /// if let Q::Number(x) = l {
-    ///     assert!((the_q::to_f64(x) - 3.0).abs() < 1e-9);
-    /// } else {
-    ///     panic!("expected a number");
-    /// }
+    /// assert_eq!(Q::new(8, 1).log(Q::new(2, 1)), Q::new(3, 1));
+    /// assert_eq!(Q::new(1000, 1).log(Q::new(10, 1)), Q::new(3, 1));
+    /// let Q::Number(x) = Q::new(9, 1).log(Q::new(3, 1)) else { panic!() };
+    /// assert!((the_q::to_f64(x) - 2.0).abs() < 1e-15);
     /// assert_eq!(Q::new(8, 1).log(Q::one()), Q::PosInf);
     /// ```
     pub fn log(self, base: Q) -> (r: Q)
@@ -1797,7 +2026,32 @@ impl Q {
             base.wf(),
         ensures
             r.wf(),
+            forall|k: nat| #![trigger crate::model::pow2(k)]
+                base.spec_is_value(2, 1) && k <= 62 && self.spec_is_value(crate::model::pow2(k), 1)
+                    ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow2(k)]
+                base.spec_is_value(2, 1) && k <= 62 && self.spec_is_value(1, crate::model::pow2(k))
+                    ==> r.spec_is_value(-(k as int), 1),
+            forall|k: nat| #![trigger crate::model::pow10(k)]
+                base.spec_is_value(10, 1) && k <= 18 && self.spec_is_value(crate::model::pow10(k), 1)
+                    ==> r.spec_is_value(k as int, 1),
+            forall|k: nat| #![trigger crate::model::pow10(k)]
+                base.spec_is_value(10, 1) && k <= 18 && self.spec_is_value(1, crate::model::pow10(k))
+                    ==> r.spec_is_value(-(k as int), 1),
     {
+        match base {
+            Q::Number(b) => {
+                let bn = b.numerator();
+                let bd = b.denominator();
+                if bd == 1 && bn == 2 {
+                    return self.log2();
+                }
+                if bd == 1 && bn == 10 {
+                    return self.log10();
+                }
+            },
+            _ => {},
+        }
         Q::div(self.ln(), base.ln())
     }
 

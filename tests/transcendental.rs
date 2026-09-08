@@ -1386,3 +1386,94 @@ fn the_whole_function_set_is_total() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Exact logarithms at powers of the base (issue #43)
+// ---------------------------------------------------------------------------
+
+/// `log2(2^k) == k` and `log2(2^-k) == -k` for every power of two a `Rat`
+/// can hold: `2^61` at most, since `MAX_MAG` is `2^62 - 1`.
+/// The general path returns a rational within `2^-59` of `k`; the exact path
+/// is a proven postcondition, and this pins the compiled artifact to it.
+#[test]
+fn log2_is_exact_at_every_power_of_two_in_the_budget() {
+    for k in 0..=61u32 {
+        let p = 1i64 << k;
+        assert_eq!(Q::new(p, 1).log2(), Q::new(k as i64, 1), "log2(2^{k})");
+        assert_eq!(Q::new(1, p).log2(), Q::new(-(k as i64), 1), "log2(2^-{k})");
+        assert_eq!(
+            Q::new(p, 1).log(Q::new(2, 1)),
+            Q::new(k as i64, 1),
+            "log(2^{k}, 2)"
+        );
+        assert_eq!(
+            Q::new(1, p).log(Q::new(2, 1)),
+            Q::new(-(k as i64), 1),
+            "log(2^-{k}, 2)"
+        );
+    }
+    // Neighbours of a power of two stay on the general path and are not integers.
+    for x in [3i64, 5, 6, 7, 9, 12, 1023, 1025] {
+        let Q::Number(r) = Q::new(x, 1).log2() else {
+            panic!("log2({x})")
+        };
+        assert_ne!(r.denominator(), 1, "log2({x}) should not be an integer");
+    }
+    // Negative powers of two with a numerator other than one, and a negative
+    // argument, are not on the exact path either.
+    assert_ne!(Q::new(3, 8).log2().to_string(), "-3/1".to_string());
+    assert_eq!(Q::new(-8, 1).log2(), Q::Nan);
+}
+
+/// `log10(10^k) == k` and `log10(10^-k) == -k` for `k <= 18`, the largest
+/// power of ten a `Rat` holds.
+#[test]
+fn log10_is_exact_at_every_power_of_ten_in_the_budget() {
+    let mut p = 1i64;
+    for k in 0..=18i64 {
+        assert_eq!(Q::new(p, 1).log10(), Q::new(k, 1), "log10(10^{k})");
+        assert_eq!(Q::new(1, p).log10(), Q::new(-k, 1), "log10(10^-{k})");
+        assert_eq!(
+            Q::new(p, 1).log(Q::new(10, 1)),
+            Q::new(k, 1),
+            "log(10^{k}, 10)"
+        );
+        assert_eq!(
+            Q::new(1, p).log(Q::new(10, 1)),
+            Q::new(-k, 1),
+            "log(10^-{k}, 10)"
+        );
+        if k < 18 {
+            p *= 10;
+        }
+    }
+    for x in [2i64, 5, 20, 99, 101, 999, 1001] {
+        let Q::Number(r) = Q::new(x, 1).log10() else {
+            panic!("log10({x})")
+        };
+        assert_ne!(r.denominator(), 1, "log10({x}) should not be an integer");
+    }
+    assert_eq!(Q::new(-10, 1).log10(), Q::Nan);
+    assert_eq!(Q::zero().log10(), Q::NegInf);
+    assert_eq!(Q::PosSat.log10(), Q::Nan);
+}
+
+/// The exact path changes nothing off the powers: the identity the accuracy
+/// suite already checks, `log2(x)·ln2 == ln(x)` up to the grid, must still
+/// hold at a power of two, now with the integer on the left.
+#[test]
+fn exact_log2_agrees_with_the_series_within_the_grid() {
+    for k in [1u32, 3, 10, 40, 61] {
+        let x = Q::new(1i64 << k, 1);
+        let (Q::Number(l2), Q::Number(ln), Q::Number(ln2)) =
+            (x.log2(), x.ln(), the_q::transcendental::ln2())
+        else {
+            panic!()
+        };
+        let lhs = Rat::mul(l2, ln2);
+        let diff = Rat::sub(lhs, ln).abs();
+        // k · ln2 vs ln(2^k): at most k + 1 grid units of 2^-60 apart.
+        let bound = Rat::new((k as i64 + 1) * 4, 1i64 << 62).unwrap(); // (k+1) · 2^-60
+        assert!(diff <= bound, "k={k}: |k·ln2 − ln(2^k)| = {diff} > {bound}");
+    }
+}

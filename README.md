@@ -55,7 +55,7 @@ proven amount, in the direction you asked for.
 
 The proofs are written in Verus inside the source files. `cargo build` erases
 them and compiles ordinary Rust; `cargo verus verify` checks them. The verified
-count in CI is `1209 verified, 0 errors`, with no `assume`, no `admit`, and
+count in CI is `1219 verified, 0 errors`, with no `assume`, no `admit`, and
 three trusted functions, all at the `f64` boundary or a panic message, none on
 an arithmetic path.
 
@@ -531,13 +531,15 @@ let Q::Number(e) = Q::one().exp() else {
     panic!()
 };
 assert!((to_f64(e) - std::f64::consts::E).abs() < 1e-15);
-// `log2(8)` is *not* exactly 3: `ln` is a series, and the quotient of two
-// rounded logarithms is a nearby rational, not the integer.
-let Q::Number(three) = Q::new(8, 1).log2() else {
+// `cbrt(8)` goes through `exp(ln)` and is a hair off 2, not 2. The
+// logarithms at powers of their base are exact by a proven postcondition.
+let Q::Number(two) = Q::new(8, 1).cbrt() else {
     panic!()
 };
-assert_ne!(three, Rat::new(3, 1).unwrap());
-assert!((to_f64(three) - 3.0).abs() < 1e-15);
+assert_ne!(two, Rat::new(2, 1).unwrap());
+assert!((to_f64(two) - 2.0).abs() < 1e-15);
+assert_eq!(Q::new(8, 1).log2(), Q::new(3, 1));
+assert_eq!(Q::new(1, 1000).log10(), Q::new(-3, 1));
 
 // Total: every domain edge is a value, never a panic.
 assert_eq!(Q::new(-1, 1).sqrt(), Q::Nan);
@@ -892,15 +894,18 @@ Q::recip(b))` fails in six cells. No defect bound is stated at this level:
 `Nan` and the unbounded saturation intervals carry no metric to bound against.
 Every failure has a test in `tests/q_laws.rs`.
 
-**Transcendentals are not exact at rational points.** `log2(8)` is a rational
-within `2^-59` of 3, not 3, because `ln` is a series and `log2` is a quotient
-of two rounded logarithms. Where the algorithm happens to land on the exact
-answer (`sqrt` of a perfect square, `exp(0)`, `ln(1)`) it does so by
-construction, not by contract.
+**Transcendentals are exact at rational points only where a proof says so.**
+`cbrt(8)` is `2305843009213693951 / 2^60`, within `2^-60` of 2 but not 2, and
+`exp2(3)` is likewise a hair under 8, because both go through `exp(ln)` and
+those are series. `sqrt` of a perfect square, `exp(0)`, `ln(1)`, `log2` at a
+power of two and `log10` at a power of ten return the integer, and for the two
+logarithms that is a proven postcondition (`log2(2^k) == k` for `k ≤ 61`,
+`log10(10^k) == k` for `k ≤ 18`, both signs, every power a `Rat` holds). Everything else lands near the
+true value by the measured margins above, not on it.
 
 ## What is proven
 
-`1209 verified, 0 errors` in CI; no `assume`, no `admit`; three
+`1219 verified, 0 errors` in CI; no `assume`, no `admit`; three
 `external_body` functions, enumerated in `TRUSTED.md`.
 
 * **V1** Every public operation preserves canonical form and the budget.
@@ -918,7 +923,9 @@ construction, not by contract.
   weight sum is at least `δ`.
 * **V9** `Q`: totality, classification, total order, `Nan` absorption.
 * **V10** Transcendentals: totality and termination. `isqrt` is exactly the
-  integer square root.
+  integer square root; `log2` returns exactly `k` on `2^k` and `1/2^k`, and
+  `log10` exactly `k` on `10^k` and `1/10^k`, for every such power a `Rat`
+  holds.
 * **V11** `Q`'s algebraic laws (commutative unconditionally; associative,
   distributive and monotone on the all-`Number` exact path and nowhere
   further), and the containment obligation `{x ⊕ y : x ∈ ⟦a⟧, y ∈ ⟦b⟧} ⊆

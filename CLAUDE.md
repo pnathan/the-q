@@ -28,6 +28,16 @@ cargo verus verify --locked --all-features -- --multiple-errors 8
 `--multiple-errors` is not optional in practice: Verus reports one error per
 function body by default, so a module with an early failure looks clean.
 
+Verus runs locally: the pinned release lives at `~/verus/verus-x86-linux`
+(prepend it to `PATH`; it is bound to the active rustc 1.97.1). A run takes
+about four minutes; give it `CARGO_TARGET_DIR=target/verus` so it does not
+hold the build lock `cargo test` needs. Quote the `the-q` line of its
+`verification results` output. After editing code inside `verus!` blocks,
+distrust a `cargo build` that finishes in under two seconds: a stale
+incremental artifact for the no-feature configuration once made a fix appear
+absent under `cargo test` with default features only. `cargo clean -p the-q`
+or `CARGO_INCREMENTAL=0` resolves it; results must agree across feature sets.
+
 Repository-specific checks, all run in CI:
 
 ```sh
@@ -92,7 +102,10 @@ new rounding obligations.
   `exp` and `ln`; no gcd, no canonical form per step.
 * `transcendental.rs` — roots and transcendentals on `Q`. Fixed-length series,
   so termination is structural and cost is constant. Totality and termination
-  are proven; **accuracy is measured, not proven**.
+  are proven; **accuracy is measured, not proven**, except for the value pins
+  `log2(2^k) == k` and `log10(10^k) == k` (both signs), found by comparison
+  against the verified power tables and made unique by
+  `model::lemma_pow2_injective` / `lemma_pow10_injective`.
 * `convert.rs` — the crate's edges: `f64` in and out, `Display`, `FromStr`,
   serde (feature-gated).
 
@@ -118,6 +131,16 @@ new rounding obligations.
   updating `README.md` and `VERIFICATION.md` in the same change; the numbers in
   those files are quoted as evidence and `tests/readme_examples.rs` compiles the
   README's code.
+* Every PR leaves the documentation true of the tree it produces, in the same
+  PR. Concretely: any change to what a public function returns updates its
+  doc comment and doctest (every executable public function has one); any
+  change a user can observe updates `README.md` (regenerate from the section
+  it belongs to, and mirror each `rust` block into `tests/readme_examples.rs`,
+  whose drift test fails otherwise), the test and doctest counts and the
+  obligation map in `VERIFICATION.md`, and this file's architecture notes
+  where a module's contract moved. Grep the docs for the function or figure
+  you changed before opening the PR; a stale sentence in `README.md` is a
+  false claim on the crate's front page.
 
 ## Test suites
 
