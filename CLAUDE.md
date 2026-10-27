@@ -58,10 +58,11 @@ sbcl --script scripts/accuracy/eval.lisp target/accuracy-dump.tsv
 
 ## Releasing
 
-Pushing a `vX.Y.Z` tag publishes: `.github/workflows/release.yml` checks the
+Pushing a `vX.Y.Z` tag publishes: `.github/workflows/release-plz.yml` checks the
 tag against `Cargo.toml`, runs all of `ci.yml` (it is `workflow_call`-able for
-this), then `cargo publish`, provenance attestation, GitHub Release and a
-downstream smoke build. release-plz only maintains the version-bump PR;
+this), then `cargo publish` via crates.io Trusted Publishing, provenance attestation, GitHub Release and a
+downstream smoke build. On `trunk` pushes the same file only maintains
+release-plz's version-bump PR. It is one file because crates.io trusts no other;
 `pr-title.yml` enforces the Conventional Commit titles its changelog reads.
 `scripts/configure-github.sh` applies the environment and rulesets it relies
 on. See `docs/RELEASING.md`.

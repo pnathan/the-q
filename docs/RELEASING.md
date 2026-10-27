@@ -3,9 +3,13 @@
 A release is a pushed `vX.Y.Z` tag. Nothing is `cargo publish`ed from a
 laptop.
 
-1. **Version-bump PR.** [release-plz](https://release-plz.dev) (config:
-   `release-plz.toml`, workflow: `.github/workflows/release-plz.yml`) keeps a
-   standing pull request open on every push to `trunk`, titled like
+Everything runs from one workflow, `.github/workflows/release-plz.yml`: the
+crates.io Trusted Publishing registration names that file, and crates.io
+accepts OIDC tokens from no other.
+
+1. **Version-bump PR.** On every push to `trunk`,
+   [release-plz](https://release-plz.dev) (config: `release-plz.toml`) keeps a
+   standing pull request open, titled like
    `chore: release v0.3.0`. It bumps `Cargo.toml`'s `version` and writes
    `CHANGELOG.md` from the [Conventional
    Commits](https://www.conventionalcommits.org/) merged since the version
@@ -19,7 +23,7 @@ laptop.
    git push origin v0.3.0
    ```
 
-3. **Publish.** `.github/workflows/release.yml` runs on the tag push:
+3. **Publish.** The same workflow's tag-push jobs run:
    * `tag` fails fast unless the tag is `v` + `Cargo.toml`'s version and the
      tagged commit is on `trunk`;
    * `ci` runs the whole of `ci.yml` (build, tests, clippy, fmt, MSRV,
@@ -27,7 +31,8 @@ laptop.
      tagged commit;
    * `publish` (environment `cargo.io`) packages the crate once, attests
      the `.crate` tarball's build provenance, runs `cargo publish --locked`
-     with the `CARGO_REGISTRY_TOKEN` secret, checks that crates.io's checksum
+     with a short-lived Trusted Publishing token (falling back to the
+     `CARGO_REGISTRY_TOKEN` secret if the OIDC exchange fails), checks that crates.io's checksum
      equals the attested tarball's, and creates the GitHub Release with this
      version's `CHANGELOG.md` section as notes and the tarball attached;
    * `smoke` builds a fresh downstream crate depending on `the-q = "=X.Y.Z"`
@@ -45,7 +50,7 @@ gh attestation verify the-q-X.Y.Z.crate --repo pnathan/the-q
 
 release-plz never pushes the tag itself. A tag pushed with a workflow's
 `GITHUB_TOKEN` does not trigger other workflows, so a tag it created would
-not reach `release.yml`; the tag is pushed by a person.
+not reach the publish jobs; the tag is pushed by a person.
 
 ## Checks on every pull request
 
@@ -81,9 +86,12 @@ checks never report: merge the release PR with the admin bypass. Its content
 is only `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, and the tag push
 re-runs all of CI before anything is published.
 
-Not scripted: the crates.io side. Use a token scoped `publish-update` on
-`the-q` only, with an expiry. Trusted Publishing (OIDC) would remove the
-stored secret entirely; switching is a change to the `cargo publish` step.
+Not scripted: the crates.io side. The crate's Trusted Publishing entry names
+repository `pnathan/the-q` and workflow `release-plz.yml`. If that entry also
+names an environment, it must be `cargo.io`; leave it blank otherwise.
+Renaming or splitting `release-plz.yml` breaks publishing until the entry is
+updated. `CARGO_REGISTRY_TOKEN` is only the fallback; if kept, scope it
+`publish-update` on `the-q` with an expiry.
 
 ## Failure modes
 
@@ -91,10 +99,16 @@ stored secret entirely; switching is a change to the `cargo publish` step.
   Delete the tag (`git push origin :refs/tags/vX.Y.Z`), fix, re-tag.
 * **CI red on the tagged commit.** Nothing is published. Fix on `trunk`
   through a PR, delete the tag, re-tag the fixed commit.
-* **Expired or revoked `CARGO_REGISTRY_TOKEN`.** `cargo publish` fails with
-  an authentication error. Replace the secret (Settings → Secrets and
-  variables → Actions) with a crates.io token scoped `publish-update` for
-  `the-q`, then re-run the failed job.
+* **Trusted Publishing refused and the fallback token expired.** The
+  `crates.io token` step warns and `cargo publish` fails with an
+  authentication error. Check the crates.io Trusted Publishing entry (see
+  above), or replace the secret with a crates.io token scoped
+  `publish-update` for `the-q`; then re-run the failed job.
+* **Checksum mismatch after publish.** The version is on crates.io but is not
+  the attested tarball (for example, published by hand meanwhile). Yank it
+  and release the next patch version.
+* **`smoke` fails.** The published crate does not build downstream. Yank it,
+  fix, release the next patch version.
 * A version published to crates.io cannot be replaced, only yanked.
 
 ## Version discipline

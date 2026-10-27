@@ -4,7 +4,8 @@
 # docs/RELEASING.md, "Repository settings"). Idempotent: re-running updates
 # in place. Needs `gh` authenticated as a repository admin.
 #
-#   * environment `cargo.io`: deployable only from `v*` tags, the owner as
+#   * environment `cargo.io` (used by release-plz.yml's publish job):
+#     deployable only from `v*` tags, the owner as
 #     required reviewer, and CARGO_REGISTRY_TOKEN as an environment secret;
 #   * ruleset "trunk": PR required, the CI checks required, no force-push or
 #     deletion;

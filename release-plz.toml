@@ -5,7 +5,7 @@
 [workspace]
 # release-plz only maintains the version-bump PR (`release-pr`). The `release`
 # command is never run: publishing, tagging and the GitHub Release belong to
-# `.github/workflows/release.yml`, triggered by pushing the `vX.Y.Z` tag.
+# the tag-push jobs of `.github/workflows/release-plz.yml`.
 
 # `gcd`, `model`, `round`, `lipschitz`, `fx` and
 # `round::round_frac_exec_with_gcd` are public only because Verus's

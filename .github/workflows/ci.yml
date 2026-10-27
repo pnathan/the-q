@@ -17,8 +17,8 @@ on:
   # ruleset, and a skipped required check blocks the merge forever. README.md
   # is also compiled by tests/readme_examples.rs, so a docs PR is not inert.
   pull_request:
-  # release.yml calls this whole workflow as the gate in front of
-  # `cargo publish`, so a tag is published only after every job here passes.
+  # On a tag push, release-plz.yml calls this whole workflow as the gate in
+  # front of `cargo publish`: a tag is published only if every job passes.
   workflow_call:
 
 # Verification is slow and a superseded commit's run is worthless. Without this
