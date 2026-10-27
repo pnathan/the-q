@@ -4,7 +4,7 @@
 # docs/RELEASING.md, "Repository settings"). Idempotent: re-running updates
 # in place. Needs `gh` authenticated as a repository admin.
 #
-#   * environment `cargo.io` (used by release-plz.yml's publish job):
+#   * environment `cargo.io` (used by release.yml's publish job):
 #     deployable only from `v*` tags, the owner as
 #     required reviewer, and CARGO_REGISTRY_TOKEN as an environment secret;
 #   * ruleset "trunk": PR required, the CI checks required, no force-push or
@@ -12,9 +12,8 @@
 #   * ruleset "release tags": `v*` tags cannot be created, moved or deleted
 #     except by an admin.
 #
-# Admins bypass both rulesets. That is deliberate: release-plz opens its
-# version-bump PR with GITHUB_TOKEN, and GitHub starts no workflows for such
-# PRs, so its required checks never report and only a bypass can merge it.
+# Admins bypass both rulesets, for recovery (re-pointing a bad tag, an
+# emergency fix); normal changes go through PRs.
 #
 # Usage: scripts/configure-github.sh [owner/repo]
 #   CARGO_REGISTRY_TOKEN=… scripts/configure-github.sh   # also moves the token
@@ -84,7 +83,8 @@ put_ruleset trunk "$(cat <<JSON
         {"context": "MSRV (Rust 1.85)"},
         {"context": "no copyleft in the shipped tree"},
         {"context": "verus verify"},
-        {"context": "Conventional Commit title"}]}}
+        {"context": "Conventional Commit title"},
+        {"context": "version and changelog"}]}}
   ]
 }
 JSON

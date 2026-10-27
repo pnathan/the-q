@@ -17,7 +17,7 @@ on:
   # ruleset, and a skipped required check blocks the merge forever. README.md
   # is also compiled by tests/readme_examples.rs, so a docs PR is not inert.
   pull_request:
-  # On a tag push, release-plz.yml calls this whole workflow as the gate in
+  # On a tag push, release.yml calls this whole workflow as the gate in
   # front of `cargo publish`: a tag is published only if every job passes.
   workflow_call:
 
@@ -104,6 +104,32 @@ jobs:
       # when a release tag is already pushed.
       - name: Package
         run: cargo package --locked
+
+  # Conventional Commits, the version bump since the last tag, and the
+  # CHANGELOG.md entry: scripts/check-version.py, CLAUDE.md "Commits,
+  # versions and the changelog".
+  version:
+    name: version and changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Check
+        env:
+          # Through the environment, never interpolated: a title is
+          # attacker-controlled text.
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            python3 scripts/check-version.py --base "origin/$BASE" --title "$TITLE"
+          else
+            python3 scripts/check-version.py
+          fi
 
   licences:
     name: no copyleft in the shipped tree
