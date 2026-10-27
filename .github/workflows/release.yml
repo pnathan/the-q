@@ -57,9 +57,9 @@ jobs:
     needs: [tag, ci]
     runs-on: ubuntu-latest
     # Holds CARGO_REGISTRY_TOKEN's only consumer. Add required reviewers to the
-    # `crates-io` environment to make every publish wait for a person.
+    # `cargo.io` environment to make every publish wait for a person.
     environment:
-      name: crates-io
+      name: cargo.io
       url: https://crates.io/crates/the-q/${{ steps.version.outputs.version }}
     permissions:
       contents: write

@@ -25,7 +25,7 @@ laptop.
    * `ci` runs the whole of `ci.yml` (build, tests, clippy, fmt, MSRV,
      packaging, licences, vacuous-theorem lint, `verus verify`) on the
      tagged commit;
-   * `publish` (environment `crates-io`) packages the crate once, attests
+   * `publish` (environment `cargo.io`) packages the crate once, attests
      the `.crate` tarball's build provenance, runs `cargo publish --locked`
      with the `CARGO_REGISTRY_TOKEN` secret, checks that crates.io's checksum
      equals the attested tarball's, and creates the GitHub Release with this
@@ -63,7 +63,7 @@ These make the workflows load-bearing; without them they are advisory.
   tree`, `verus verify` and `Conventional Commit title`.
 * **Tag ruleset on `v*`:** restrict creation, update and deletion to
   maintainers, so a tag cannot be moved after it is published.
-* **Environment `crates-io`** (Settings → Environments): move
+* **Environment `cargo.io`** (Settings → Environments): move
   `CARGO_REGISTRY_TOKEN` from repository to environment secrets, restrict
   the environment to `v*` tags, and optionally add yourself as a required
   reviewer so each publish waits for an approval click.
