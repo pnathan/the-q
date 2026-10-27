@@ -7,7 +7,7 @@ on:
   # `refs/pull/N/merge`, so the two do not deduplicate each other. Listening to
   # both ran the whole pipeline, verification included, twice per commit.
   push:
-    branches: ["main"]
+    branches: ["trunk"]
     paths-ignore: &non-build-paths
       - "**/*.md"
       - "LICENSE"
@@ -96,6 +96,12 @@ jobs:
 
       - name: Rat and QI representations are private downstream
         run: ./scripts/check-rat-privacy.sh
+
+      # What crates.io would receive: `exclude` honoured, and the packaged
+      # tarball builds on its own. Catches a packaging error on the PR, not
+      # when a release tag is already pushed.
+      - name: Package
+        run: cargo package --locked
 
   licences:
     name: no copyleft in the shipped tree

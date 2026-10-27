@@ -1,0 +1,27 @@
+name: PR title
+
+# CHANGELOG.md is generated from Conventional Commit prefixes, and a squash
+# merge takes its commit message from the PR title. A title without a
+# recognised prefix would land in the changelog ungrouped.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  conventional:
+    name: Conventional Commit title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check title
+        env:
+          # Through the environment, never interpolated into the script: a
+          # title is attacker-controlled text.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|perf|refactor|doc|docs|test|chore|ci|build|style|revert)(\([a-z0-9_./-]+\))?!?: .+'
+          if ! printf '%s' "$TITLE" | grep -Eq "$re"; then
+            echo "::error::PR title must be a Conventional Commit, e.g. 'fix(round): …' or 'feat!: …'"
+            exit 1
+          fi

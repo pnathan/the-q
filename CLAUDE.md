@@ -60,7 +60,9 @@ sbcl --script scripts/accuracy/eval.lisp target/accuracy-dump.tsv
 
 Pushing a `vX.Y.Z` tag publishes: `.github/workflows/release.yml` checks the
 tag against `Cargo.toml`, runs all of `ci.yml` (it is `workflow_call`-able for
-this), then `cargo publish`. release-plz only maintains the version-bump PR.
+this), then `cargo publish`, provenance attestation, GitHub Release and a
+downstream smoke build. release-plz only maintains the version-bump PR;
+`pr-title.yml` enforces the Conventional Commit titles its changelog reads.
 See `docs/RELEASING.md`.
 
 ## Toolchain pinning

@@ -23,17 +23,53 @@ laptop.
    * `tag` fails fast unless the tag is `v` + `Cargo.toml`'s version and the
      tagged commit is on `trunk`;
    * `ci` runs the whole of `ci.yml` (build, tests, clippy, fmt, MSRV,
-     licences, vacuous-theorem lint, `verus verify`) on the tagged commit;
-   * `publish` runs `cargo publish --locked` with the `CARGO_REGISTRY_TOKEN`
-     repository secret, then creates the GitHub Release with generated notes.
+     packaging, licences, vacuous-theorem lint, `verus verify`) on the
+     tagged commit;
+   * `publish` (environment `crates-io`) packages the crate once, attests
+     the `.crate` tarball's build provenance, runs `cargo publish --locked`
+     with the `CARGO_REGISTRY_TOKEN` secret, checks that crates.io's checksum
+     equals the attested tarball's, and creates the GitHub Release with this
+     version's `CHANGELOG.md` section as notes and the tarball attached;
+   * `smoke` builds a fresh downstream crate depending on `the-q = "=X.Y.Z"`
+     from crates.io.
 
    Re-running a failed `publish` is safe: it skips `cargo publish` when the
    version is already on crates.io and skips the GitHub Release when one
    exists.
 
+To check a downloaded tarball against its attestation:
+
+```sh
+gh attestation verify the-q-X.Y.Z.crate --repo pnathan/the-q
+```
+
 release-plz never pushes the tag itself. A tag pushed with a workflow's
 `GITHUB_TOKEN` does not trigger other workflows, so a tag it created would
 not reach `release.yml`; the tag is pushed by a person.
+
+## Checks on every pull request
+
+* `ci.yml` — including `cargo package`, so a packaging error surfaces on the
+  PR rather than after a tag is pushed.
+* `pr-title.yml` — the PR title is a Conventional Commit, since a squash
+  merge makes it the commit the changelog reads.
+
+## Repository settings (manual, not in this tree)
+
+These make the workflows load-bearing; without them they are advisory.
+
+* **Branch ruleset on `trunk`:** require a PR, and require the checks
+  `cargo build + test`, `MSRV (Rust 1.85)`, `no copyleft in the shipped
+  tree`, `verus verify` and `Conventional Commit title`.
+* **Tag ruleset on `v*`:** restrict creation, update and deletion to
+  maintainers, so a tag cannot be moved after it is published.
+* **Environment `crates-io`** (Settings → Environments): move
+  `CARGO_REGISTRY_TOKEN` from repository to environment secrets, restrict
+  the environment to `v*` tags, and optionally add yourself as a required
+  reviewer so each publish waits for an approval click.
+* **Token:** a crates.io token scoped `publish-update` on `the-q` only, with
+  an expiry. Trusted Publishing (OIDC) would remove the stored secret
+  entirely; switching is a change to the `cargo publish` step.
 
 ## Failure modes
 
