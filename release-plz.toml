@@ -1,24 +1,23 @@
-# Configuration for release-plz (https://release-plz.dev), which drives
-# releases entirely from `.github/workflows/release-plz.yml`: it opens a PR
-# bumping `Cargo.toml`'s version and `CHANGELOG.md` from Conventional Commits,
-# and on that PR's merge, publishes to crates.io and pushes the matching
-# `vX.Y.Z` tag with a GitHub Release. No release step happens on a laptop.
+# Configuration for release-plz (https://release-plz.dev). It opens a PR
+# bumping `Cargo.toml`'s version and `CHANGELOG.md` from Conventional Commits;
+# see docs/RELEASING.md for the rest of the release.
 
 [workspace]
-# Publish, tag and release ONLY when a release-plz release PR is merged into
-# the default branch, not on every push. `true` (the default) would attempt
-# a release on every commit to the default branch, version bump or not.
-release_always = false
+# release-plz only maintains the version-bump PR (`release-pr`). The `release`
+# command is never run: publishing, tagging and the GitHub Release belong to
+# `.github/workflows/release.yml`, triggered by pushing the `vX.Y.Z` tag.
 
 # `gcd`, `model`, `round`, `lipschitz`, `fx` and
 # `round::round_frac_exec_with_gcd` are public only because Verus's
 # visibility rules demand it and are explicitly exempted from semver in
 # CLAUDE.md's "API stability" section -- they change shape in patch
 # releases by design. `cargo-semver-checks` cannot see that exemption, so it
-# would fail the release job on every patch that touches those modules.
+# would fail the release PR job on every patch that touches those modules.
 semver_check = false
 
 [changelog]
+# Commits title-matched against these in order; the first match wins.
+# release-plz titles its own PR `chore: release vX.Y.Z`, so that is skipped.
 commit_parsers = [
   { message = "^feat", group = "Added" },
   { message = "^fix", group = "Fixed" },
@@ -26,7 +25,7 @@ commit_parsers = [
   { message = "^refactor", group = "Changed" },
   { message = "^doc", group = "Documentation" },
   { message = "^test", group = "Testing" },
-  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore(\\(release\\))?: release", skip = true },
   { message = "^chore", group = "Miscellaneous" },
   { message = "^ci", group = "CI" },
   { message = "^build", group = "Build" },

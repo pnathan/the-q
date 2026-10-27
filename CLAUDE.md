@@ -56,6 +56,13 @@ python3 scripts/accuracy/eval.py  target/accuracy-dump.tsv
 sbcl --script scripts/accuracy/eval.lisp target/accuracy-dump.tsv
 ```
 
+## Releasing
+
+Pushing a `vX.Y.Z` tag publishes: `.github/workflows/release.yml` checks the
+tag against `Cargo.toml`, runs all of `ci.yml` (it is `workflow_call`-able for
+this), then `cargo publish`. release-plz only maintains the version-bump PR.
+See `docs/RELEASING.md`.
+
 ## Toolchain pinning
 
 The Verus binary and the `vstd` / `verus_builtin` / `verus_builtin_macros`

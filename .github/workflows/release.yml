@@ -1,0 +1,90 @@
+name: Release
+
+# Publishes to crates.io when a `vX.Y.Z` tag is pushed. The tag is the only
+# trigger: whoever pushes it (by hand, after merging release-plz's version-bump
+# PR) is asserting that this commit is the release.
+#
+# release-plz does not push the tag itself. A tag pushed with the workflow's
+# GITHUB_TOKEN does not start other workflows, so a tag it created would never
+# reach this file; keeping the tag a human push keeps one publish path.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Two pushes of the same tag must not race each other to `cargo publish`.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Cheap checks first, so a mistyped tag fails in seconds, not after Verus.
+  tag:
+    name: tag matches Cargo.toml and trunk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag names the version in Cargo.toml
+        run: |
+          version=$(cargo metadata --locked --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - name: Tagged commit is on trunk
+        run: |
+          git fetch --no-tags origin trunk
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/trunk; then
+            echo "::error::$GITHUB_REF_NAME points at a commit not on trunk"
+            exit 1
+          fi
+
+  # The full CI pipeline, Verus included, on the tagged commit itself.
+  ci:
+    needs: tag
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: cargo publish + GitHub Release
+    needs: [tag, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      # Re-running a failed release must not die on "already uploaded": skip
+      # the publish when crates.io already has this version, and still create
+      # the GitHub Release.
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "the-q release workflow (github.com/${GITHUB_REPOSITORY})" \
+            "https://crates.io/api/v1/crates/the-q/$version")
+          if [ "$status" = 200 ]; then
+            echo "the-q $version is already on crates.io; skipping publish"
+          else
+            cargo publish --locked
+          fi
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi
