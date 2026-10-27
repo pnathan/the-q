@@ -54,22 +54,36 @@ not reach `release.yml`; the tag is pushed by a person.
 * `pr-title.yml` — the PR title is a Conventional Commit, since a squash
   merge makes it the commit the changelog reads.
 
-## Repository settings (manual, not in this tree)
+## Repository settings
 
 These make the workflows load-bearing; without them they are advisory.
+`scripts/configure-github.sh` applies all of them and is safe to re-run (it
+needs `gh` logged in as a repository admin):
 
-* **Branch ruleset on `trunk`:** require a PR, and require the checks
-  `cargo build + test`, `MSRV (Rust 1.85)`, `no copyleft in the shipped
-  tree`, `verus verify` and `Conventional Commit title`.
-* **Tag ruleset on `v*`:** restrict creation, update and deletion to
-  maintainers, so a tag cannot be moved after it is published.
-* **Environment `cargo.io`** (Settings → Environments): move
-  `CARGO_REGISTRY_TOKEN` from repository to environment secrets, restrict
-  the environment to `v*` tags, and optionally add yourself as a required
-  reviewer so each publish waits for an approval click.
-* **Token:** a crates.io token scoped `publish-update` on `the-q` only, with
-  an expiry. Trusted Publishing (OIDC) would remove the stored secret
-  entirely; switching is a change to the `cargo publish` step.
+```sh
+CARGO_REGISTRY_TOKEN=… scripts/configure-github.sh   # token optional
+```
+
+* **Environment `cargo.io`:** deployable only from `v*` tags, the owner as
+  required reviewer (each publish waits for one approval click), and
+  `CARGO_REGISTRY_TOKEN` as an environment secret. Given the token in its
+  environment, the script moves it there and deletes the repository-level
+  copy.
+* **Ruleset `trunk`:** PR required; `cargo build + test`, `MSRV (Rust
+  1.85)`, `no copyleft in the shipped tree`, `verus verify` and
+  `Conventional Commit title` required; no force-push or deletion.
+* **Ruleset `release tags`:** `v*` tags cannot be created, moved or deleted
+  except by an admin.
+
+Admins bypass both rulesets. release-plz opens its PR with `GITHUB_TOKEN`,
+and GitHub starts no workflows for a PR opened that way, so its required
+checks never report: merge the release PR with the admin bypass. Its content
+is only `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, and the tag push
+re-runs all of CI before anything is published.
+
+Not scripted: the crates.io side. Use a token scoped `publish-update` on
+`the-q` only, with an expiry. Trusted Publishing (OIDC) would remove the
+stored secret entirely; switching is a change to the `cargo publish` step.
 
 ## Failure modes
 

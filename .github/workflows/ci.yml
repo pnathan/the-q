@@ -13,8 +13,10 @@ on:
       - "LICENSE"
       - "docs/**"
       - ".github/CODEOWNERS"
+  # No paths-ignore on PRs: the checks below are required by the `trunk`
+  # ruleset, and a skipped required check blocks the merge forever. README.md
+  # is also compiled by tests/readme_examples.rs, so a docs PR is not inert.
   pull_request:
-    paths-ignore: *non-build-paths
   # release.yml calls this whole workflow as the gate in front of
   # `cargo publish`, so a tag is published only after every job here passes.
   workflow_call:
