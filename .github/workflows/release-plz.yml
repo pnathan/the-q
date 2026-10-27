@@ -1,0 +1,188 @@
+name: Release-plz
+
+# One file for the whole release, because crates.io's Trusted Publishing
+# registration names this file and accepts OIDC tokens from no other.
+#
+# * push to `trunk`: `release-plz-pr` keeps a standing PR (config:
+#   release-plz.toml) that bumps Cargo.toml's version and writes CHANGELOG.md
+#   from the Conventional Commits merged since the last release.
+# * push of a `vX.Y.Z` tag: `tag` -> `ci` -> `publish` -> `smoke` publish
+#   that version to crates.io and cut the GitHub Release.
+#
+# release-plz never pushes the tag. A tag pushed with GITHUB_TOKEN starts no
+# workflows, so it would never reach the jobs below; a person pushes it.
+on:
+  push:
+    branches:
+      - trunk
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+env:
+  CARGO_TERM_COLOR: always
+  UA: "the-q release workflow (github.com/pnathan/the-q)"
+
+jobs:
+  release-plz-pr:
+    name: Release-plz PR
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Run release-plz release-pr
+        uses: release-plz/action@476794ede164c5137bfc3a1dc6ed3675275690f9 # v0.5.99
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---- tag push: publish ----------------------------------------------------
+
+  # Cheap checks first, so a mistyped tag fails in seconds, not after Verus.
+  tag:
+    name: tag matches Cargo.toml and trunk
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag names the version in Cargo.toml
+        run: |
+          version=$(cargo metadata --locked --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - name: Tagged commit is on trunk
+        run: |
+          git fetch --no-tags origin trunk
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/trunk; then
+            echo "::error::$GITHUB_REF_NAME points at a commit not on trunk"
+            exit 1
+          fi
+
+  # The full CI pipeline, Verus included, on the tagged commit itself.
+  ci:
+    needs: tag
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: cargo publish + GitHub Release
+    needs: [tag, ci]
+    runs-on: ubuntu-latest
+    # Two pushes of the same tag must not race each other to `cargo publish`.
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    # Holds CARGO_REGISTRY_TOKEN's only consumer. Add required reviewers to the
+    # `cargo.io` environment to make every publish wait for a person.
+    environment:
+      name: cargo.io
+      url: https://crates.io/crates/the-q/${{ steps.version.outputs.version }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Package once. The tarball is attested, attached to the GitHub Release,
+      # and checked below to be byte-identical to what crates.io serves.
+      - name: cargo package
+        run: cargo package --locked
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: target/package/the-q-${{ steps.version.outputs.version }}.crate
+
+      # crates.io Trusted Publishing: a short-lived token minted over OIDC,
+      # accepted only from this workflow file (the publisher registered on
+      # crates.io names `release-plz.yml`). The stored CARGO_REGISTRY_TOKEN is
+      # the fallback if the exchange fails.
+      - name: crates.io token (Trusted Publishing)
+        id: auth
+        continue-on-error: true
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      # Re-running a failed release must not die on "already uploaded": skip
+      # the publish when crates.io already has this version.
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$UA" \
+            "https://crates.io/api/v1/crates/the-q/$VERSION")
+          if [ "$status" = 200 ]; then
+            echo "the-q $VERSION is already on crates.io; skipping publish"
+          else
+            cargo publish --locked
+          fi
+      - name: crates.io serves the attested tarball
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          want=$(curl -sS -A "$UA" "https://crates.io/api/v1/crates/the-q/$VERSION" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["checksum"])')
+          have=$(sha256sum "target/package/the-q-$VERSION.crate" | cut -d' ' -f1)
+          if [ "$want" != "$have" ]; then
+            echo "::error::crates.io checksum $want differs from attested tarball $have"
+            exit 1
+          fi
+
+      # Notes are this version's CHANGELOG.md section (release-plz writes
+      # `## [X.Y.Z](…) - date`); GitHub's generated notes if there is none.
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists"
+            exit 0
+          fi
+          awk -v v="$VERSION" '
+            /^## / { if (on) exit; on = index($0, "[" v "]") || $2 == v }
+            on' CHANGELOG.md 2>/dev/null | tail -n +2 > notes.md || true
+          if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            "${notes[@]}" "target/package/the-q-$VERSION.crate"
+
+  # A downstream crate can resolve and build the published version. The
+  # sparse index can lag the upload by a minute or two, hence the retries.
+  smoke:
+    name: published crate builds downstream
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - run: |
+          version=${GITHUB_REF_NAME#v}
+          cargo new --lib probe && cd probe
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            cargo add "the-q@=$version" && break
+            sleep 30
+          done
+          printf 'pub fn f() -> String { the_q::Rat::new(1, 3).unwrap().to_string() }\n' > src/lib.rs
+          cargo build

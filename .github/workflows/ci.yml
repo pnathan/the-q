@@ -7,14 +7,19 @@ on:
   # `refs/pull/N/merge`, so the two do not deduplicate each other. Listening to
   # both ran the whole pipeline, verification included, twice per commit.
   push:
-    branches: ["main"]
+    branches: ["trunk"]
     paths-ignore: &non-build-paths
       - "**/*.md"
       - "LICENSE"
       - "docs/**"
       - ".github/CODEOWNERS"
+  # No paths-ignore on PRs: the checks below are required by the `trunk`
+  # ruleset, and a skipped required check blocks the merge forever. README.md
+  # is also compiled by tests/readme_examples.rs, so a docs PR is not inert.
   pull_request:
-    paths-ignore: *non-build-paths
+  # On a tag push, release-plz.yml calls this whole workflow as the gate in
+  # front of `cargo publish`: a tag is published only if every job passes.
+  workflow_call:
 
 # Verification is slow and a superseded commit's run is worthless. Without this
 # a stuck proof search on an old SHA sits on a runner until the 6-hour cap.
@@ -93,6 +98,12 @@ jobs:
 
       - name: Rat and QI representations are private downstream
         run: ./scripts/check-rat-privacy.sh
+
+      # What crates.io would receive: `exclude` honoured, and the packaged
+      # tarball builds on its own. Catches a packaging error on the PR, not
+      # when a release tag is already pushed.
+      - name: Package
+        run: cargo package --locked
 
   licences:
     name: no copyleft in the shipped tree
