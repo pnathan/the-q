@@ -68,10 +68,10 @@ speed use `f64`.
 
 ```toml
 [dependencies]
-the-q = "0.2.1"
+the-q = "0.2.2"
 
 # Optional features, all off by default:
-# the-q = { version = "0.2.1", features = ["serde", "rust_decimal"] }
+# the-q = { version = "0.2.2", features = ["serde", "rust_decimal"] }
 ```
 
 | feature | adds |
