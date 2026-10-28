@@ -7,7 +7,7 @@ Performance, Removed, Documentation, CI. Versioning follows
 [Semantic Versioning](https://semver.org/) as `0.x`: a breaking change bumps
 the minor version, anything else the patch version. See `docs/RELEASING.md`.
 
-## [0.2.2] - Unreleased
+## [0.2.2] - 2026-10-28
 
 ### CI
 
