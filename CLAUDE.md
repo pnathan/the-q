@@ -56,16 +56,35 @@ python3 scripts/accuracy/eval.py  target/accuracy-dump.tsv
 sbcl --script scripts/accuracy/eval.lisp target/accuracy-dump.tsv
 ```
 
-## Releasing
+## Commits, versions and the changelog
 
-Pushing a `vX.Y.Z` tag publishes: `.github/workflows/release-plz.yml` checks the
-tag against `Cargo.toml`, runs all of `ci.yml` (it is `workflow_call`-able for
-this), then `cargo publish` via crates.io Trusted Publishing, provenance attestation, GitHub Release and a
-downstream smoke build. On `trunk` pushes the same file only maintains
-release-plz's version-bump PR. It is one file because crates.io trusts no other;
-`pr-title.yml` enforces the Conventional Commit titles its changelog reads.
-`scripts/configure-github.sh` applies the environment and rulesets it relies
-on. See `docs/RELEASING.md`.
+Enforced by `scripts/check-version.py` in CI (`version and changelog`) and
+`pr-title.yml`; run the script locally before pushing.
+
+* **Every commit and every PR title is a Conventional Commit:**
+  `type(scope)?!?: description`, type one of `feat fix perf refactor doc docs
+  test chore ci build style revert`; `!` or a `BREAKING CHANGE:` footer marks
+  a breaking change. PRs are squash-merged, so the title is the commit that
+  lands on `trunk`.
+* **`trunk` always carries the next version.** The first change after a
+  `vX.Y.Z` tag bumps `Cargo.toml` (and `Cargo.lock`): `0.x` → minor for a
+  breaking change, patch otherwise (from `1.0`: major / minor for `feat` /
+  patch). A later change in the same cycle raises the bump if it needs a
+  higher level. The check demands exactly the level the commits since the
+  tag call for.
+* **Every PR adds a `CHANGELOG.md` entry** under the first section,
+  `## [<Cargo.toml version>] - Unreleased`, in the matching group. The
+  changelog is the release record: the GitHub Release notes are that
+  section, and a release with no entries fails.
+* **Releasing:** a PR `chore: release vX.Y.Z` replaces `Unreleased` with the
+  date (and updates the dependency lines in `README.md`); after it merges,
+  tag that commit `vX.Y.Z` and push the tag. `.github/workflows/release.yml`
+  checks tag, version and changelog, runs all of `ci.yml` (it is
+  `workflow_call`-able for this), then `cargo publish` via crates.io Trusted
+  Publishing, provenance attestation, GitHub Release and a downstream smoke
+  build. crates.io trusts that file by name; do not rename it.
+  `scripts/configure-github.sh` applies the environment and rulesets it
+  relies on. See `docs/RELEASING.md`.
 
 ## Toolchain pinning
 

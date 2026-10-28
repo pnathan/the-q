@@ -1,8 +1,8 @@
 name: PR title
 
-# CHANGELOG.md is generated from Conventional Commit prefixes, and a squash
-# merge takes its commit message from the PR title. A title without a
-# recognised prefix would land in the changelog ungrouped.
+# A squash merge takes its commit message from the PR title, and the version
+# bump is computed from Conventional Commit prefixes (scripts/check-version.py).
+# This runs on title edits too, which ci.yml does not.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]

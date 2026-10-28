@@ -1,20 +1,14 @@
-name: Release-plz
+name: Release
 
-# One file for the whole release, because crates.io's Trusted Publishing
-# registration names this file and accepts OIDC tokens from no other.
+# Pushing a `vX.Y.Z` tag publishes that version: `tag` -> `ci` -> `publish`
+# -> `smoke`. The version and CHANGELOG.md are already right on trunk (every
+# PR keeps them so; see scripts/check-version.py), so nothing here edits the
+# tree.
 #
-# * push to `trunk`: `release-plz-pr` keeps a standing PR (config:
-#   release-plz.toml) that bumps Cargo.toml's version and writes CHANGELOG.md
-#   from the Conventional Commits merged since the last release.
-# * push of a `vX.Y.Z` tag: `tag` -> `ci` -> `publish` -> `smoke` publish
-#   that version to crates.io and cut the GitHub Release.
-#
-# release-plz never pushes the tag. A tag pushed with GITHUB_TOKEN starts no
-# workflows, so it would never reach the jobs below; a person pushes it.
+# crates.io's Trusted Publishing entry for the-q names this file. Renaming it
+# breaks publishing until that entry is updated.
 on:
   push:
-    branches:
-      - trunk
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
@@ -23,51 +17,18 @@ env:
   UA: "the-q release workflow (github.com/pnathan/the-q)"
 
 jobs:
-  release-plz-pr:
-    name: Release-plz PR
-    if: github.ref_type == 'branch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    concurrency:
-      group: release-plz-pr-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
-      - name: Run release-plz release-pr
-        uses: release-plz/action@476794ede164c5137bfc3a1dc6ed3675275690f9 # v0.5.99
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ---- tag push: publish ----------------------------------------------------
-
   # Cheap checks first, so a mistyped tag fails in seconds, not after Verus.
   tag:
     name: tag matches Cargo.toml and trunk
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Tag names the version in Cargo.toml
-        run: |
-          version=$(cargo metadata --locked --no-deps --format-version 1 |
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
-            exit 1
-          fi
+      # Tag equals v<Cargo.toml version>, and its CHANGELOG.md section is dated.
+      - name: Tag, version and changelog agree
+        run: python3 scripts/check-version.py --release
       - name: Tagged commit is on trunk
         run: |
           git fetch --no-tags origin trunk
@@ -117,7 +78,7 @@ jobs:
 
       # crates.io Trusted Publishing: a short-lived token minted over OIDC,
       # accepted only from this workflow file (the publisher registered on
-      # crates.io names `release-plz.yml`). The stored CARGO_REGISTRY_TOKEN is
+      # crates.io names `release.yml`). The stored CARGO_REGISTRY_TOKEN is
       # the fallback if the exchange fails.
       - name: crates.io token (Trusted Publishing)
         id: auth
@@ -150,8 +111,9 @@ jobs:
             exit 1
           fi
 
-      # Notes are this version's CHANGELOG.md section (release-plz writes
-      # `## [X.Y.Z](…) - date`); GitHub's generated notes if there is none.
+      # Notes are this version's CHANGELOG.md section, which must exist: the
+      # changelog is the release record, so a missing entry stops the release
+      # rather than falling back to generated notes.
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -162,11 +124,14 @@ jobs:
             exit 0
           fi
           awk -v v="$VERSION" '
-            /^## / { if (on) exit; on = index($0, "[" v "]") || $2 == v }
-            on' CHANGELOG.md 2>/dev/null | tail -n +2 > notes.md || true
-          if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
+            /^## / { if (on) exit; on = index($0, "[" v "]") }
+            on' CHANGELOG.md | tail -n +2 > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no entries for $VERSION"
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            "${notes[@]}" "target/package/the-q-$VERSION.crate"
+            --notes-file notes.md "target/package/the-q-$VERSION.crate"
 
   # A downstream crate can resolve and build the published version. The
   # sparse index can lag the upload by a minute or two, hence the retries.
